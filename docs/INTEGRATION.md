@@ -6,71 +6,20 @@
 
 ## Overview
 
-Dhi protects AI coding assistants through **two modes**:
+**No code changes required!** Dhi protects AI tools automatically through:
 
 | Mode | How It Works | HTTPS Visibility | Platform |
 |------|--------------|------------------|----------|
-| **Proxy Mode** | HTTP proxy intercepts traffic | Hostname only | All |
 | **eBPF Mode** | Kernel-level SSL hooking | **Full plaintext** | Linux |
+| **Proxy Mode** | HTTP proxy intercepts traffic | Hostname only | All |
 
-**Recommendation:** Use **eBPF mode on Linux** for full HTTPS visibility. Use **Proxy mode** on macOS/Windows or when root access is unavailable.
-
----
-
-## Quick Start: Proxy Mode (All Platforms)
-
-### 1. Build Dhi
-
-```bash
-cargo build --release
-```
-
-### 2. Copy and Edit Config (Optional)
-
-```bash
-# Copy sample config
-cp dhi.toml.example dhi.toml
-
-# Edit as needed
-nano dhi.toml  # or your editor
-```
-
-### 3. Start Dhi Proxy
-
-```bash
-# Basic (alert only)
-./target/release/dhi proxy --port 8080
-
-# With secrets blocking
-./target/release/dhi proxy --port 8080 --block-secrets
-
-# With config file
-./target/release/dhi --config dhi.toml proxy --port 8080
-
-# With Slack alerts
-./target/release/dhi proxy --port 8080 --slack-webhook "https://hooks.slack.com/..."
-```
-
-### 4. Configure Your AI Tool
-
-```bash
-# Set proxy environment variables
-export HTTP_PROXY=http://127.0.0.1:8080
-export HTTPS_PROXY=http://127.0.0.1:8080
-
-# Now run your AI tool
-claude                    # Claude Code
-gh copilot suggest        # GitHub Copilot CLI
-cursor                    # Cursor IDE
-```
-
-**That's it!** All LLM API calls are now monitored.
+**Recommendation:** Use **eBPF mode on Linux** for full HTTPS visibility with zero configuration. Use **Proxy mode** on macOS/Windows.
 
 ---
 
-## Quick Start: eBPF Mode (Linux - Full HTTPS Visibility)
+## Quick Start: eBPF Mode (Linux - Recommended)
 
-eBPF mode provides **full visibility into HTTPS traffic** by hooking SSL library functions. This captures plaintext **before encryption** and **after decryption**.
+Just install and run - Dhi captures all SSL traffic system-wide automatically.
 
 ### 1. Build Dhi and eBPF Program
 
@@ -87,7 +36,7 @@ sudo mkdir -p /usr/share/dhi
 sudo cp dhi_ssl.bpf.o /usr/share/dhi/
 ```
 
-### 2. Run Dhi with eBPF (Requires Root)
+### 2. Run Dhi (Requires Root)
 
 ```bash
 # Run with eBPF monitoring
@@ -99,13 +48,14 @@ sudo ./target/release/dhi --level alert --slack-webhook "https://hooks.slack.com
 
 ### 3. Use Your AI Tools Normally
 
-No proxy configuration needed! Dhi captures all SSL traffic system-wide.
+**No configuration needed!** Your tools work exactly as before.
 
 ```bash
-# These are automatically monitored
+# These are automatically protected
 claude "Write a hello world program"
 gh copilot suggest "how to parse JSON"
 python my_langchain_agent.py
+cursor .
 ```
 
 ### What Gets Captured
@@ -122,47 +72,55 @@ python my_langchain_agent.py
 - Root or `CAP_BPF` capability
 - SSL library must be dynamically linked
 
-### Verify eBPF is Working
+---
+
+## Quick Start: Proxy Mode (macOS/Windows)
+
+For non-Linux systems, use proxy mode with environment variables:
+
+### 1. Start Dhi Proxy
 
 ```bash
-# Check if SSL probes are attached
-sudo cat /sys/kernel/debug/tracing/uprobe_events
+./target/release/dhi proxy --port 8080 --block-secrets
+```
 
-# Look for Dhi SSL interception logs
-sudo journalctl -u dhi -f | grep SSL
+### 2. Configure Environment Variables
+
+```bash
+export HTTP_PROXY=http://127.0.0.1:8080
+export HTTPS_PROXY=http://127.0.0.1:8080
+```
+
+### 3. Use Your AI Tools
+
+```bash
+claude "Write a hello world program"
+gh copilot suggest "how to parse JSON"
 ```
 
 ---
 
-## Proxy Mode vs eBPF Mode
+## Comparison: eBPF vs Proxy Mode
 
-| Aspect | Proxy Mode | eBPF Mode |
-|--------|------------|-----------|
-| **Platform** | All (Linux, macOS, Windows) | Linux only |
-| **HTTPS Content** | Hostname only | Full plaintext |
-| **Setup** | Env vars (`HTTP_PROXY`) | Build eBPF + root |
-| **App Changes** | Need proxy env vars | None |
-| **Root Required** | No | Yes |
-| **Performance** | Minimal | Near-zero |
+| Aspect | eBPF Mode | Proxy Mode |
+|--------|-----------|------------|
+| **Platform** | Linux only | All |
+| **Setup** | Build eBPF + root | Env vars |
+| **App Changes** | **None** | Need proxy env vars |
+| **HTTPS Content** | **Full plaintext** | Hostname only |
+| **Root Required** | Yes | No |
+| **Performance** | Near-zero | Minimal |
 
-**Best Practice:**
-- **Linux servers**: Use eBPF mode for full visibility
-- **Developer machines**: Use Proxy mode (easier setup)
-- **CI/CD**: Use Proxy mode (no root in containers)
+**Recommendation:**
+- **Linux (servers, dev machines)**: Use eBPF mode
+- **macOS/Windows**: Use Proxy mode
+- **CI/CD containers**: Use Proxy mode (no root)
 
 ---
 
 ## Configuration
 
-### Configuration File (dhi.toml)
-
-Create `dhi.toml` in the same directory as the binary, or specify path with `--config`:
-
-```bash
-dhi --config /path/to/dhi.toml proxy --port 8080
-```
-
-See `dhi.toml.example` for all options. Key settings:
+All settings in `dhi.toml` (see `dhi.toml.example` for full template):
 
 ```toml
 [protection]
@@ -173,37 +131,24 @@ slack_webhook = "https://hooks.slack.com/..."
 min_severity = "high"
 
 [budget]
-global_limit = 100.0    # USD
-agent_daily_limit = 10.0
+daily_limit = 100.0
+monthly_limit = 1000.0
 
 [reporting]
 output_dir = "./dhi-reports"
-format = "json"
-
-[proxy]
-port = 8080
-block_secrets = true
-block_pii = false
+daily_report = true
 ```
 
-### Environment Variables
-
-Set these in your shell or `.env` file:
+Environment variables (see `.env.example`):
 
 ```bash
 export DHI_PROTECTION_LEVEL=alert
 export DHI_SLACK_WEBHOOK=https://hooks.slack.com/...
-export DHI_MAX_BUDGET=100.0
-export DHI_REPORT_DIR=./dhi-reports
 ```
-
-See `.env.example` for all variables.
 
 ---
 
 ## Viewing Reports
-
-### Report Location
 
 Reports are saved to the configured directory (default: `./dhi-reports`):
 
@@ -307,42 +252,6 @@ os.environ['HTTPS_PROXY'] = 'http://127.0.0.1:8080'
 
 ---
 
-## Do I Need Framework Integration?
-
-**No!** Proxy mode provides protection without any code changes.
-
-| Approach | Pros | Cons |
-|----------|------|------|
-| **Proxy Mode** | Zero code changes, works with any tool | Requires proxy env vars |
-| **SDK Integration** | Deeper insights, custom events | Requires code changes |
-
-For most users, **proxy mode is sufficient** because:
-1. All HTTP traffic to LLM APIs is intercepted
-2. Secrets and PII are scanned in requests/responses
-3. Dangerous patterns are detected and blocked
-4. No modification to your agents/tools needed
-
-### When SDK Integration Might Help
-
-You might want deeper integration if you need:
-- Custom risk scoring for specific operations
-- Per-tool granular permissions
-- Integration with agent orchestration logic
-- Custom event tracking
-
-For SDK integration, Dhi exposes a Rust library:
-
-```rust
-use dhi::agentic::AgenticRuntime;
-
-let runtime = AgenticRuntime::new();
-runtime.register_agent("my-agent", "custom", None).await;
-runtime.track_llm_call(...).await;
-runtime.track_tool_call(...).await;
-```
-
----
-
 ## What Gets Protected
 
 | Direction | Protection |
@@ -358,9 +267,7 @@ runtime.track_tool_call(...).await;
 
 ---
 
-## Quick Setup Script
-
-### Linux/macOS
+## Quick Setup Script (Linux with eBPF)
 
 Save as `setup-dhi.sh`:
 
@@ -371,67 +278,44 @@ set -e
 # Build Dhi
 cargo build --release
 
+# Build eBPF program
+cd bpf
+clang -O2 -g -target bpf -c dhi_ssl.bpf.c -o dhi_ssl.bpf.o
+cd ..
+
+# Install eBPF program
+sudo mkdir -p /usr/share/dhi
+sudo cp bpf/dhi_ssl.bpf.o /usr/share/dhi/
+
 # Copy config
 cp dhi.toml.example dhi.toml
 
 # Create report directory
 mkdir -p dhi-reports
 
-# Create systemd service (Linux only)
-if [ -f /etc/systemd/system ]; then
-  sudo tee /etc/systemd/system/dhi-proxy.service << EOF
+# Create systemd service
+sudo tee /etc/systemd/system/dhi.service << EOF
 [Unit]
-Description=Dhi Security Proxy for AI Agents
+Description=Dhi Security for AI Agents
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=$(pwd)/target/release/dhi --config $(pwd)/dhi.toml proxy --port 8080
+ExecStart=$(pwd)/target/release/dhi --config $(pwd)/dhi.toml --level alert
 Restart=always
-User=$USER
 WorkingDirectory=$(pwd)
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-  sudo systemctl daemon-reload
-  sudo systemctl enable dhi-proxy
-  sudo systemctl start dhi-proxy
-fi
+sudo systemctl daemon-reload
+sudo systemctl enable dhi
+sudo systemctl start dhi
 
-# Add to shell profile
-echo '' >> ~/.bashrc
-echo '# Dhi protection for AI tools' >> ~/.bashrc
-echo 'export HTTP_PROXY=http://127.0.0.1:8080' >> ~/.bashrc
-echo 'export HTTPS_PROXY=http://127.0.0.1:8080' >> ~/.bashrc
-
-echo "✅ Dhi proxy running on port 8080"
+echo "✅ Dhi running with eBPF monitoring"
 echo "✅ Reports will be saved to ./dhi-reports/"
-echo "Restart your terminal or run: source ~/.bashrc"
-```
-
-### Windows (PowerShell)
-
-```powershell
-# Build Dhi
-cargo build --release
-
-# Copy config
-Copy-Item dhi.toml.example dhi.toml
-
-# Create report directory
-New-Item -ItemType Directory -Force -Path dhi-reports
-
-# Set environment variables (User scope)
-[Environment]::SetEnvironmentVariable("HTTP_PROXY", "http://127.0.0.1:8080", "User")
-[Environment]::SetEnvironmentVariable("HTTPS_PROXY", "http://127.0.0.1:8080", "User")
-
-# Start proxy (in separate terminal)
-Start-Process -FilePath ".\target\release\dhi.exe" -ArgumentList "proxy --port 8080 --block-secrets"
-
-Write-Host "✅ Dhi proxy started on port 8080"
-Write-Host "✅ Restart your terminal to apply proxy settings"
+echo "✅ All AI tools are now protected automatically"
 ```
 
 ---
@@ -443,14 +327,11 @@ Write-Host "✅ Restart your terminal to apply proxy settings"
 | `--level log` | Log only, no alerts |
 | `--level alert` | Log and send alerts |
 | `--level block` | Log, alert, and block dangerous requests |
-| `--block-secrets` | Block requests containing secrets |
-| `--block-pii` | Block requests containing PII |
 
 **Recommended workflow:**
 1. Start with `--level alert` to see what's detected
 2. Review alerts for false positives
-3. Enable `--block-secrets` when confident
-4. Add `--block-pii` if needed
+3. Switch to `--level block` when confident
 
 ---
 
@@ -459,92 +340,50 @@ Write-Host "✅ Restart your terminal to apply proxy settings"
 ### Check Dhi is Running
 
 ```bash
-# Linux/macOS
-lsof -i :8080
-# or
-netstat -tlnp | grep 8080
+# Check service status
+sudo systemctl status dhi
 
-# Windows
-netstat -an | findstr 8080
-```
-
-### Test the Proxy
-
-```bash
-# Basic test
-curl -x http://127.0.0.1:8080 https://httpbin.org/get
-
-# Test secret detection (should trigger alert)
-curl -x http://127.0.0.1:8080 \
-  -H "Content-Type: application/json" \
-  -d '{"prompt": "My API key is sk-proj-abc123"}' \
-  https://httpbin.org/post
+# Check eBPF probes (Linux)
+sudo cat /sys/kernel/debug/tracing/uprobe_events
 ```
 
 ### View Logs
 
 ```bash
-# If running manually
-./target/release/dhi proxy --port 8080 -v
-
 # If running as systemd service
-journalctl -u dhi-proxy -f
+sudo journalctl -u dhi -f
 
 # Example output
-2026-03-21T08:30:01 INFO Dhi proxy listening on 127.0.0.1:8080
+2026-03-21T08:30:01 INFO Dhi eBPF SSL monitoring active
 2026-03-21T08:30:15 WARN [ALERT] api.openai.com: Secrets detected: ["openai_api_key"]
 2026-03-21T08:30:22 WARN [BLOCKED] api.anthropic.com: Credential leak blocked
 ```
 
 ---
 
-## Troubleshooting
-
-### AI Tool Not Using Proxy
-
-```bash
-# Verify env vars are set
-echo $HTTP_PROXY
-echo $HTTPS_PROXY
-
-# Some tools need uppercase
-export http_proxy=$HTTP_PROXY
-export https_proxy=$HTTPS_PROXY
-```
-
-### HTTPS Issues
-
-For tools with strict SSL:
-```bash
-export NODE_TLS_REJECT_UNAUTHORIZED=0  # Node.js tools
-```
-
-### Proxy Connection Refused
-
-```bash
-# Check if Dhi is running
-ps aux | grep dhi
-
-# Check port
-netstat -tlnp | grep 8080
-
-# Restart if needed
-./target/release/dhi proxy --port 8080
-```
-
----
-
 ## Summary
+
+### Linux (eBPF Mode - Recommended)
+
+| Step | Command |
+|------|---------|
+| Build | `cargo build --release` |
+| Build eBPF | `cd bpf && clang -O2 -target bpf -c dhi_ssl.bpf.c -o dhi_ssl.bpf.o` |
+| Install eBPF | `sudo cp bpf/dhi_ssl.bpf.o /usr/share/dhi/` |
+| Configure | Edit `dhi.toml` |
+| Run | `sudo ./target/release/dhi --level alert` |
+
+**No further setup needed - all AI tools protected automatically!**
+
+### macOS/Windows (Proxy Mode)
 
 | Step | Command |
 |------|---------|
 | Build | `cargo build --release` |
 | Configure | Edit `dhi.toml` |
-| Start proxy | `dhi proxy --port 8080 --block-secrets` |
+| Start proxy | `./dhi proxy --port 8080` |
 | Set proxy | `export HTTP_PROXY=http://127.0.0.1:8080` |
 | Use AI tool | `claude` / `gh copilot` / etc. |
-| View reports | `cat dhi-reports/daily-*.json` |
-| View metrics | `curl http://127.0.0.1:9090/metrics` |
 
 **Files Reference:**
 - `dhi.toml.example` - Configuration template

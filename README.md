@@ -49,26 +49,36 @@ AI agents are powerful but introduce **serious security risks**:
 
 ## Quick Start
 
-### Build
+**No code changes required!** Dhi works at the kernel level.
+
+### Build & Run (Linux)
 
 ```bash
+# Build Dhi
 cargo build --release
-```
 
-### Run
+# Build eBPF program
+cd bpf && clang -O2 -target bpf -c dhi_ssl.bpf.c -o dhi_ssl.bpf.o
+sudo mkdir -p /usr/share/dhi && sudo cp dhi_ssl.bpf.o /usr/share/dhi/
 
-```bash
-# Start monitoring with alerts
-./target/release/dhi --level alert --port 9090
+# Run Dhi
+sudo ./target/release/dhi --level alert
 
 # With Slack notifications
-./target/release/dhi --level alert --slack-webhook https://hooks.slack.com/...
+sudo ./target/release/dhi --level alert --slack-webhook "https://hooks.slack.com/..."
+```
 
-# Demo mode (see features in action)
-./target/release/dhi demo
+**That's it!** All your AI agents are now protected automatically.
 
-# Block mode (actively prevent threats)
-./target/release/dhi --level block
+### Alternative: Proxy Mode (macOS/Windows)
+
+```bash
+# Start proxy
+./target/release/dhi proxy --port 8080 --block-secrets
+
+# Configure your tools
+export HTTP_PROXY=http://127.0.0.1:8080
+export HTTPS_PROXY=http://127.0.0.1:8080
 ```
 
 ## Architecture
@@ -135,10 +145,10 @@ cargo build --release
 
 | Document | Description |
 |----------|-------------|
-| [CTO Guide](docs/CTO_GUIDE.md) | Executive guide addressing security concerns |
-| [Agentic Features](docs/AGENTIC_FEATURES.md) | Full API documentation with examples |
+| [Agentic Features](docs/AGENTIC_FEATURES.md) | Complete feature documentation |
+| [Integration Guide](docs/INTEGRATION.md) | Setup for Claude Code, Copilot CLI, etc. |
+| [CTO Guide](docs/CTO_GUIDE.md) | Executive security guide |
 | [Comparison](docs/COMPARISON.md) | How Dhi compares to other tools |
-| [Branding](docs/BRANDING.md) | Brand guidelines |
 
 ## Endpoints
 
@@ -149,54 +159,22 @@ When running, Dhi exposes:
 | `GET /metrics` | Prometheus metrics |
 | `GET /health` | Health check |
 | `GET /api/stats` | JSON statistics |
-| `GET /` | Web dashboard |
 
-## Integration
+## Configuration
 
-### As a Library
+All settings in `dhi.toml` (see `dhi.toml.example` for full template):
 
-```rust
-use dhi::agentic::AgenticRuntime;
+```toml
+[protection]
+level = "alert"  # log, alert, block
 
-#[tokio::main]
-async fn main() {
-    let runtime = AgenticRuntime::new();
-    
-    // Register agent
-    runtime.register_agent("my-agent", "langchain", None).await;
-    
-    // Track LLM calls
-    let result = runtime.track_llm_call(
-        "my-agent", "openai", "gpt-4",
-        500, 200,  // tokens
-        Some("Hello world".to_string()),
-        false, vec![],
-    ).await;
-    
-    println!("Cost: ${:.4}, Risk: {}", result.cost_usd, result.risk_score);
-    
-    // Track tool calls
-    let tool_result = runtime.track_tool_call(
-        "my-agent", "filesystem_read", "mcp",
-        serde_json::json!({"path": "/etc/passwd"}),
-    ).await;
-    
-    if !tool_result.allowed {
-        println!("Blocked: {:?}", tool_result.flags);
-    }
-}
-```
+[budget]
+daily_limit = 500.0
+monthly_limit = 5000.0
 
-### As a Daemon
-
-```bash
-# Run as background service
-./dhi --level alert --port 9090 &
-
-# Agents interact via HTTP API
-curl -X POST http://localhost:9090/api/track/llm \
-  -H "Content-Type: application/json" \
-  -d '{"agent_id": "my-agent", "provider": "openai", "model": "gpt-4"}'
+[alerting]
+slack_webhook = "https://hooks.slack.com/..."
+min_severity = "high"
 ```
 
 ## Requirements
