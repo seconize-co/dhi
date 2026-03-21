@@ -1,0 +1,158 @@
+{
+  "report_type": "security_summary",
+  "generated_at": "2026-03-21T08:00:00Z",
+  "period": {
+    "start": "2026-03-20T00:00:00Z",
+    "end": "2026-03-21T00:00:00Z"
+  },
+  "summary": {
+    "total_agents": 5,
+    "total_llm_calls": 1247,
+    "total_tool_calls": 892,
+    "total_cost_usd": 42.87,
+    "total_alerts": 23,
+    "total_blocks": 7
+  },
+  "alerts_by_severity": {
+    "critical": 3,
+    "high": 8,
+    "medium": 9,
+    "low": 3
+  },
+  "alerts_by_type": {
+    "credential_leak": 3,
+    "pii_detected": 5,
+    "prompt_injection": 4,
+    "dangerous_tool": 7,
+    "budget_exceeded": 2,
+    "jailbreak_attempt": 2
+  },
+  "top_risk_agents": [
+    {
+      "agent_id": "agent-003",
+      "framework": "langchain",
+      "risk_score": 78,
+      "llm_calls": 342,
+      "tool_calls": 289,
+      "cost_usd": 18.42,
+      "alerts": 12,
+      "blocks": 4
+    },
+    {
+      "agent_id": "agent-001",
+      "framework": "crewai",
+      "risk_score": 45,
+      "llm_calls": 521,
+      "tool_calls": 312,
+      "cost_usd": 15.23,
+      "alerts": 6,
+      "blocks": 2
+    }
+  ],
+  "secrets_detected": [
+    {
+      "timestamp": "2026-03-20T14:23:15Z",
+      "agent_id": "agent-003",
+      "secret_type": "openai_api_key",
+      "location": "llm_response",
+      "action": "blocked",
+      "masked_value": "sk-proj-****...****"
+    },
+    {
+      "timestamp": "2026-03-20T16:45:32Z",
+      "agent_id": "agent-001",
+      "secret_type": "aws_access_key",
+      "location": "tool_input",
+      "action": "alerted",
+      "masked_value": "AKIA****...****"
+    }
+  ],
+  "pii_detected": [
+    {
+      "timestamp": "2026-03-20T09:12:44Z",
+      "agent_id": "agent-002",
+      "pii_type": "email",
+      "location": "llm_prompt",
+      "action": "redacted",
+      "count": 3
+    },
+    {
+      "timestamp": "2026-03-20T11:34:21Z",
+      "agent_id": "agent-003",
+      "pii_type": "ssn",
+      "location": "llm_response",
+      "action": "blocked",
+      "count": 1
+    }
+  ],
+  "injection_attempts": [
+    {
+      "timestamp": "2026-03-20T10:15:33Z",
+      "agent_id": "agent-003",
+      "attack_type": "prompt_injection",
+      "pattern": "ignore previous instructions",
+      "risk_score": 92,
+      "action": "blocked"
+    },
+    {
+      "timestamp": "2026-03-20T15:22:18Z",
+      "agent_id": "agent-001",
+      "attack_type": "jailbreak",
+      "pattern": "DAN mode",
+      "risk_score": 88,
+      "action": "alerted"
+    }
+  ],
+  "dangerous_tool_calls": [
+    {
+      "timestamp": "2026-03-20T13:45:12Z",
+      "agent_id": "agent-003",
+      "tool": "shell_execute",
+      "args": {"command": "cat /etc/passwd"},
+      "risk_score": 95,
+      "action": "blocked"
+    },
+    {
+      "timestamp": "2026-03-20T17:32:45Z",
+      "agent_id": "agent-005",
+      "tool": "file_write",
+      "args": {"path": "~/.ssh/authorized_keys"},
+      "risk_score": 98,
+      "action": "blocked"
+    }
+  ],
+  "cost_breakdown": {
+    "by_provider": {
+      "openai": 28.45,
+      "anthropic": 12.32,
+      "cohere": 2.10
+    },
+    "by_model": {
+      "gpt-4": 22.15,
+      "gpt-4o": 6.30,
+      "claude-3-sonnet": 10.22,
+      "claude-3-haiku": 2.10,
+      "command-r": 2.10
+    },
+    "by_agent": {
+      "agent-001": 15.23,
+      "agent-002": 5.12,
+      "agent-003": 18.42,
+      "agent-004": 2.10,
+      "agent-005": 2.00
+    }
+  },
+  "efficiency_metrics": {
+    "duplicate_prompts": 45,
+    "similar_prompts": 123,
+    "tool_loops_detected": 3,
+    "estimated_waste_usd": 4.56,
+    "efficiency_score": 78
+  },
+  "recommendations": [
+    "Agent 'agent-003' has high risk score (78) - review tool permissions",
+    "45 duplicate prompts detected - consider implementing caching",
+    "3 tool loops detected - review agent logic for infinite loops",
+    "Secrets detected in responses - enable response filtering"
+  ]
+}

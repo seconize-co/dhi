@@ -1,0 +1,54 @@
+{
+  "attachments": [
+    {
+      "color": "#dc3545",
+      "pretext": "🚨 *Dhi Security Alert*",
+      "title": "CRITICAL: Credential Leak Detected",
+      "fields": [
+        {
+          "title": "Agent",
+          "value": "coding-assistant-001",
+          "short": true
+        },
+        {
+          "title": "Framework",
+          "value": "langchain",
+          "short": true
+        },
+        {
+          "title": "Alert Type",
+          "value": "credential_leak",
+          "short": true
+        },
+        {
+          "title": "Risk Score",
+          "value": "98/100",
+          "short": true
+        },
+        {
+          "title": "Secret Type",
+          "value": "openai_api_key",
+          "short": true
+        },
+        {
+          "title": "Action",
+          "value": "🛑 BLOCKED",
+          "short": true
+        },
+        {
+          "title": "Details",
+          "value": "OpenAI API key detected in LLM response. Key was redacted and response blocked.",
+          "short": false
+        },
+        {
+          "title": "Masked Value",
+          "value": "`sk-proj-abc1****...****xyz9`",
+          "short": false
+        }
+      ],
+      "footer": "Dhi Runtime Security | धी",
+      "footer_icon": "https://dhi.seconize.co/icon.png",
+      "ts": 1711008933
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "event_type": "security_alert",
+  "timestamp": "2026-03-21T08:15:33.142Z",
+  "alert_id": "alert-2026032108153314-7f3a",
+  "severity": "critical",
+  "agent": {
+    "id": "coding-assistant-001",
+    "framework": "langchain",
+    "parent_id": null
+  },
+  "alert": {
+    "type": "credential_leak",
+    "title": "OpenAI API Key Detected in LLM Response",
+    "description": "An OpenAI API key was detected in the LLM response content",
+    "risk_score": 98
+  },
+  "details": {
+    "secret_type": "openai_api_key",
+    "location": "llm_response",
+    "masked_value": "sk-proj-abc1****...****xyz9",
+    "model": "gpt-4",
+    "provider": "openai"
+  },
+  "context": {
+    "prompt_preview": "List the environment variables in the system...",
+    "response_preview": "Here are the environment variables: OPENAI_API_KEY=sk-proj-...",
+    "tool_chain": ["shell_execute", "env"]
+  },
+  "action_taken": "blocked",
+  "metadata": {
+    "session_id": "sess-abc123",
+    "request_id": "req-def456",
+    "user_id": "user-789"
+  }
+}

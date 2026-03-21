@@ -1,0 +1,223 @@
+# ============================================================================
+# Dhi Configuration File
+# धी - Runtime Security for AI Agents
+# ============================================================================
+#
+# Copy this file to: dhi.toml (same directory as the binary)
+# Or specify path with: dhi --config /path/to/dhi.toml
+#
+# All settings have sensible defaults. Uncomment and modify as needed.
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# PROTECTION SETTINGS
+# ----------------------------------------------------------------------------
+[protection]
+# Protection level: "log", "alert", or "block"
+# - log: Record events only, no notifications
+# - alert: Record + send alerts (Slack, webhook)
+# - block: Record + alert + actively block dangerous operations
+level = "alert"
+
+# Enable/disable specific modules
+enable_ebpf = true      # Kernel-level monitoring (Linux only)
+enable_agentic = true   # AI agent runtime monitoring
+
+# ----------------------------------------------------------------------------
+# BUDGET CONTROLS
+# ----------------------------------------------------------------------------
+[budget]
+# Global maximum LLM spending (USD). Blocks all agents when exceeded.
+# global_limit = 100.0
+
+# Per-agent daily spending limit (USD)
+# agent_daily_limit = 10.0
+
+# Maximum tokens per single LLM call (prevents runaway prompts)
+max_tokens_per_call = 100000
+
+# ----------------------------------------------------------------------------
+# TOOL SECURITY
+# ----------------------------------------------------------------------------
+[tools]
+# Tools/commands that are ALWAYS blocked (patterns matched against tool name + args)
+denylist = [
+    "sudo",
+    "rm -rf",
+    "chmod 777",
+    "eval(",
+    "exec(",
+    "/etc/passwd",
+    "/etc/shadow",
+    "~/.ssh/",
+    "id_rsa",
+    "DROP TABLE",
+    "DELETE FROM",
+]
+
+# If set, ONLY these tools are allowed (empty = allow all except denylist)
+# allowlist = ["web_search", "calculator", "file_read"]
+
+# Risk score threshold for automatic blocking (0-100)
+# Tools with risk >= this value are blocked in "block" mode
+block_threshold = 80
+
+# ----------------------------------------------------------------------------
+# ALERTING
+# ----------------------------------------------------------------------------
+[alerting]
+# Minimum severity to generate alerts: "low", "medium", "high", "critical"
+min_severity = "high"
+
+# Slack webhook URL for real-time alerts
+# Get yours at: https://api.slack.com/messaging/webhooks
+# slack_webhook = "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+
+# Custom webhook URL (receives JSON POST)
+# webhook_url = "https://your-siem.example.com/api/alerts"
+
+# Email alerts (requires SMTP configuration below)
+# email_recipients = ["security@company.com", "oncall@company.com"]
+
+# Rate limiting to prevent alert storms
+rate_limit_per_minute = 30          # Global alert limit
+rate_limit_per_agent_per_hour = 100 # Per-agent limit
+
+# ----------------------------------------------------------------------------
+# SMTP SETTINGS (for email alerts)
+# ----------------------------------------------------------------------------
+# [smtp]
+# host = "smtp.company.com"
+# port = 587
+# username = "alerts@company.com"
+# password = "your-smtp-password"  # Consider using environment variable
+# from_address = "dhi-alerts@company.com"
+# tls = true
+
+# ----------------------------------------------------------------------------
+# REPORTING
+# ----------------------------------------------------------------------------
+[reporting]
+# Directory for report output (created if doesn't exist)
+output_dir = "./dhi-reports"
+
+# Report format: "json", "text", or "both"
+format = "json"
+
+# Generate periodic reports
+# daily_report = true
+# weekly_report = true
+
+# Retention period for reports (days)
+retention_days = 30
+
+# ----------------------------------------------------------------------------
+# METRICS & MONITORING
+# ----------------------------------------------------------------------------
+[metrics]
+# Port for Prometheus metrics endpoint (/metrics)
+port = 9090
+
+# Bind address (use 127.0.0.1 for local only, 0.0.0.0 for network)
+# WARNING: 0.0.0.0 exposes metrics to network - use with caution
+bind_address = "127.0.0.1"
+
+# Enable detailed per-agent metrics
+per_agent_metrics = true
+
+# ----------------------------------------------------------------------------
+# PROXY SETTINGS (for intercepting AI tool traffic)
+# ----------------------------------------------------------------------------
+[proxy]
+# Proxy port for HTTP CONNECT proxy
+port = 8080
+
+# Block requests containing detected secrets
+block_secrets = true
+
+# Block requests containing PII
+block_pii = false
+
+# Log all requests (verbose, for debugging)
+# log_requests = false
+
+# Allowed upstream hosts (empty = allow all public IPs)
+# allowed_hosts = ["api.openai.com", "api.anthropic.com", "api.github.com"]
+
+# ----------------------------------------------------------------------------
+# SECRETS DETECTION
+# ----------------------------------------------------------------------------
+[secrets]
+# Enable/disable specific secret types
+detect_openai_keys = true
+detect_anthropic_keys = true
+detect_aws_keys = true
+detect_github_tokens = true
+detect_stripe_keys = true
+detect_database_urls = true
+detect_private_keys = true
+detect_jwt_tokens = true
+
+# Custom patterns (regex)
+# custom_patterns = [
+#     { name = "internal_api_key", pattern = "INT_KEY_[A-Z0-9]{32}" },
+# ]
+
+# ----------------------------------------------------------------------------
+# PII DETECTION
+# ----------------------------------------------------------------------------
+[pii]
+# Enable/disable specific PII types
+detect_emails = true
+detect_phones = true
+detect_ssn = true
+detect_credit_cards = true
+detect_ip_addresses = true
+
+# Redaction mode: "mask" ([REDACTED]), "hash" (SHA256), or "remove"
+redaction_mode = "mask"
+
+# ----------------------------------------------------------------------------
+# PROMPT SECURITY
+# ----------------------------------------------------------------------------
+[prompt_security]
+# Detect prompt injection attempts
+detect_injection = true
+
+# Detect jailbreak attempts
+detect_jailbreak = true
+
+# Detect system prompt extraction attempts
+detect_extraction = true
+
+# Block prompts with risk score above threshold
+# block_threshold = 70
+
+# ----------------------------------------------------------------------------
+# WHITELISTS (bypass security checks)
+# ----------------------------------------------------------------------------
+[whitelist]
+# IP addresses that bypass security checks
+# ips = ["10.0.0.1", "192.168.1.100"]
+
+# File paths that bypass monitoring
+# files = ["/var/log/", "/tmp/dhi/"]
+
+# Agent IDs that bypass budget limits (for testing)
+# agents = ["test-agent", "admin-agent"]
+
+# ----------------------------------------------------------------------------
+# LOGGING
+# ----------------------------------------------------------------------------
+[logging]
+# Log level: "debug", "info", "warn", "error"
+level = "info"
+
+# Log file path (stdout if not set)
+# file = "/var/log/dhi/dhi.log"
+
+# Log format: "json" or "text"
+format = "text"
+
+# Include timestamps
+timestamps = true
