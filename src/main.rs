@@ -6,6 +6,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use dhi::{DhiConfig, DhiRuntime, ProtectionLevel};
 use dhi::agentic::DhiMetrics;
+use dhi::proxy::ProxyConfig;
 use std::sync::Arc;
 use tracing::{info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
@@ -65,6 +66,21 @@ struct Cli {
 enum Commands {
     /// Start monitoring (default)
     Monitor,
+    
+    /// Start HTTP proxy for AI tools (Claude Code, Copilot CLI)
+    Proxy {
+        /// Proxy port
+        #[arg(short, long, default_value = "8080")]
+        port: u16,
+        
+        /// Block requests containing secrets
+        #[arg(long)]
+        block_secrets: bool,
+        
+        /// Block requests containing PII
+        #[arg(long)]
+        block_pii: bool,
+    },
     
     /// Show runtime statistics
     Stats,
@@ -172,6 +188,36 @@ async fn run_monitor(config: DhiConfig, port: u16, slack_webhook: Option<String>
     println!("═══════════════════════════════════════════════════════════════════");
     
     Ok(())
+}
+
+async fn run_proxy(
+    port: u16,
+    level: ProtectionLevel,
+    block_secrets: bool,
+    block_pii: bool,
+    slack_webhook: Option<String>,
+) -> Result<()> {
+    println!("═══════════════════════════════════════════════════════════════════");
+    println!("  ██████╗ ██╗  ██╗██╗    PROXY MODE");
+    println!("  ██╔══██╗██║  ██║██║    ");
+    println!("  ██║  ██║███████║██║    धī - Runtime Security for AI Agents");
+    println!("  ██║  ██║██╔══██║██║    ");
+    println!("  ██████╔╝██║  ██║██║    Intercepting AI tool traffic");
+    println!("  ╚═════╝ ╚═╝  ╚═╝╚═╝    ");
+    println!("═══════════════════════════════════════════════════════════════════");
+    println!();
+
+    let config = ProxyConfig {
+        port,
+        level,
+        block_secrets_in_prompts: block_secrets,
+        block_secrets_in_responses: block_secrets,
+        block_pii_in_prompts: block_pii,
+        block_pii_in_responses: block_pii,
+        slack_webhook,
+    };
+
+    dhi::proxy::start_proxy(config).await
 }
 
 async fn run_demo() -> Result<()> {
@@ -335,6 +381,9 @@ async fn main() -> Result<()> {
     // Run command
     match cli.command {
         Some(Commands::Demo) => run_demo().await,
+        Some(Commands::Proxy { port, block_secrets, block_pii }) => {
+            run_proxy(port, protection_level, block_secrets, block_pii, cli.slack_webhook).await
+        }
         Some(Commands::Stats) => {
             println!("Stats command not yet implemented");
             Ok(())

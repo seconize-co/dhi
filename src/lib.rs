@@ -30,6 +30,7 @@ pub mod agentic;
 pub mod detection;
 pub mod ebpf;
 pub mod monitor;
+pub mod proxy;
 pub mod server;
 
 use anyhow::Result;
