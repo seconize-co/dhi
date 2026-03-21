@@ -6,17 +6,26 @@
 //! - MCP protocol analysis
 //! - Prompt security
 //! - Memory protection
+//! - Secrets detection
+//! - PII detection
+//! - Efficiency analysis
 
+mod efficiency;
 mod llm_monitor;
 mod mcp_monitor;
 mod memory_protection;
+mod pii_detector;
 mod prompt_security;
+mod secrets_detector;
 mod tool_monitor;
 
+pub use efficiency::*;
 pub use llm_monitor::*;
 pub use mcp_monitor::*;
 pub use memory_protection::*;
+pub use pii_detector::*;
 pub use prompt_security::*;
+pub use secrets_detector::*;
 pub use tool_monitor::*;
 
 use anyhow::Result;
