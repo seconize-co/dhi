@@ -146,10 +146,20 @@ export HTTPS_PROXY=http://127.0.0.1:8080
 
 | Document | Description |
 |----------|-------------|
+| [Operations Guide](docs/OPERATIONS.md) | **Start here** - Install, start, stop, troubleshoot |
 | [Agentic Features](docs/AGENTIC_FEATURES.md) | Complete feature documentation |
 | [Integration Guide](docs/INTEGRATION.md) | Setup for Claude Code, Copilot CLI, etc. |
 | [CTO Guide](docs/CTO_GUIDE.md) | Executive security guide |
 | [Comparison](docs/COMPARISON.md) | How Dhi compares to other tools |
+
+## Crash Resistance
+
+| Mode | On Crash | Behavior |
+|------|----------|----------|
+| **eBPF Mode** | Traffic flows normally | **Fail-open** (recommended) |
+| **Proxy Mode** | Apps lose connectivity | **Fail-closed** |
+
+**Recommendation**: Use eBPF mode on Linux. The systemd service auto-restarts Dhi within 5 seconds if it crashes. See [Operations Guide](docs/OPERATIONS.md) for details.
 
 ## Endpoints
 
