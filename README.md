@@ -64,23 +64,56 @@ python dhi_agentic.py --demo
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     DHI RUNTIME                             │
-├─────────────────────────────────────────────────────────────┤
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐         │
-│  │   eBPF      │  │  Agentic    │  │  Detection  │         │
-│  │  Monitor    │  │  Runtime    │  │   Engine    │         │
-│  │  (kernel)   │  │  (app)      │  │  (rules)    │         │
-│  └─────────────┘  └─────────────┘  └─────────────┘         │
-│         │                │                │                 │
-│         └────────────────┼────────────────┘                 │
-│                          ▼                                  │
-│               ┌─────────────────────┐                       │
-│               │  Alerting/Metrics   │                       │
-│               │  Slack | Prometheus │                       │
-│               └─────────────────────┘                       │
-└─────────────────────────────────────────────────────────────┘
+                            ┌─────────────────────────────────────┐
+                            │         EXTERNAL SERVICES           │
+                            │  ┌─────────┐ ┌─────────┐ ┌───────┐  │
+                            │  │ OpenAI  │ │ Claude  │ │ Tools │  │
+                            │  │   API   │ │   API   │ │  MCP  │  │
+                            │  └────▲────┘ └────▲────┘ └───▲───┘  │
+                            └───────┼──────────┼──────────┼───────┘
+                                    │          │          │
+                    ════════════════╪══════════╪══════════╪════════════════
+                                    │    DHI SECURITY LAYER    │
+                    ════════════════╪══════════╪══════════╪════════════════
+                                    │          │          │
+                            ┌───────┴──────────┴──────────┴───────┐
+                            │           DHI RUNTIME               │
+                            │  ┌────────────────────────────────┐ │
+                            │  │      SECURITY CHECKS           │ │
+                            │  │  • Secrets Detection (20+)     │ │
+                            │  │  • PII Scanning & Redaction    │ │
+                            │  │  • Prompt Injection Detection  │ │
+                            │  │  • Tool Risk Assessment        │ │
+                            │  │  • Budget Enforcement          │ │
+                            │  │  • Egress Control              │ │
+                            │  └────────────────────────────────┘ │
+                            │                 │                   │
+                            │    ┌────────────┴────────────┐      │
+                            │    │  BLOCK │ ALERT │ LOG    │      │
+                            │    └────────────┬────────────┘      │
+                            │                 │                   │
+                            │  ┌──────────────┴──────────────┐    │
+                            │  │   Slack  │  Prometheus  │ SIEM   │
+                            │  └─────────────────────────────┘    │
+                            └───────────────────▲─────────────────┘
+                                                │
+                    ════════════════════════════╪══════════════════════════
+                                                │
+                            ┌───────────────────┴─────────────────┐
+                            │            AI AGENTS                │
+                            │  ┌─────────┐ ┌─────────┐ ┌───────┐  │
+                            │  │LangChain│ │ CrewAI  │ │AutoGen│  │
+                            │  │  Agent  │ │  Agent  │ │ Agent │  │
+                            │  └─────────┘ └─────────┘ └───────┘  │
+                            └─────────────────────────────────────┘
 ```
+
+**How it works:**
+1. **AI Agents** make requests to LLM APIs and tools
+2. **Dhi intercepts** all outbound requests and responses
+3. **Security checks** scan for secrets, PII, injections, risky tools
+4. **Action taken**: Block (stop request), Alert (notify + allow), or Log (record only)
+5. **Alerts flow** to Slack, Prometheus metrics, or your SIEM
 
 ## Documentation
 
