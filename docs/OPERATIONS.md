@@ -178,6 +178,53 @@ sudo journalctl -u dhi -f
 sudo journalctl -u dhi -n 100
 ```
 
+### Auto-start Setup (Verified)
+
+If you want Dhi to start automatically after VM reboot, use this exact setup:
+
+```bash
+# Build and install binary
+cargo build --release
+sudo install -m 755 target/release/dhi /usr/local/bin/dhi
+
+# Runtime directories
+sudo mkdir -p /etc/dhi /var/log/dhi /usr/share/dhi
+sudo cp -n dhi.toml.example /etc/dhi/dhi.toml || true
+
+# Create systemd service
+sudo tee /etc/systemd/system/dhi.service >/dev/null <<'EOF'
+[Unit]
+Description=Dhi AI Agent Security
+After=network.target
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/dhi --level alert --ebpf-ssl-only --port 9090
+Restart=always
+RestartSec=5
+WorkingDirectory=/var/log/dhi
+AmbientCapabilities=CAP_BPF CAP_PERFMON CAP_SYS_PTRACE CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_BPF CAP_PERFMON CAP_SYS_PTRACE CAP_NET_ADMIN
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Enable + start now
+sudo systemctl daemon-reload
+sudo systemctl enable --now dhi
+
+# Verify
+systemctl is-enabled dhi
+systemctl status dhi --no-pager
+curl http://127.0.0.1:9090/health
+```
+
+> Note: `dhi.toml.example` is a template and may not map 1:1 to the runtime config struct in this build. The service above starts Dhi via CLI flags for a reliable boot path.
+
 ---
 
 ## Crash Resistance
