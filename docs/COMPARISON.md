@@ -13,8 +13,50 @@
 - 💉 Prompt injection blocking
 - 💰 Cost/budget enforcement
 - 📊 Security observability
+- 🔒 **HTTPS traffic interception** (unique capability)
 
-**Key Differentiator**: Dhi is the only tool that combines kernel-level eBPF monitoring with application-layer AI security in a single, lightweight package.
+**Key Differentiators**:
+1. **eBPF SSL Hooking**: Dhi is the **only open-source tool** that can intercept HTTPS traffic at the kernel level without requiring certificate installation. This means full visibility into encrypted LLM API calls.
+2. **Kernel-Level Monitoring**: Combined syscall and SSL/TLS interception in a single package.
+3. **Zero Configuration**: Works with any AI tool via proxy or eBPF - no code changes needed.
+
+---
+
+## 🔒 HTTPS Interception: Dhi's Unique Capability
+
+Most security tools can only see HTTP traffic or require MITM certificate installation for HTTPS. Dhi uses **eBPF uprobes** to capture plaintext data directly from SSL library functions:
+
+| Tool | HTTP | HTTPS (Proxy) | HTTPS (eBPF) | No Cert Needed |
+|------|------|---------------|--------------|----------------|
+| **Dhi** | ✅ | ✅ | ✅ | ✅ |
+| NeMo Guardrails | ✅ | ❌ | ❌ | N/A |
+| Guardrails AI | ✅ | ❌ | ❌ | N/A |
+| LlamaGuard | ✅ | ❌ | ❌ | N/A |
+| Rebuff/Lakera | ✅ | ⚠️ (API) | ❌ | N/A |
+| mitmproxy | ✅ | ✅ | ❌ | ❌ (needs CA) |
+| Falco | ❌ | ❌ | ❌ | N/A |
+
+**How it works:**
+
+```
+Your Agent
+    │
+    │ SSL_write("sk-proj-abc123...")  ← eBPF captures plaintext HERE
+    ▼
+┌─────────────────┐
+│   OpenSSL       │ ← Dhi hooks SSL_read/SSL_write
+│   (encrypt)     │
+└────────┬────────┘
+         │
+         │ [Encrypted TLS traffic]
+         ▼
+    api.openai.com
+```
+
+This means Dhi can scan for secrets, PII, and injection attempts **even in HTTPS traffic** without:
+- Installing a CA certificate
+- Modifying your application
+- Running a MITM proxy
 
 ---
 
@@ -148,6 +190,8 @@
 
 | Feature | Dhi | NeMo | Guardrails AI | LlamaGuard | E2B | Rebuff |
 |---------|-----|------|---------------|------------|-----|--------|
+| **HTTPS Interception** | ✅ eBPF | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **No Cert Install** | ✅ | N/A | N/A | N/A | N/A | ❌ |
 | **Secret Detection** | ✅ 20+ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **PII Detection** | ✅ 12+ | ❌ | ⚠️ | ❌ | ❌ | ❌ |
 | **Auto-Redaction** | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
@@ -181,6 +225,7 @@
 ## When to Use What
 
 ### Use Dhi When:
+- ✅ You need **full HTTPS visibility** without certificate installation
 - ✅ You need to prevent credential/secret leaks
 - ✅ You need PII detection and redaction
 - ✅ You need budget/cost controls per agent
@@ -188,6 +233,7 @@
 - ✅ You need tool call risk assessment
 - ✅ You want self-hosted, open-source solution
 - ✅ You need Prometheus metrics for dashboards
+- ✅ You're using Claude Code, Copilot CLI, or other AI tools with HTTPS APIs
 
 ### Use NeMo Guardrails When:
 - ✅ You need conversational topic control
@@ -218,9 +264,10 @@ For production AI agent deployments, use **defense in depth**:
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  LAYER 1: DHI RUNTIME SECURITY                              │
-│  • Secret detection     • PII protection                    │
-│  • Budget enforcement   • Tool risk scoring                 │
-│  • Prompt injection     • Alerting & metrics                │
+│  • HTTPS interception   • Secret detection                  │
+│  • PII protection       • Budget enforcement                │
+│  • Tool risk scoring    • Prompt injection                  │
+│  • Alerting & metrics   • eBPF kernel monitoring            │
 └─────────────────────────┬───────────────────────────────────┘
                           │
                           ▼
@@ -255,6 +302,11 @@ For production AI agent deployments, use **defense in depth**:
 | **E2B** | Code sandboxing | ✅ Yes |
 | **Modal** | GPU compute | ✅ Yes |
 | **Rebuff** | Prompt injection | ⚠️ Overlap |
+
+**Dhi's Unique Capabilities**:
+1. **eBPF SSL Hooking** - Only tool that intercepts HTTPS without certificates
+2. **Kernel-Level Monitoring** - Syscalls + SSL combined
+3. **Zero-Config Protection** - Works with any AI tool via proxy or eBPF
 
 **Dhi fills a unique gap**: runtime security monitoring that no other tool provides comprehensively. Use it as your foundation, add other tools as needed.
 

@@ -6,17 +6,18 @@
 
 ## Overview
 
-Dhi protects AI coding assistants through **HTTP proxy mode** - no code changes needed!
+Dhi protects AI coding assistants through **two modes**:
 
-| Mode | How It Works | Setup Complexity |
-|------|--------------|------------------|
-| **Proxy Mode** | Intercept HTTP traffic to LLM APIs | Low (env vars only) |
+| Mode | How It Works | HTTPS Visibility | Platform |
+|------|--------------|------------------|----------|
+| **Proxy Mode** | HTTP proxy intercepts traffic | Hostname only | All |
+| **eBPF Mode** | Kernel-level SSL hooking | **Full plaintext** | Linux |
 
-**Key benefit:** Proxy mode works with ANY AI tool that makes HTTP requests. No SDK integration required.
+**Recommendation:** Use **eBPF mode on Linux** for full HTTPS visibility. Use **Proxy mode** on macOS/Windows or when root access is unavailable.
 
 ---
 
-## Quick Start (2 Minutes)
+## Quick Start: Proxy Mode (All Platforms)
 
 ### 1. Build Dhi
 
@@ -64,6 +65,90 @@ cursor                    # Cursor IDE
 ```
 
 **That's it!** All LLM API calls are now monitored.
+
+---
+
+## Quick Start: eBPF Mode (Linux - Full HTTPS Visibility)
+
+eBPF mode provides **full visibility into HTTPS traffic** by hooking SSL library functions. This captures plaintext **before encryption** and **after decryption**.
+
+### 1. Build Dhi and eBPF Program
+
+```bash
+# Build Dhi
+cargo build --release
+
+# Build the eBPF program
+cd bpf
+clang -O2 -g -target bpf -c dhi_ssl.bpf.c -o dhi_ssl.bpf.o
+
+# Install eBPF program
+sudo mkdir -p /usr/share/dhi
+sudo cp dhi_ssl.bpf.o /usr/share/dhi/
+```
+
+### 2. Run Dhi with eBPF (Requires Root)
+
+```bash
+# Run with eBPF monitoring
+sudo ./target/release/dhi --level alert
+
+# With Slack alerts
+sudo ./target/release/dhi --level alert --slack-webhook "https://hooks.slack.com/..."
+```
+
+### 3. Use Your AI Tools Normally
+
+No proxy configuration needed! Dhi captures all SSL traffic system-wide.
+
+```bash
+# These are automatically monitored
+claude "Write a hello world program"
+gh copilot suggest "how to parse JSON"
+python my_langchain_agent.py
+```
+
+### What Gets Captured
+
+| Library | Functions Hooked |
+|---------|-----------------|
+| OpenSSL | `SSL_read`, `SSL_write`, `SSL_read_ex`, `SSL_write_ex` |
+| BoringSSL | `SSL_read`, `SSL_write` (Chrome, Go apps) |
+| GnuTLS | `gnutls_record_recv`, `gnutls_record_send` |
+
+### Requirements
+
+- Linux kernel 5.4+ (for BTF support)
+- Root or `CAP_BPF` capability
+- SSL library must be dynamically linked
+
+### Verify eBPF is Working
+
+```bash
+# Check if SSL probes are attached
+sudo cat /sys/kernel/debug/tracing/uprobe_events
+
+# Look for Dhi SSL interception logs
+sudo journalctl -u dhi -f | grep SSL
+```
+
+---
+
+## Proxy Mode vs eBPF Mode
+
+| Aspect | Proxy Mode | eBPF Mode |
+|--------|------------|-----------|
+| **Platform** | All (Linux, macOS, Windows) | Linux only |
+| **HTTPS Content** | Hostname only | Full plaintext |
+| **Setup** | Env vars (`HTTP_PROXY`) | Build eBPF + root |
+| **App Changes** | Need proxy env vars | None |
+| **Root Required** | No | Yes |
+| **Performance** | Minimal | Near-zero |
+
+**Best Practice:**
+- **Linux servers**: Use eBPF mode for full visibility
+- **Developer machines**: Use Proxy mode (easier setup)
+- **CI/CD**: Use Proxy mode (no root in containers)
 
 ---
 

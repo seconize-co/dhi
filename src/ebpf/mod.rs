@@ -17,6 +17,10 @@ pub mod ssl_hook;
 #[cfg(target_os = "linux")]
 pub use ssl_hook::{SslEvent, SslDirection, SslAnalysisResult, SslMonitor, SslTracer};
 
+#[cfg(all(target_os = "linux", test))]
+#[path = "ssl_hook_test.rs"]
+mod ssl_hook_test;
+
 #[cfg(not(target_os = "linux"))]
 mod stub;
 
