@@ -1,0 +1,73 @@
+[package]
+name = "dhi"
+version = "0.1.0"
+edition = "2021"
+authors = ["Seconize <hello@seconize.co>"]
+description = "Dhi - Runtime Intelligence & Protection System for AI Agents"
+license = "MIT"
+repository = "https://github.com/seconize-co/dhi"
+keywords = ["security", "ebpf", "ai-agents", "runtime-protection", "agentic"]
+categories = ["command-line-utilities", "development-tools"]
+readme = "README.md"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.36", features = ["full"] }
+
+# eBPF
+aya = { version = "0.12", features = ["async_tokio"] }
+aya-log = "0.2"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# CLI
+clap = { version = "4.5", features = ["derive"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Pattern matching
+regex = "1.10"
+lazy_static = "1.4"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Hashing
+sha2 = "0.10"
+hex = "0.4"
+
+# HTTP client (for LLM API interception)
+reqwest = { version = "0.12", features = ["json"] }
+
+# Metrics
+prometheus = "0.13"
+
+# Configuration
+config = "0.14"
+toml = "0.8"
+
+[build-dependencies]
+aya-build = "0.1"
+which = "6.0"
+
+[[bin]]
+name = "dhi"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.dev]
+opt-level = 0
+debug = true
