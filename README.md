@@ -1,8 +1,8 @@
-# 🧠 Dhi - Runtime Intelligence for AI Agents
+# 🛡️ Dhi - Runtime Security for AI Agents
 
 **धी** (Sanskrit: *Intellect* | *Perception* | *Clear Vision*)
 
-Dhi is a high-performance runtime protection system for AI agents. It provides kernel-level monitoring via eBPF and application-level security for LLM-based systems.
+Dhi is a **security-first runtime protection system** for AI agents. It detects and blocks credential leaks, PII exposure, prompt injection, and runaway costs—before damage is done.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/Rust-1.75+-orange.svg)](https://www.rust-lang.org/)
@@ -10,25 +10,29 @@ Dhi is a high-performance runtime protection system for AI agents. It provides k
 
 ## Why Dhi?
 
-AI agents are powerful but risky. They can:
-- 🔓 Leak API keys and credentials
-- 📤 Exfiltrate sensitive data (PII, secrets)
-- 💸 Run up massive LLM bills
-- 🔄 Get stuck in infinite loops
-- 💉 Fall victim to prompt injection
+AI agents are powerful but introduce **serious security risks**:
 
-**Dhi watches everything and stops threats in real-time.**
+| Threat | Impact | Dhi Protection |
+|--------|--------|----------------|
+| 🔓 **Credential Leakage** | API keys exposed in logs/outputs | Real-time detection & blocking |
+| 📤 **Data Exfiltration** | PII/secrets sent to external APIs | Egress scanning & redaction |
+| 💸 **Cost Explosion** | Runaway LLM spending | Budget limits & auto-cutoff |
+| 🔄 **Infinite Loops** | Stuck agents burning tokens | Loop detection & termination |
+| 💉 **Prompt Injection** | Malicious instructions hijack agent | Attack pattern detection |
+| 🔓 **Jailbreaks** | Safety bypasses via social engineering | Jailbreak signature matching |
 
-## Features
+**Dhi watches everything your agents do and stops threats in real-time.**
+
+## Security Features
 
 | Feature | Description |
 |---------|-------------|
 | 🔐 **Secrets Detection** | 20+ patterns for API keys (OpenAI, AWS, GitHub, Stripe, etc.) |
-| 🛡️ **PII Protection** | Detects emails, SSNs, credit cards, phone numbers |
+| 🛡️ **PII Protection** | Detects & redacts emails, SSNs, credit cards, phone numbers |
 | 💰 **Budget Control** | Per-agent and global spending limits with auto-blocking |
-| 🔍 **Tool Monitoring** | Risk-score every tool call, block dangerous operations |
-| 💉 **Prompt Security** | Injection and jailbreak detection |
-| 📊 **Prometheus Metrics** | 22 metrics for Grafana dashboards |
+| 🔍 **Tool Monitoring** | Risk-scores every tool call, blocks dangerous operations |
+| 💉 **Prompt Security** | Injection and jailbreak detection with 30+ attack patterns |
+| 📊 **Prometheus Metrics** | 22 security metrics for Grafana dashboards |
 | 🚨 **Real-time Alerts** | Slack, email, and webhook integrations |
 | 🐧 **eBPF Monitoring** | Kernel-level syscall tracking (Linux) |
 
