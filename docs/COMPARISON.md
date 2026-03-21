@@ -192,6 +192,7 @@ This means Dhi can scan for secrets, PII, and injection attempts **even in HTTPS
 |---------|-----|------|---------------|------------|-----|--------|
 | **HTTPS Interception** | ✅ eBPF | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **No Cert Install** | ✅ | N/A | N/A | N/A | N/A | ❌ |
+| **Agent Fingerprinting** | ✅ Auto | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **Secret Detection** | ✅ 20+ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **PII Detection** | ✅ 12+ | ❌ | ⚠️ | ❌ | ❌ | ❌ |
 | **Auto-Redaction** | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |

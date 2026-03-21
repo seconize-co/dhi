@@ -11,6 +11,7 @@ Dhi provides comprehensive runtime security for AI agents through these core mod
 | Module | Purpose |
 |--------|---------|
 | `AgenticRuntime` | Main runtime for agent tracking |
+| `AgentFingerprinter` | Automatic agent/framework detection |
 | `LlmMonitor` | LLM API call tracking & cost estimation |
 | `ToolMonitor` | Tool invocation risk assessment |
 | `PromptSecurity` | Injection & jailbreak detection |
@@ -170,7 +171,40 @@ Detects context tampering and injection:
 - Injected system messages in conversation
 - Context window manipulation
 
-### 8. MCP Protocol Monitoring
+### 8. Agent Fingerprinting
+
+Dhi automatically identifies which agents and frameworks are making requests:
+
+**Detection Sources:**
+
+| Source | What's Detected |
+|--------|-----------------|
+| Process Name (eBPF) | `claude`, `gh`, `python`, `node` |
+| User-Agent Header | `openai-python/1.x`, `langchain/0.1` |
+| Custom Headers | `X-LangChain-*`, `X-Request-Id` |
+| Request Patterns | API paths, body structure |
+
+**Detected Frameworks:**
+
+| Category | Frameworks |
+|----------|------------|
+| AI Coding Assistants | Claude Code, Copilot CLI, Cursor, Windsurf, Aider |
+| Agent Frameworks | LangChain, LlamaIndex, CrewAI, AutoGen, Haystack |
+| SDKs | OpenAI Python/Node, Anthropic Python/Node |
+
+**Detected Providers:**
+OpenAI, Anthropic, Google AI, Azure OpenAI, AWS Bedrock, Cohere, Mistral, Groq, Together, Ollama
+
+**Agent Reports Include:**
+- Framework and provider distribution
+- Per-agent request counts, tokens, cost
+- Model usage statistics
+- Security events per agent
+- High-risk agent alerts
+
+See `examples/sample-report-agents.json` for sample output.
+
+### 9. MCP Protocol Monitoring
 
 Dhi automatically monitors Model Context Protocol (MCP) traffic:
 - Tool invocation requests
@@ -178,7 +212,7 @@ Dhi automatically monitors Model Context Protocol (MCP) traffic:
 - Permission violations
 - Session tracking
 
-### 9. Alerting
+### 10. Alerting
 
 Configure alerts in `dhi.toml`:
 

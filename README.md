@@ -32,6 +32,7 @@ AI agents are powerful but introduce **serious security risks**:
 | 💰 **Budget Control** | Per-agent and global spending limits with auto-blocking |
 | 🔍 **Tool Monitoring** | Risk-scores every tool call, blocks dangerous operations |
 | 💉 **Prompt Security** | Injection and jailbreak detection with 30+ attack patterns |
+| 🔎 **Agent Fingerprinting** | Auto-detect frameworks (LangChain, CrewAI, Claude Code, etc.) |
 | 📊 **Prometheus Metrics** | 22 security metrics for Grafana dashboards |
 | 🚨 **Real-time Alerts** | Slack, email, and webhook integrations |
 | 🐧 **eBPF Monitoring** | Kernel-level syscall tracking (Linux) |

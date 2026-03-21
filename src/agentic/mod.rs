@@ -13,11 +13,13 @@
 //! - Alerting
 //! - Metrics
 //! - Data protection
+//! - Agent fingerprinting
 
 mod alerting;
 mod budget;
 mod data_protection;
 mod efficiency;
+mod fingerprint;
 mod llm_monitor;
 mod mcp_monitor;
 mod memory_protection;
@@ -34,6 +36,7 @@ pub use alerting::*;
 pub use budget::*;
 pub use data_protection::*;
 pub use efficiency::*;
+pub use fingerprint::*;
 pub use llm_monitor::*;
 pub use mcp_monitor::*;
 pub use memory_protection::*;

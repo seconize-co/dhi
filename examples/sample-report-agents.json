@@ -1,0 +1,175 @@
+{
+  "report_type": "agent_analysis",
+  "generated_at": "2026-03-21T10:00:00Z",
+  "period": "daily",
+  
+  "summary": {
+    "total_agents_detected": 5,
+    "active_agents_last_hour": 3,
+    "total_requests": 1247,
+    "total_tokens": 892450,
+    "estimated_cost_usd": 127.45,
+    "security_events": 7,
+    "high_risk_agents": 1
+  },
+  
+  "framework_distribution": {
+    "Claude Code": 2,
+    "LangChain": 1,
+    "OpenAI Python SDK": 1,
+    "GitHub Copilot CLI": 1
+  },
+  
+  "provider_distribution": {
+    "Anthropic": 3,
+    "OpenAI": 2
+  },
+  
+  "model_usage": {
+    "claude-3-5-sonnet-20241022": 523,
+    "gpt-4o": 412,
+    "claude-3-opus": 187,
+    "gpt-4": 125
+  },
+  
+  "agents": [
+    {
+      "id": "claude:12345",
+      "framework": "Claude Code",
+      "category": "AI Coding Assistant",
+      "providers": ["Anthropic"],
+      "models": ["claude-3-5-sonnet-20241022", "claude-3-opus"],
+      "process_name": "claude",
+      "pid": 12345,
+      "user_agent": null,
+      "first_seen": "2026-03-21T08:15:00Z",
+      "last_seen": "2026-03-21T09:58:00Z",
+      "request_count": 523,
+      "total_tokens": 412000,
+      "estimated_cost": 52.30,
+      "risk_score": 15,
+      "security_events": []
+    },
+    {
+      "id": "python:23456",
+      "framework": "LangChain",
+      "category": "Agent Framework",
+      "providers": ["OpenAI"],
+      "models": ["gpt-4o"],
+      "process_name": "python",
+      "pid": 23456,
+      "user_agent": "langchain/0.1.0 openai-python/1.12.0",
+      "custom_headers": {
+        "X-LangChain-Request": "true",
+        "X-LangChain-Run-Id": "abc123"
+      },
+      "first_seen": "2026-03-21T09:00:00Z",
+      "last_seen": "2026-03-21T09:55:00Z",
+      "request_count": 312,
+      "total_tokens": 245000,
+      "estimated_cost": 36.75,
+      "risk_score": 65,
+      "security_events": [
+        {
+          "event_type": "secret_detected",
+          "severity": "critical",
+          "timestamp": "2026-03-21T09:23:15Z",
+          "details": "OpenAI API key detected in prompt, blocked"
+        },
+        {
+          "event_type": "pii_detected",
+          "severity": "high",
+          "timestamp": "2026-03-21T09:34:22Z",
+          "details": "Email addresses detected in prompt, redacted"
+        }
+      ]
+    },
+    {
+      "id": "gh:34567",
+      "framework": "GitHub Copilot CLI",
+      "category": "AI Coding Assistant",
+      "providers": ["OpenAI"],
+      "models": ["gpt-4"],
+      "process_name": "gh",
+      "pid": 34567,
+      "user_agent": "gh-copilot/1.0.0",
+      "first_seen": "2026-03-21T08:30:00Z",
+      "last_seen": "2026-03-21T09:45:00Z",
+      "request_count": 125,
+      "total_tokens": 98000,
+      "estimated_cost": 14.70,
+      "risk_score": 10,
+      "security_events": []
+    },
+    {
+      "id": "python:45678",
+      "framework": "OpenAI Python SDK",
+      "category": "SDK",
+      "providers": ["OpenAI"],
+      "models": ["gpt-4o"],
+      "process_name": "python",
+      "pid": 45678,
+      "user_agent": "openai-python/1.12.0",
+      "first_seen": "2026-03-21T09:10:00Z",
+      "last_seen": "2026-03-21T09:50:00Z",
+      "request_count": 100,
+      "total_tokens": 75000,
+      "estimated_cost": 11.25,
+      "risk_score": 25,
+      "security_events": [
+        {
+          "event_type": "injection_attempt",
+          "severity": "medium",
+          "timestamp": "2026-03-21T09:41:00Z",
+          "details": "Potential prompt injection pattern detected"
+        }
+      ]
+    },
+    {
+      "id": "claude:56789",
+      "framework": "Claude Code",
+      "category": "AI Coding Assistant",
+      "providers": ["Anthropic"],
+      "models": ["claude-3-5-sonnet-20241022"],
+      "process_name": "claude",
+      "pid": 56789,
+      "user_agent": null,
+      "first_seen": "2026-03-21T09:30:00Z",
+      "last_seen": "2026-03-21T09:57:00Z",
+      "request_count": 187,
+      "total_tokens": 62450,
+      "estimated_cost": 12.45,
+      "risk_score": 5,
+      "security_events": []
+    }
+  ],
+  
+  "high_risk_agents": [
+    {
+      "id": "python:23456",
+      "framework": "LangChain",
+      "risk_score": 65,
+      "security_events_count": 2,
+      "reason": "Multiple security events detected: credential leak attempt, PII exposure"
+    }
+  ],
+  
+  "recommendations": [
+    {
+      "severity": "high",
+      "agent_id": "python:23456",
+      "recommendation": "Review LangChain agent prompts for hardcoded credentials. Consider using environment variables or a secrets manager."
+    },
+    {
+      "severity": "medium",
+      "agent_id": "python:45678",
+      "recommendation": "Monitor for prompt injection attempts. Consider adding input validation in your application."
+    }
+  ],
+  
+  "trends": {
+    "requests_per_hour": [45, 52, 78, 112, 156, 189, 215, 198, 202],
+    "cost_per_hour": [4.50, 5.20, 8.90, 14.20, 18.50, 22.30, 26.75, 24.10, 25.00],
+    "security_events_per_hour": [0, 0, 0, 1, 2, 1, 2, 1, 0]
+  }
+}
