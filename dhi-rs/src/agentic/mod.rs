@@ -9,20 +9,32 @@
 //! - Secrets detection
 //! - PII detection
 //! - Efficiency analysis
+//! - Budget control
+//! - Alerting
+//! - Metrics
+//! - Data protection
 
+mod alerting;
+mod budget;
+mod data_protection;
 mod efficiency;
 mod llm_monitor;
 mod mcp_monitor;
 mod memory_protection;
+mod metrics;
 mod pii_detector;
 mod prompt_security;
 mod secrets_detector;
 mod tool_monitor;
 
+pub use alerting::*;
+pub use budget::*;
+pub use data_protection::*;
 pub use efficiency::*;
 pub use llm_monitor::*;
 pub use mcp_monitor::*;
 pub use memory_protection::*;
+pub use metrics::*;
 pub use pii_detector::*;
 pub use prompt_security::*;
 pub use secrets_detector::*;

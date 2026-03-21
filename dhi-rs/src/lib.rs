@@ -30,6 +30,7 @@ pub mod agentic;
 pub mod detection;
 pub mod ebpf;
 pub mod monitor;
+pub mod server;
 
 use anyhow::Result;
 use std::sync::Arc;

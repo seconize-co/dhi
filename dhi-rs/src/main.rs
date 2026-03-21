@@ -5,6 +5,8 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use dhi::{DhiConfig, DhiRuntime, ProtectionLevel};
+use dhi::agentic::DhiMetrics;
+use std::sync::Arc;
 use tracing::{info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
@@ -33,6 +35,14 @@ struct Cli {
     /// Maximum budget for LLM calls (USD)
     #[arg(long)]
     max_budget: Option<f64>,
+
+    /// HTTP port for metrics/API server
+    #[arg(long, default_value = "9090")]
+    port: u16,
+
+    /// Slack webhook URL for alerts
+    #[arg(long)]
+    slack_webhook: Option<String>,
 
     /// Configuration file path
     #[arg(short, long)]
@@ -88,12 +98,32 @@ fn print_banner(level: &ProtectionLevel) {
     println!();
 }
 
-async fn run_monitor(config: DhiConfig) -> Result<()> {
+async fn run_monitor(config: DhiConfig, port: u16, slack_webhook: Option<String>) -> Result<()> {
     let runtime = DhiRuntime::new(config.clone());
     runtime.start().await?;
 
     print_banner(&config.protection_level);
     info!("Dhi runtime started");
+
+    // Initialize metrics
+    let metrics = Arc::new(tokio::sync::RwLock::new(DhiMetrics::new()));
+
+    // Start HTTP metrics server
+    let metrics_clone = Arc::clone(&metrics);
+    let addr = format!("0.0.0.0:{}", port);
+    tokio::spawn(async move {
+        info!("Starting metrics server on {}...", addr);
+        if let Err(e) = dhi::server::start_metrics_server(&addr, metrics_clone).await {
+            warn!("Metrics server error: {}", e);
+        }
+    });
+
+    // Setup alerting if Slack webhook provided
+    if let Some(webhook_url) = slack_webhook {
+        info!("Slack alerts enabled");
+        // Store for use in alert handlers
+        std::env::set_var("DHI_SLACK_WEBHOOK", webhook_url);
+    }
 
     // Start eBPF monitoring if enabled
     if config.enable_ebpf {
@@ -313,6 +343,6 @@ async fn main() -> Result<()> {
             println!("Agents command not yet implemented");
             Ok(())
         }
-        Some(Commands::Monitor) | None => run_monitor(config).await,
+        Some(Commands::Monitor) | None => run_monitor(config, cli.port, cli.slack_webhook).await,
     }
 }
