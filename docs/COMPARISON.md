@@ -1,359 +1,262 @@
-# Dhi vs Popular Agentic Runtime Security Systems
+# Dhi vs AI Agent Security Tools (2026)
 
-> A comprehensive comparison of Dhi with other AI agent runtime protection solutions (March 2026)
+> Comprehensive comparison of Dhi with guardrails, sandboxes, and runtime security solutions
 
 ---
 
 ## Executive Summary
 
-Dhi is a **lightweight, open-source, kernel-level detection system** using eBPF. It differs from full sandboxing solutions by focusing on **monitoring and alerting** rather than isolation. This makes it ideal for:
+**Dhi** is a **runtime security layer** for AI agents that sits between your agents and external services. Unlike sandboxing solutions that isolate code execution, Dhi focuses on **detecting and blocking security threats** in real-time:
 
-- Environments where full sandboxing isn't feasible
-- Defense-in-depth alongside other tools
-- Cost-sensitive or self-hosted deployments
-- Teams wanting visibility without architecture changes
+- 🔐 Credential/secret leakage detection
+- 🛡️ PII exposure prevention
+- 💉 Prompt injection blocking
+- 💰 Cost/budget enforcement
+- 📊 Security observability
+
+**Key Differentiator**: Dhi is the only tool that combines kernel-level eBPF monitoring with application-layer AI security in a single, lightweight package.
 
 ---
 
 ## Market Landscape (2026)
 
-### Categories of Agentic Security
+### Categories of AI Agent Security
 
-| Category | Description | Examples |
-|----------|-------------|----------|
-| **Sandboxing** | Full isolation of agent execution | E2B, Modal, NVIDIA OpenShell |
-| **Runtime Detection** | Monitor and alert on suspicious behavior | **Dhi**, Falco, Sysdig |
-| **Policy Enforcement** | Guardrails and access control | NeMo Guardrails, AccuKnox |
-| **Governance** | Compliance, audit, posture management | Wiz AI-SPM, Orca Security |
-| **Prompt Security** | Injection prevention, content filtering | Lakera Guard, Rebuff |
-
----
-
-## Comparison Matrix
-
-### Dhi vs Major Competitors
-
-| Feature | **Dhi** | **NVIDIA OpenShell** | **E2B** | **AccuKnox** | **Modal** |
-|---------|---------|---------------------|---------|--------------|-----------|
-| **Approach** | eBPF syscall monitoring | Full sandboxed runtime | Firecracker microVM | Policy enforcement | gVisor sandbox |
-| **Isolation** | Detection only | Complete sandbox | Complete sandbox | Container + runtime | Sandbox |
-| **Open Source** | ✅ MIT | ✅ Open Source | Partial | Partial | ❌ |
-| **Overhead** | <1% CPU | ~5-10% | ~5-10% | Variable | ~3-5% |
-| **GPU Support** | N/A | Native NVIDIA | ❌ | ✅ | ✅ |
-| **Deployment** | Host daemon | Container/VM | Cloud service | Cloud-native | Cloud service |
-| **Cost** | Free | Free (self-hosted) | Pay-per-use | Enterprise | Pay-per-use |
-| **Linux Required** | ✅ | ✅ | ❌ | ❌ | ❌ |
-
-### Feature Deep Dive
-
-| Capability | Dhi | OpenShell | E2B | AccuKnox |
-|------------|-----|-----------|-----|----------|
-| File operation monitoring | ✅ | ✅ | ✅ | ✅ |
-| Network traffic detection | ✅ | ✅ | ✅ | ✅ |
-| Risk scoring | ✅ | ❌ | ❌ | ✅ |
-| Behavioral analysis | ✅ | ✅ | ❌ | ✅ |
-| Process blocking | ✅ | ✅ | ✅ | ✅ |
-| YAML policy config | ❌ | ✅ | ❌ | ✅ |
-| Privacy router | ❌ | ✅ | ❌ | ✅ |
-| Prompt injection protection | ❌ | ✅ (via NeMo) | ❌ | ✅ |
-| SIEM integration | Basic | Enterprise | Basic | Enterprise |
-| Framework agnostic | ✅ | Partial | ✅ | ✅ |
+| Category | Focus | Examples |
+|----------|-------|----------|
+| **Guardrails** | LLM input/output filtering | NeMo Guardrails, Guardrails AI, LlamaGuard |
+| **Sandboxing** | Code execution isolation | E2B, Modal, Daytona |
+| **Runtime Security** | Threat detection & blocking | **Dhi**, Falco, Tracee |
+| **Prompt Defense** | Injection/jailbreak prevention | Rebuff, Lakera Guard, Prompt Armor |
+| **Observability** | Monitoring & tracing | Langfuse, LangSmith, Helicone |
 
 ---
 
-## NVIDIA Stack Deep Dive
+## Detailed Comparisons
 
-### NVIDIA NemoClaw Architecture (March 2026)
+### 1. Dhi vs NeMo Guardrails (NVIDIA)
 
-NVIDIA recently released their comprehensive agentic security stack:
+| Aspect | **Dhi** | **NeMo Guardrails** |
+|--------|---------|---------------------|
+| **Focus** | Runtime security (secrets, PII, costs) | Conversational safety (topics, responses) |
+| **Language** | Rust (high performance) | Python + Colang DSL |
+| **Detection** | 20+ secret patterns, 12+ PII types | Topic rails, content filtering |
+| **Prompt Security** | ✅ Injection + jailbreak detection | ✅ Jailbreak prevention |
+| **Cost Control** | ✅ Budget limits per agent | ❌ Not included |
+| **Kernel Monitoring** | ✅ eBPF syscall tracking | ❌ Application layer only |
+| **Latency** | <5ms overhead | 10-200ms (depends on rails) |
+| **Best For** | Security-focused teams | Conversational AI safety |
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    NVIDIA NemoClaw Stack                        │
-├─────────────────────────────────────────────────────────────────┤
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
-│  │ NeMo         │  │ Privacy      │  │ AI-Q         │          │
-│  │ Guardrails   │  │ Router       │  │ Framework    │          │
-│  │ (Policy)     │  │ (Data)       │  │ (Audit)      │          │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘          │
-│         └─────────────────┼─────────────────┘                   │
-│                    ┌──────▼───────┐                             │
-│                    │  OpenShell   │                             │
-│                    │  (Sandbox)   │                             │
-│                    └──────────────┘                             │
-└─────────────────────────────────────────────────────────────────┘
-```
+**When to use NeMo Guardrails**: You need topic control, response safety, and conversational flow management.
 
-### OpenShell Components
-
-| Component | Purpose |
-|-----------|---------|
-| **OpenShell Runtime** | Sandboxed execution environment |
-| **NeMo Guardrails** | Policy enforcement, prompt protection |
-| **Privacy Router** | PII protection, local/cloud inference routing |
-| **AI-Q Framework** | Observability, reasoning audit, explainability |
-
-### OpenShell Features
-
-- **Sandboxed Execution**: Kernel-level isolation for agent actions
-- **YAML Policy Engine**: Declarative, per-binary, per-endpoint controls
-- **Least Privilege**: Deny by default, explicit allow rules
-- **Network Controls**: Endpoint restrictions, traffic filtering
-- **Enterprise Integration**: CrowdStrike, Cisco AI Defense, SIEM/SOAR
-- **Framework Support**: OpenClaw, LangChain, Claude Code, Codex
+**When to use Dhi**: You need to prevent data leaks, enforce budgets, and detect threats at the system level.
 
 ---
 
-## Dhi Architecture
+### 2. Dhi vs Guardrails AI
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         Dhi Architecture                        │
-├─────────────────────────────────────────────────────────────────┤
-│                    ┌──────────────┐                             │
-│                    │   Any Agent  │  ← No sandbox needed        │
-│                    │  or Process  │                             │
-│                    └──────┬───────┘                             │
-│                           │ syscalls                            │
-│                    ┌──────▼───────┐                             │
-│                    │  eBPF Hooks  │  ← Kernel-level visibility  │
-│                    │  (Kernel)    │                             │
-│                    └──────┬───────┘                             │
-│                    ┌──────▼───────┐                             │
-│                    │ Intelligence │  ← Risk scoring & detection │
-│                    │   Engine     │                             │
-│                    └──────┬───────┘                             │
-│                    ┌──────▼───────┐                             │
-│                    │   Output     │  ← Logs, alerts, metrics    │
-│                    │  Handlers    │                             │
-│                    └──────────────┘                             │
-└─────────────────────────────────────────────────────────────────┘
-```
+| Aspect | **Dhi** | **Guardrails AI** |
+|--------|---------|-------------------|
+| **Focus** | Security threats | Output validation & formatting |
+| **Approach** | Block threats in real-time | Validate/retry LLM outputs |
+| **Schema Enforcement** | ❌ Not a focus | ✅ Pydantic validation |
+| **Secret Detection** | ✅ 20+ patterns | ❌ Not included |
+| **PII Detection** | ✅ Auto-redaction | ⚠️ Basic (via validators) |
+| **Prompt Injection** | ✅ 30+ attack patterns | ⚠️ Limited |
+| **Implementation** | Rust library/daemon | Python decorators |
 
-### Dhi Components
+**When to use Guardrails AI**: You need structured outputs, JSON validation, and retry logic.
 
-| Component | Purpose |
-|-----------|---------|
-| **eBPF Kernel Hooks** | Syscall interception (openat, sendto, unlinkat, etc.) |
-| **Ring Buffer** | Lock-free event transport to user space |
-| **Intelligence Engine** | Risk calculation, threat correlation |
-| **Output Handlers** | Logging, alerting, metrics export |
+**When to use Dhi**: You need security enforcement, not output formatting.
 
 ---
 
-## Where Each Solution Fits
+### 3. Dhi vs LlamaGuard (Meta)
 
-### Security Stack Layers
+| Aspect | **Dhi** | **LlamaGuard** |
+|--------|---------|----------------|
+| **Approach** | Rule-based + patterns | LLM-based classification |
+| **Speed** | <5ms | 50-200ms (model inference) |
+| **Customization** | Regex patterns, config | Policy prompts |
+| **Secret Detection** | ✅ Comprehensive | ❌ Not designed for this |
+| **Content Safety** | ⚠️ Basic | ✅ Toxicity, harm, bias |
+| **Self-Hosted** | ✅ Single binary | ✅ Open weights |
+| **GPU Required** | ❌ No | ✅ Yes (for inference) |
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│              COMPLETE AGENTIC SECURITY STACK                │
-├─────────────────────────────────────────────────────────────┤
-│  Layer 1: Prompt Security    → Lakera, NeMo Guardrails     │
-│  Layer 2: Sandboxing         → OpenShell, E2B, Modal       │
-│  Layer 3: Runtime Detection  → DHI, Falco, AccuKnox        │  ◄── Dhi
-│  Layer 4: Governance         → Wiz AI-SPM, Orca            │
-└─────────────────────────────────────────────────────────────┘
-```
+**When to use LlamaGuard**: You need content safety classification (toxicity, harm).
 
-### Use Case Recommendations
-
-| Use Case | Recommended Solution |
-|----------|---------------------|
-| Enterprise with NVIDIA GPUs | OpenShell/NemoClaw |
-| Lightweight monitoring only | **Dhi** |
-| Full agent sandboxing | OpenShell, E2B |
-| No architecture changes needed | **Dhi** |
-| Privacy/compliance heavy | NemoClaw (privacy router) |
-| Open source, self-hosted | **Dhi**, OpenShell |
-| Framework-specific (OpenClaw) | OpenShell |
-| Framework-agnostic (any process) | **Dhi** |
-| Cloud-native, managed | E2B, Modal, Northflank |
-| Air-gapped environments | **Dhi** |
+**When to use Dhi**: You need fast, deterministic security checks without GPU overhead.
 
 ---
 
-## Dhi's Unique Value Proposition
+### 4. Dhi vs E2B (Code Sandbox)
 
-### Strengths
+| Aspect | **Dhi** | **E2B** |
+|--------|---------|---------|
+| **Purpose** | Security monitoring | Code execution isolation |
+| **Isolation** | Detection + blocking | Firecracker microVM |
+| **Use Case** | All AI agents | Code interpreter agents |
+| **Deployment** | Self-hosted daemon | Cloud service |
+| **Secret Detection** | ✅ Yes | ❌ No |
+| **Budget Control** | ✅ Yes | ❌ No |
+| **Cold Start** | Instant (always running) | ~150ms per sandbox |
+| **Cost** | Free (open source) | Pay-per-use |
 
-| Strength | Description |
-|----------|-------------|
-| **Kernel-level visibility** | eBPF sees ALL syscalls—no bypass possible |
-| **Ultra-lightweight** | <1% CPU overhead vs 5-10% for sandboxes |
-| **Zero architecture change** | Deploy alongside existing agents |
-| **Open source (MIT)** | Fully free, self-hosted, no vendor lock-in |
-| **Risk scoring** | Intelligent threat assessment, not just logs |
-| **Simple deployment** | Single Python script + kernel module |
-| **Vendor neutral** | No NVIDIA/cloud dependency |
+**When to use E2B**: Your agent executes untrusted code and needs VM-level isolation.
 
-### Limitations
+**When to use Dhi**: You need security monitoring for any agent type, not just code execution.
 
-| Limitation | Competitors Address With |
-|------------|-------------------------|
-| No isolation/sandbox | OpenShell, E2B provide true sandboxing |
-| Linux only | Modal, E2B are cross-platform |
-| No managed service | E2B, Northflank are turnkey SaaS |
-| No prompt protection | NeMo Guardrails, Lakera |
-| Basic enterprise integration | OpenShell has CrowdStrike, Cisco |
+**Best Practice**: Use both! Dhi for detection, E2B for isolation.
 
 ---
 
-## Complementary Deployment
+### 5. Dhi vs Modal
 
-### Defense-in-Depth Strategy
+| Aspect | **Dhi** | **Modal** |
+|--------|---------|-----------|
+| **Focus** | Security | Infrastructure |
+| **Sandboxing** | ❌ Detection only | ✅ gVisor containers |
+| **GPU Support** | N/A | ✅ H100, A100 |
+| **Secret Detection** | ✅ Yes | ❌ No |
+| **Self-Hosted** | ✅ Yes | ❌ Cloud only |
+| **Pricing** | Free | Pay-per-use |
 
-Dhi works best as part of a layered security approach:
+**When to use Modal**: You need serverless GPU compute for ML workloads.
 
-```
-┌─────────────────────────────────────────┐
-│           AI Agent                      │
-└─────────────────┬───────────────────────┘
-                  │
-┌─────────────────▼───────────────────────┐
-│   NeMo Guardrails (Prompt Security)     │  ← Prevention
-└─────────────────┬───────────────────────┘
-                  │
-┌─────────────────▼───────────────────────┐
-│     OpenShell (Primary Sandbox)         │  ← Isolation
-└─────────────────┬───────────────────────┘
-                  │
-┌─────────────────▼───────────────────────┐
-│        Dhi (eBPF Monitoring)            │  ← Detection
-└─────────────────┬───────────────────────┘
-                  │
-┌─────────────────▼───────────────────────┐
-│        SIEM / SOC Integration           │  ← Response
-└─────────────────────────────────────────┘
-```
+**When to use Dhi**: You need security monitoring regardless of where agents run.
 
-### Integration Example
+---
 
-```bash
-# Run Dhi alongside OpenShell-protected agents
-sudo dhi.py --level alert \
-    --whitelist-ip 127.0.0.1 \
-    --whitelist-file /var/log/
+### 6. Dhi vs Rebuff / Lakera Guard
 
-# Dhi detects if anything escapes the sandbox
-# or if sandbox itself is compromised
-```
+| Aspect | **Dhi** | **Rebuff / Lakera** |
+|--------|---------|---------------------|
+| **Focus** | Full runtime security | Prompt injection only |
+| **Detection Scope** | Secrets + PII + injections + tools | Prompt attacks only |
+| **Budget Control** | ✅ Yes | ❌ No |
+| **Tool Monitoring** | ✅ Risk scoring | ❌ No |
+| **eBPF/Kernel** | ✅ Yes | ❌ No |
+| **Deployment** | Self-hosted | Cloud API |
+
+**When to use Rebuff/Lakera**: You only need prompt injection defense.
+
+**When to use Dhi**: You need comprehensive runtime security.
+
+---
+
+## Feature Comparison Matrix
+
+| Feature | Dhi | NeMo | Guardrails AI | LlamaGuard | E2B | Rebuff |
+|---------|-----|------|---------------|------------|-----|--------|
+| **Secret Detection** | ✅ 20+ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **PII Detection** | ✅ 12+ | ❌ | ⚠️ | ❌ | ❌ | ❌ |
+| **Auto-Redaction** | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Prompt Injection** | ✅ | ✅ | ⚠️ | ⚠️ | ❌ | ✅ |
+| **Jailbreak Detection** | ✅ | ✅ | ❌ | ✅ | ❌ | ✅ |
+| **Budget Control** | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Tool Risk Scoring** | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **MCP Monitoring** | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Kernel Monitoring** | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Code Sandboxing** | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ |
+| **Content Safety** | ⚠️ | ✅ | ⚠️ | ✅ | ❌ | ❌ |
+| **Prometheus Metrics** | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Slack Alerts** | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Open Source** | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ |
+| **Self-Hosted** | ✅ | ✅ | ✅ | ✅ | ⚠️ | ❌ |
 
 ---
 
 ## Performance Comparison
 
-### Overhead Analysis
-
-| Solution | CPU Overhead | Memory | Latency |
-|----------|-------------|--------|---------|
-| **Dhi** | <1% @ 1k events/sec | 5-10 MB | <150 μs |
-| OpenShell | ~5-10% | 50-100 MB | ~1-5 ms |
-| E2B | ~5-10% | 100+ MB | ~1-5 ms |
-| Modal | ~3-5% | 50-100 MB | ~1-2 ms |
-| AccuKnox | Variable | Variable | Variable |
-
-### Throughput
-
-| Solution | Max Syscalls/sec | Notes |
-|----------|-----------------|-------|
-| **Dhi** | 10,000+ | eBPF native performance |
-| OpenShell | 1,000-5,000 | Sandbox overhead |
-| E2B | 1,000-5,000 | MicroVM overhead |
+| Tool | Latency Overhead | Memory | CPU |
+|------|-----------------|--------|-----|
+| **Dhi** | <5ms | ~50MB | <1% |
+| NeMo Guardrails | 10-200ms | ~500MB | 5-10% |
+| LlamaGuard | 50-200ms | ~2GB+ (GPU) | GPU-bound |
+| E2B | 150ms cold start | Per-sandbox | Per-sandbox |
+| Guardrails AI | 5-50ms | ~200MB | 2-5% |
 
 ---
 
-## Regulatory & Compliance
+## When to Use What
 
-### OWASP Top 10 for Agentic AI (2026)
+### Use Dhi When:
+- ✅ You need to prevent credential/secret leaks
+- ✅ You need PII detection and redaction
+- ✅ You need budget/cost controls per agent
+- ✅ You want kernel-level visibility (Linux)
+- ✅ You need tool call risk assessment
+- ✅ You want self-hosted, open-source solution
+- ✅ You need Prometheus metrics for dashboards
 
-Modern agentic security should address:
+### Use NeMo Guardrails When:
+- ✅ You need conversational topic control
+- ✅ You need response quality enforcement
+- ✅ You're building chatbots with strict policies
 
-1. Prompt Injection
-2. Insecure Code Execution
-3. Memory/Context Attacks
-4. Toolchain Abuse
-5. Data Exfiltration
-6. Privilege Escalation
-7. Supply Chain Attacks
-8. Model Poisoning
-9. Denial of Service
-10. Audit/Logging Failures
+### Use E2B/Modal When:
+- ✅ Your agents execute untrusted code
+- ✅ You need VM/container-level isolation
+- ✅ You're building code interpreter features
 
-### Coverage Matrix
-
-| OWASP Risk | Dhi | OpenShell | E2B |
-|------------|-----|-----------|-----|
-| Prompt Injection | ❌ | ✅ | ❌ |
-| Insecure Code Execution | ✅ (detect) | ✅ (prevent) | ✅ (prevent) |
-| Data Exfiltration | ✅ | ✅ | ✅ |
-| Privilege Escalation | ✅ | ✅ | ✅ |
-| Audit/Logging | ✅ | ✅ | ✅ |
+### Use LlamaGuard When:
+- ✅ You need content safety classification
+- ✅ You have GPU resources available
+- ✅ You need toxicity/harm detection
 
 ---
 
-## Decision Framework
+## Recommended Architecture
 
-### Choose Dhi When:
+For production AI agent deployments, use **defense in depth**:
 
-- ✅ You need lightweight monitoring without full sandboxing
-- ✅ You can't change your agent architecture
-- ✅ You want open source with no vendor lock-in
-- ✅ You're running on Linux servers/VMs
-- ✅ You need defense-in-depth alongside other tools
-- ✅ You're in an air-gapped or self-hosted environment
-- ✅ Cost is a primary concern
-
-### Choose OpenShell/NemoClaw When:
-
-- ✅ You need full agent isolation
-- ✅ You're using NVIDIA GPUs
-- ✅ You need enterprise integrations (CrowdStrike, Cisco)
-- ✅ Privacy routing is critical
-- ✅ You're building on OpenClaw/LangChain
-
-### Choose E2B/Modal When:
-
-- ✅ You want managed cloud service
-- ✅ You need cross-platform support
-- ✅ Ephemeral agent execution is your model
-- ✅ You prefer pay-per-use pricing
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    YOUR AI AGENTS                           │
+└─────────────────────────┬───────────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────────┐
+│  LAYER 1: DHI RUNTIME SECURITY                              │
+│  • Secret detection     • PII protection                    │
+│  • Budget enforcement   • Tool risk scoring                 │
+│  • Prompt injection     • Alerting & metrics                │
+└─────────────────────────┬───────────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────────┐
+│  LAYER 2: GUARDRAILS (Optional)                             │
+│  • NeMo Guardrails for topic control                        │
+│  • LlamaGuard for content safety                            │
+└─────────────────────────┬───────────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────────┐
+│  LAYER 3: SANDBOX (For code execution)                      │
+│  • E2B or Modal for untrusted code                          │
+└─────────────────────────┬───────────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────────┐
+│                 EXTERNAL SERVICES                           │
+│        OpenAI  •  Anthropic  •  Tools  •  APIs              │
+└─────────────────────────────────────────────────────────────┘
+```
 
 ---
 
 ## Summary
 
-| Aspect | Dhi | NVIDIA Stack | E2B/Modal |
-|--------|-----|--------------|-----------|
-| **Philosophy** | Detection layer | Full platform | Managed sandbox |
-| **Best For** | Visibility, defense-in-depth | Enterprise, GPU workloads | Cloud-native, managed |
-| **Cost** | Free | Free (self-hosted) | Pay-per-use |
-| **Complexity** | Low | Medium-High | Low |
-| **Coverage** | Runtime detection | End-to-end | Execution isolation |
+| Tool | Best For | Complements Dhi? |
+|------|----------|------------------|
+| **NeMo Guardrails** | Conversational safety | ✅ Yes |
+| **Guardrails AI** | Output validation | ✅ Yes |
+| **LlamaGuard** | Content classification | ✅ Yes |
+| **E2B** | Code sandboxing | ✅ Yes |
+| **Modal** | GPU compute | ✅ Yes |
+| **Rebuff** | Prompt injection | ⚠️ Overlap |
 
----
-
-## References
-
-- [NVIDIA OpenShell GitHub](https://github.com/NVIDIA/OpenShell)
-- [NVIDIA NeMo Guardrails](https://developer.nvidia.com/nemo-guardrails)
-- [E2B Documentation](https://e2b.dev/docs)
-- [Modal Documentation](https://modal.com/docs)
-- [AccuKnox Platform](https://accuknox.com)
-- [OWASP Agentic AI Top 10](https://owasp.org/www-project-top-10-for-large-language-model-applications/)
-- [eBPF Documentation](https://ebpf.io/)
-
----
-
-## About Dhi
-
-**Dhi** (धी) - Sanskrit for "Intellect | Perception | Clear Vision"
-
-A kernel-space runtime protection system powered by eBPF that intelligently monitors and protects against data exfiltration, file tampering, and anomalous behavior.
-
-**Repository**: [github.com/seconize-co/dhi](https://github.com/seconize-co/dhi)
-
-**License**: MIT
+**Dhi fills a unique gap**: runtime security monitoring that no other tool provides comprehensively. Use it as your foundation, add other tools as needed.
 
 ---
 
