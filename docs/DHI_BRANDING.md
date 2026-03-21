@@ -1,23 +1,24 @@
-# DHI - Runtime Intelligence & Protection System
+# DHI - Runtime Security for AI Agents
 
 ## Project Overview
 
 **Dhi** (धी) - Sanskrit for "Intellect" / "Perception" / "Clear Vision"
 
-A kernel-space runtime protection system for AI agents, powered by intelligent eBPF monitoring.
+A security-first runtime protection system for AI agents, powered by intelligent eBPF monitoring.
 
 ```
-     दिव्य बुद्धि (Supreme Intellect)
-           ↓
+        धी (Intellect)
+            ↓
     ╔════════════════╗
     ║      DHI       ║  The Intelligent Guardian
     ║   Runtime      ║  Sees What Others Cannot
-    ║  Protection    ║  Ancient Wisdom, Modern Security
+    ║   Security     ║  Ancient Wisdom, Modern Security
     ╚════════════════╝
-           ↓
+            ↓
     Protects Against:
-    • Data Exfiltration
-    • File Tampering
+    • Credential Leakage
+    • Data Exfiltration  
+    • Prompt Injection
     • Unauthorized Access
 ```
 

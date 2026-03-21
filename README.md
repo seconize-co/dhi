@@ -119,10 +119,10 @@ python dhi_agentic.py --demo
 
 | Document | Description |
 |----------|-------------|
-| [CTO_GUIDE.md](CTO_GUIDE.md) | Executive guide addressing security concerns |
-| [AGENTIC_FEATURES.md](AGENTIC_FEATURES.md) | Detailed feature documentation |
-| [COMPARISON.md](COMPARISON.md) | How Dhi compares to E2B, Modal, NVIDIA |
-| [dhi-rs/README.md](dhi-rs/README.md) | Rust implementation details |
+| [CTO Guide](docs/CTO_GUIDE.md) | Executive guide addressing security concerns |
+| [Agentic Features](docs/AGENTIC_FEATURES.md) | Detailed feature documentation |
+| [Comparison](docs/COMPARISON.md) | How Dhi compares to E2B, Modal, NVIDIA |
+| [Rust Implementation](dhi-rs/README.md) | Rust implementation details |
 
 ## Endpoints
 
@@ -187,4 +187,4 @@ Contributions welcome! Please read the code of conduct and submit PRs.
 
 ---
 
-Built with 🦀 by [Seconize](https://seconize.co)
+Built with Rust by [Seconize](https://seconize.co)
