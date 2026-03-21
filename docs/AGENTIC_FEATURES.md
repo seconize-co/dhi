@@ -58,15 +58,15 @@ sudo ./target/release/dhi --level alert --slack-webhook "https://hooks.slack.com
 | All HTTPS to any LLM API | ✅ Secrets, PII, Injection |
 | Tool calls via MCP | ✅ Risk assessment |
 
-### Alternative: Proxy Mode (macOS/Windows)
+### Proxy Mode (Limited - Hostname Only)
 
-On non-Linux systems, use proxy mode:
+> ⚠️ Proxy mode can only see hostnames for HTTPS traffic. Security features (secrets, PII, injection detection) do **NOT** work for HTTPS in proxy mode.
 
 ```bash
-# Start proxy
-./dhi proxy --port 8080 --block-secrets
+# Start proxy (hostname-level monitoring only)
+./dhi proxy --port 8080
 
-# Set environment variables for your tools
+# Set environment variables
 export HTTP_PROXY=http://127.0.0.1:8080
 export HTTPS_PROXY=http://127.0.0.1:8080
 ```

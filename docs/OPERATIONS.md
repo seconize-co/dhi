@@ -4,7 +4,9 @@
 
 ---
 
-## Quick Install
+## Quick Install (Linux with eBPF)
+
+Dhi uses **eBPF** to intercept SSL/TLS traffic at the kernel level. This provides full visibility into HTTPS content without certificates or proxy configuration.
 
 ### 1. Build from Source
 
@@ -19,7 +21,7 @@ cargo build --release
 # Binary is at: ./target/release/dhi
 ```
 
-### 2. Build eBPF Program (Linux Only)
+### 2. Build eBPF Program
 
 ```bash
 cd bpf
@@ -30,7 +32,7 @@ sudo mkdir -p /usr/share/dhi
 sudo cp dhi_ssl.bpf.o /usr/share/dhi/
 ```
 
-### 3. Install Binary
+### 3. Install Binary and Config
 
 ```bash
 # Copy to system path
@@ -44,35 +46,76 @@ sudo cp dhi.toml.example /etc/dhi/dhi.toml
 sudo mkdir -p /var/log/dhi
 ```
 
----
-
-## Running Dhi
-
-### Option A: eBPF Mode (Recommended for Linux)
-
-**No proxy configuration needed - works at kernel level.**
+### 4. Verify Installation
 
 ```bash
-# Start (requires root)
+# Check binary
+dhi --version
+
+# Check eBPF program
+ls -la /usr/share/dhi/dhi_ssl.bpf.o
+
+# Check kernel version (needs 5.4+)
+uname -r
+```
+
+---
+
+## Running Dhi (eBPF Mode)
+
+**eBPF mode is the primary mode** - it intercepts SSL/TLS traffic at the kernel level, providing full visibility into HTTPS content.
+
+### Start Dhi
+
+```bash
+# Start with alerts (requires root for eBPF)
 sudo dhi --config /etc/dhi/dhi.toml --level alert
 
-# With Slack alerts
+# With Slack notifications
 sudo dhi --level alert --slack-webhook "https://hooks.slack.com/..."
 
 # Block mode (actively block threats)
 sudo dhi --level block
+
+# Verbose logging
+sudo dhi --level alert -v
 ```
 
-### Option B: Proxy Mode (All Platforms)
+### What Happens
+
+1. Dhi loads eBPF programs into the kernel
+2. Hooks SSL library functions (SSL_read, SSL_write, etc.)
+3. Captures plaintext **before encryption / after decryption**
+4. Scans for secrets, PII, injection attempts
+5. Alerts or blocks based on configuration
+
+**No proxy configuration needed!** All applications using OpenSSL, BoringSSL, or GnuTLS are automatically monitored.
+
+---
+
+## Proxy Mode (Limited - Hostname Only)
+
+> ⚠️ **Note**: Proxy mode can only see **hostnames**, not request/response content. HTTPS traffic is encrypted end-to-end through the proxy. Use eBPF mode for full content inspection.
+
+Proxy mode is useful for:
+- macOS/Windows (where eBPF is unavailable)
+- Hostname-level blocking (e.g., block access to certain APIs)
+- Connection logging (which LLMs are being called)
 
 ```bash
 # Start proxy
-dhi proxy --port 8080 --block-secrets
+dhi proxy --port 8080
 
-# Configure applications to use proxy
+# Configure applications
 export HTTP_PROXY=http://127.0.0.1:8080
 export HTTPS_PROXY=http://127.0.0.1:8080
 ```
+
+| Proxy Mode Can See | Proxy Mode CANNOT See |
+|-------------------|----------------------|
+| ✅ Hostname (api.openai.com) | ❌ Request body (prompts) |
+| ✅ Connection timing | ❌ Response body (completions) |
+| ✅ Bytes transferred | ❌ Secrets/PII in payload |
 
 ---
 

@@ -6,18 +6,18 @@
 
 ## Overview
 
-**No code changes required!** Dhi protects AI tools automatically through:
+**No code changes required!** Dhi uses eBPF to intercept SSL/TLS at the kernel level.
 
-| Mode | How It Works | HTTPS Visibility | Platform |
-|------|--------------|------------------|----------|
-| **eBPF Mode** | Kernel-level SSL hooking | **Full plaintext** | Linux |
-| **Proxy Mode** | HTTP proxy intercepts traffic | Hostname only | All |
+| Mode | HTTPS Visibility | Use Case |
+|------|-----------------|----------|
+| **eBPF Mode** | ✅ **Full plaintext** | Linux - Primary mode |
+| **Proxy Mode** | ⚠️ Hostname only | macOS/Windows - Limited |
 
-**Recommendation:** Use **eBPF mode on Linux** for full HTTPS visibility with zero configuration. Use **Proxy mode** on macOS/Windows.
+**Use eBPF mode on Linux.** Proxy mode cannot see HTTPS content (only hostnames).
 
 ---
 
-## Quick Start: eBPF Mode (Linux - Recommended)
+## Quick Start: eBPF Mode (Linux)
 
 Just install and run - Dhi captures all SSL traffic system-wide automatically.
 
@@ -74,29 +74,36 @@ cursor .
 
 ---
 
-## Quick Start: Proxy Mode (macOS/Windows)
+## Proxy Mode (macOS/Windows - Limited)
 
-For non-Linux systems, use proxy mode with environment variables:
+> ⚠️ **Important**: Proxy mode can only see **hostnames**, not HTTPS content. All request/response data is encrypted end-to-end through the proxy tunnel. Secrets, PII, and injection detection **do not work** for HTTPS traffic in proxy mode.
 
-### 1. Start Dhi Proxy
+**Proxy mode is useful for:**
+- Hostname-level blocking (block access to certain APIs)
+- Connection logging (which LLMs are being called)
+- Platforms where eBPF is unavailable
+
+### Start Proxy
 
 ```bash
-./target/release/dhi proxy --port 8080 --block-secrets
+./target/release/dhi proxy --port 8080
 ```
 
-### 2. Configure Environment Variables
+### Configure Applications
 
 ```bash
 export HTTP_PROXY=http://127.0.0.1:8080
 export HTTPS_PROXY=http://127.0.0.1:8080
 ```
 
-### 3. Use Your AI Tools
+### What Proxy Mode Can/Cannot See
 
-```bash
-claude "Write a hello world program"
-gh copilot suggest "how to parse JSON"
-```
+| Can See | CANNOT See |
+|---------|-----------|
+| ✅ Hostname (api.openai.com) | ❌ Prompts/completions |
+| ✅ Connection timing | ❌ Secrets in requests |
+| ✅ Bytes transferred | ❌ PII in responses |
+| ✅ Block by hostname | ❌ Injection attempts |
 
 ---
 
@@ -104,17 +111,15 @@ gh copilot suggest "how to parse JSON"
 
 | Aspect | eBPF Mode | Proxy Mode |
 |--------|-----------|------------|
+| **HTTPS Content** | ✅ **Full plaintext** | ❌ Hostname only |
+| **Secrets Detection** | ✅ Works | ❌ No |
+| **PII Detection** | ✅ Works | ❌ No |
+| **Injection Detection** | ✅ Works | ❌ No |
 | **Platform** | Linux only | All |
 | **Setup** | Build eBPF + root | Env vars |
-| **App Changes** | **None** | Need proxy env vars |
-| **HTTPS Content** | **Full plaintext** | Hostname only |
-| **Root Required** | Yes | No |
-| **Performance** | Near-zero | Minimal |
+| **App Changes** | None | Need proxy env vars |
 
-**Recommendation:**
-- **Linux (servers, dev machines)**: Use eBPF mode
-- **macOS/Windows**: Use Proxy mode
-- **CI/CD containers**: Use Proxy mode (no root)
+**Bottom line**: Use eBPF mode on Linux for real security. Proxy mode is only for hostname-level monitoring.
 
 ---
 

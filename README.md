@@ -50,7 +50,7 @@ AI agents are powerful but introduce **serious security risks**:
 
 ## Quick Start
 
-**No code changes required!** Dhi works at the kernel level.
+**No code changes required!** Dhi uses eBPF to intercept SSL/TLS at the kernel level.
 
 ### Build & Run (Linux)
 
@@ -62,20 +62,22 @@ cargo build --release
 cd bpf && clang -O2 -target bpf -c dhi_ssl.bpf.c -o dhi_ssl.bpf.o
 sudo mkdir -p /usr/share/dhi && sudo cp dhi_ssl.bpf.o /usr/share/dhi/
 
-# Run Dhi
+# Run Dhi (requires root for eBPF)
 sudo ./target/release/dhi --level alert
 
 # With Slack notifications
 sudo ./target/release/dhi --level alert --slack-webhook "https://hooks.slack.com/..."
 ```
 
-**That's it!** All your AI agents are now protected automatically.
+**That's it!** All your AI agents are now protected automatically. Full HTTPS visibility without certificates.
 
-### Alternative: Proxy Mode (macOS/Windows)
+### Proxy Mode (macOS/Windows - Limited)
+
+> ⚠️ Proxy mode only sees **hostnames**, not content. HTTPS is encrypted end-to-end. Use eBPF mode on Linux for full inspection.
 
 ```bash
-# Start proxy
-./target/release/dhi proxy --port 8080 --block-secrets
+# Start proxy (hostname-level monitoring only)
+./target/release/dhi proxy --port 8080
 
 # Configure your tools
 export HTTP_PROXY=http://127.0.0.1:8080
