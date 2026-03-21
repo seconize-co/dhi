@@ -139,6 +139,56 @@ impl AgentFramework {
     }
 }
 
+/// Session information for tracking conversations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionInfo {
+    /// Session/conversation ID
+    pub session_id: String,
+    /// Session type (conversation, run, trace, etc.)
+    pub session_type: SessionType,
+    /// First seen timestamp
+    pub first_seen: SystemTime,
+    /// Last seen timestamp
+    pub last_seen: SystemTime,
+    /// Request count in this session
+    pub request_count: u64,
+    /// Models used in this session
+    pub models: Vec<String>,
+}
+
+/// Type of session identifier
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum SessionType {
+    /// Claude Code conversation
+    ClaudeConversation,
+    /// LangChain run ID
+    LangChainRun,
+    /// LangChain trace ID
+    LangChainTrace,
+    /// Generic request/trace ID
+    TraceId,
+    /// OpenAI request ID
+    OpenAIRequest,
+    /// Anthropic request ID
+    AnthropicRequest,
+    /// Custom session ID
+    Custom(String),
+}
+
+impl SessionType {
+    pub fn name(&self) -> &str {
+        match self {
+            SessionType::ClaudeConversation => "Claude Conversation",
+            SessionType::LangChainRun => "LangChain Run",
+            SessionType::LangChainTrace => "LangChain Trace",
+            SessionType::TraceId => "Trace ID",
+            SessionType::OpenAIRequest => "OpenAI Request",
+            SessionType::AnthropicRequest => "Anthropic Request",
+            SessionType::Custom(name) => name.as_str(),
+        }
+    }
+}
+
 /// Fingerprint of an identified agent
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentFingerprint {
@@ -158,6 +208,8 @@ pub struct AgentFingerprint {
     pub custom_headers: HashMap<String, String>,
     /// Models used
     pub models: Vec<String>,
+    /// Active sessions/conversations
+    pub sessions: HashMap<String, SessionInfo>,
     /// First seen timestamp
     pub first_seen: SystemTime,
     /// Last seen timestamp
@@ -213,6 +265,9 @@ impl AgentFingerprinter {
         // Detect model from request body
         let model = self.extract_model(&request.body);
         
+        // Extract session information
+        let sessions = self.extract_sessions(request);
+        
         // Get or create fingerprint
         let mut agents = self.agents.write().unwrap_or_else(|e| e.into_inner());
         
@@ -226,6 +281,7 @@ impl AgentFingerprinter {
                 user_agent: request.user_agent.clone(),
                 custom_headers: HashMap::new(),
                 models: vec![],
+                sessions: HashMap::new(),
                 first_seen: SystemTime::now(),
                 last_seen: SystemTime::now(),
                 request_count: 0,
@@ -244,9 +300,30 @@ impl AgentFingerprinter {
             fingerprint.providers.push(provider);
         }
         
-        if let Some(m) = model {
-            if !fingerprint.models.contains(&m) {
-                fingerprint.models.push(m);
+        if let Some(ref m) = model {
+            if !fingerprint.models.contains(m) {
+                fingerprint.models.push(m.clone());
+            }
+        }
+        
+        // Update session tracking
+        for (session_id, session_type) in sessions {
+            let session = fingerprint.sessions.entry(session_id.clone()).or_insert_with(|| {
+                SessionInfo {
+                    session_id: session_id.clone(),
+                    session_type,
+                    first_seen: SystemTime::now(),
+                    last_seen: SystemTime::now(),
+                    request_count: 0,
+                    models: vec![],
+                }
+            });
+            session.last_seen = SystemTime::now();
+            session.request_count += 1;
+            if let Some(ref m) = model {
+                if !session.models.contains(m) {
+                    session.models.push(m.clone());
+                }
             }
         }
         
@@ -378,6 +455,87 @@ impl AgentFingerprinter {
         }
     }
     
+    /// Extract session/conversation IDs from headers and body
+    fn extract_sessions(&self, request: &RequestInfo) -> Vec<(String, SessionType)> {
+        let mut sessions = Vec::new();
+        
+        // Check headers for session identifiers
+        for (key, value) in &request.headers {
+            let key_lower = key.to_lowercase();
+            
+            // LangChain session headers
+            if key_lower == "x-langchain-run-id" || key_lower == "langchain-run-id" {
+                sessions.push((value.clone(), SessionType::LangChainRun));
+            }
+            if key_lower == "x-langchain-trace-id" || key_lower == "langchain-trace-id" {
+                sessions.push((value.clone(), SessionType::LangChainTrace));
+            }
+            if key_lower == "x-langchain-session-id" || key_lower == "langchain-session-id" {
+                sessions.push((value.clone(), SessionType::LangChainRun));
+            }
+            
+            // OpenAI headers
+            if key_lower == "x-request-id" && request.hostname.contains("openai") {
+                sessions.push((value.clone(), SessionType::OpenAIRequest));
+            }
+            if key_lower == "openai-organization" {
+                // Not a session but useful context
+            }
+            
+            // Anthropic headers
+            if key_lower == "x-request-id" && request.hostname.contains("anthropic") {
+                sessions.push((value.clone(), SessionType::AnthropicRequest));
+            }
+            
+            // Generic trace/session headers
+            if key_lower == "x-trace-id" || key_lower == "trace-id" || key_lower == "traceparent" {
+                sessions.push((value.clone(), SessionType::TraceId));
+            }
+            if key_lower == "x-session-id" || key_lower == "session-id" {
+                sessions.push((value.clone(), SessionType::Custom("Session".to_string())));
+            }
+            if key_lower == "x-conversation-id" || key_lower == "conversation-id" {
+                sessions.push((value.clone(), SessionType::ClaudeConversation));
+            }
+            
+            // Stainless SDK headers (used by official SDKs)
+            if key_lower == "x-stainless-retry-count" {
+                // Indicates SDK retry, not a session
+            }
+        }
+        
+        // Check request body for session information
+        if let Some(body) = &request.body {
+            // Try to parse as JSON
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(body) {
+                // Claude Code conversation ID in metadata
+                if let Some(metadata) = json.get("metadata") {
+                    if let Some(conv_id) = metadata.get("conversation_id").and_then(|v| v.as_str()) {
+                        sessions.push((conv_id.to_string(), SessionType::ClaudeConversation));
+                    }
+                    if let Some(session_id) = metadata.get("session_id").and_then(|v| v.as_str()) {
+                        sessions.push((session_id.to_string(), SessionType::Custom("Session".to_string())));
+                    }
+                    if let Some(run_id) = metadata.get("run_id").and_then(|v| v.as_str()) {
+                        sessions.push((run_id.to_string(), SessionType::LangChainRun));
+                    }
+                }
+                
+                // LangChain includes run_id in some requests
+                if let Some(run_id) = json.get("run_id").and_then(|v| v.as_str()) {
+                    sessions.push((run_id.to_string(), SessionType::LangChainRun));
+                }
+                
+                // Check for thread_id (OpenAI Assistants API)
+                if let Some(thread_id) = json.get("thread_id").and_then(|v| v.as_str()) {
+                    sessions.push((thread_id.to_string(), SessionType::Custom("Thread".to_string())));
+                }
+            }
+        }
+        
+        sessions
+    }
+    
     /// Extract model name from request body
     fn extract_model(&self, body: &Option<String>) -> Option<String> {
         if let Some(body) = body {
@@ -452,6 +610,39 @@ impl AgentFingerprinter {
         }
     }
     
+    /// Get all sessions across all agents
+    pub fn get_all_sessions(&self) -> Vec<(String, SessionInfo)> {
+        self.agents.read()
+            .map(|agents| {
+                agents.values()
+                    .flat_map(|a| {
+                        a.sessions.values()
+                            .map(|s| (a.id.clone(), s.clone()))
+                            .collect::<Vec<_>>()
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+    
+    /// Get active sessions in the last N minutes
+    pub fn get_active_sessions(&self, minutes: u64) -> Vec<(String, SessionInfo)> {
+        let cutoff = SystemTime::now() - Duration::from_secs(minutes * 60);
+        
+        self.agents.read()
+            .map(|agents| {
+                agents.values()
+                    .flat_map(|a| {
+                        a.sessions.values()
+                            .filter(|s| s.last_seen > cutoff)
+                            .map(|s| (a.id.clone(), s.clone()))
+                            .collect::<Vec<_>>()
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+    
     /// Get all known agents
     pub fn get_all_agents(&self) -> Vec<AgentFingerprint> {
         self.agents.read()
@@ -496,11 +687,14 @@ impl AgentFingerprinter {
     pub fn generate_report(&self) -> AgentAnalysisReport {
         let agents = self.get_all_agents();
         let active_agents = self.get_active_agents(60);
+        let all_sessions = self.get_all_sessions();
+        let active_sessions = self.get_active_sessions(60);
         
         // Count by framework
         let mut framework_counts: HashMap<String, u64> = HashMap::new();
         let mut provider_counts: HashMap<String, u64> = HashMap::new();
         let mut model_counts: HashMap<String, u64> = HashMap::new();
+        let mut session_type_counts: HashMap<String, u64> = HashMap::new();
         
         let mut total_requests = 0u64;
         let mut total_tokens = 0u64;
@@ -516,6 +710,11 @@ impl AgentFingerprinter {
             
             for model in &agent.models {
                 *model_counts.entry(model.clone()).or_insert(0) += 1;
+            }
+            
+            // Count session types
+            for session in agent.sessions.values() {
+                *session_type_counts.entry(session.session_type.name().to_string()).or_insert(0) += 1;
             }
             
             total_requests += agent.request_count;
@@ -538,9 +737,12 @@ impl AgentFingerprinter {
             generated_at: SystemTime::now(),
             total_agents: agents.len(),
             active_agents: active_agents.len(),
+            total_sessions: all_sessions.len(),
+            active_sessions: active_sessions.len(),
             framework_distribution: framework_counts,
             provider_distribution: provider_counts,
             model_usage: model_counts,
+            session_type_distribution: session_type_counts,
             total_requests,
             total_tokens,
             total_estimated_cost: total_cost,
@@ -585,9 +787,12 @@ pub struct AgentAnalysisReport {
     pub generated_at: SystemTime,
     pub total_agents: usize,
     pub active_agents: usize,
+    pub total_sessions: usize,
+    pub active_sessions: usize,
     pub framework_distribution: HashMap<String, u64>,
     pub provider_distribution: HashMap<String, u64>,
     pub model_usage: HashMap<String, u64>,
+    pub session_type_distribution: HashMap<String, u64>,
     pub total_requests: u64,
     pub total_tokens: u64,
     pub total_estimated_cost: f64,
@@ -780,5 +985,101 @@ mod tests {
         assert!(report.framework_distribution.contains_key("Claude Code"));
         assert!(report.provider_distribution.contains_key("OpenAI"));
         assert!(report.provider_distribution.contains_key("Anthropic"));
+    }
+    
+    #[test]
+    fn test_session_extraction() {
+        let fingerprinter = AgentFingerprinter::new();
+        
+        let mut headers = HashMap::new();
+        headers.insert("X-LangChain-Run-Id".to_string(), "run-abc-123".to_string());
+        headers.insert("X-LangChain-Trace-Id".to_string(), "trace-xyz-789".to_string());
+        
+        let request = RequestInfo {
+            hostname: "api.openai.com".to_string(),
+            path: "/v1/chat/completions".to_string(),
+            method: "POST".to_string(),
+            headers,
+            user_agent: Some("langchain/0.1.0".to_string()),
+            body: Some(r#"{"model": "gpt-4"}"#.to_string()),
+            process_name: Some("python".to_string()),
+            pid: Some(3333),
+        };
+        
+        let fp = fingerprinter.analyze_request(&request);
+        
+        assert_eq!(fp.sessions.len(), 2);
+        assert!(fp.sessions.contains_key("run-abc-123"));
+        assert!(fp.sessions.contains_key("trace-xyz-789"));
+        
+        // Verify session types
+        let run_session = fp.sessions.get("run-abc-123").unwrap();
+        assert_eq!(run_session.session_type, SessionType::LangChainRun);
+        
+        let trace_session = fp.sessions.get("trace-xyz-789").unwrap();
+        assert_eq!(trace_session.session_type, SessionType::LangChainTrace);
+    }
+    
+    #[test]
+    fn test_session_from_body() {
+        let fingerprinter = AgentFingerprinter::new();
+        
+        let body = r#"{
+            "model": "claude-3-opus",
+            "metadata": {
+                "conversation_id": "conv-12345",
+                "session_id": "sess-67890"
+            }
+        }"#;
+        
+        let request = RequestInfo {
+            hostname: "api.anthropic.com".to_string(),
+            path: "/v1/messages".to_string(),
+            method: "POST".to_string(),
+            headers: HashMap::new(),
+            user_agent: None,
+            body: Some(body.to_string()),
+            process_name: Some("claude".to_string()),
+            pid: Some(4444),
+        };
+        
+        let fp = fingerprinter.analyze_request(&request);
+        
+        assert!(fp.sessions.contains_key("conv-12345"));
+        assert!(fp.sessions.contains_key("sess-67890"));
+        
+        let conv_session = fp.sessions.get("conv-12345").unwrap();
+        assert_eq!(conv_session.session_type, SessionType::ClaudeConversation);
+    }
+    
+    #[test]
+    fn test_session_request_counting() {
+        let fingerprinter = AgentFingerprinter::new();
+        
+        let mut headers = HashMap::new();
+        headers.insert("X-Session-Id".to_string(), "my-session".to_string());
+        
+        let request = RequestInfo {
+            hostname: "api.openai.com".to_string(),
+            path: "/v1/chat/completions".to_string(),
+            method: "POST".to_string(),
+            headers: headers.clone(),
+            user_agent: None,
+            body: Some(r#"{"model": "gpt-4"}"#.to_string()),
+            process_name: Some("python".to_string()),
+            pid: Some(5555),
+        };
+        
+        // First request
+        fingerprinter.analyze_request(&request);
+        
+        // Second request (same session)
+        fingerprinter.analyze_request(&request);
+        
+        // Third request (same session)
+        let fp = fingerprinter.analyze_request(&request);
+        
+        let session = fp.sessions.get("my-session").unwrap();
+        assert_eq!(session.request_count, 3);
     }
 }

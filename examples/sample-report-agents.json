@@ -6,6 +6,8 @@
   "summary": {
     "total_agents_detected": 5,
     "active_agents_last_hour": 3,
+    "total_sessions": 12,
+    "active_sessions_last_hour": 5,
     "total_requests": 1247,
     "total_tokens": 892450,
     "estimated_cost_usd": 127.45,
@@ -32,6 +34,14 @@
     "gpt-4": 125
   },
   
+  "session_type_distribution": {
+    "Claude Conversation": 4,
+    "LangChain Run": 3,
+    "LangChain Trace": 2,
+    "OpenAI Request": 2,
+    "Session": 1
+  },
+  
   "agents": [
     {
       "id": "claude:12345",
@@ -42,6 +52,24 @@
       "process_name": "claude",
       "pid": 12345,
       "user_agent": null,
+      "sessions": {
+        "conv-abc123": {
+          "session_id": "conv-abc123",
+          "session_type": "Claude Conversation",
+          "first_seen": "2026-03-21T08:15:00Z",
+          "last_seen": "2026-03-21T09:58:00Z",
+          "request_count": 287,
+          "models": ["claude-3-5-sonnet-20241022"]
+        },
+        "conv-def456": {
+          "session_id": "conv-def456",
+          "session_type": "Claude Conversation",
+          "first_seen": "2026-03-21T09:30:00Z",
+          "last_seen": "2026-03-21T09:55:00Z",
+          "request_count": 236,
+          "models": ["claude-3-opus"]
+        }
+      },
       "first_seen": "2026-03-21T08:15:00Z",
       "last_seen": "2026-03-21T09:58:00Z",
       "request_count": 523,
@@ -61,7 +89,25 @@
       "user_agent": "langchain/0.1.0 openai-python/1.12.0",
       "custom_headers": {
         "X-LangChain-Request": "true",
-        "X-LangChain-Run-Id": "abc123"
+        "X-LangChain-Run-Id": "run-abc123"
+      },
+      "sessions": {
+        "run-abc123": {
+          "session_id": "run-abc123",
+          "session_type": "LangChain Run",
+          "first_seen": "2026-03-21T09:00:00Z",
+          "last_seen": "2026-03-21T09:55:00Z",
+          "request_count": 312,
+          "models": ["gpt-4o"]
+        },
+        "trace-xyz789": {
+          "session_id": "trace-xyz789",
+          "session_type": "LangChain Trace",
+          "first_seen": "2026-03-21T09:00:00Z",
+          "last_seen": "2026-03-21T09:55:00Z",
+          "request_count": 312,
+          "models": ["gpt-4o"]
+        }
       },
       "first_seen": "2026-03-21T09:00:00Z",
       "last_seen": "2026-03-21T09:55:00Z",
