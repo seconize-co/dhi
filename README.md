@@ -38,27 +38,26 @@ AI agents are powerful but introduce **serious security risks**:
 
 ## Quick Start
 
-### Rust (Recommended)
+### Build
 
 ```bash
-cd dhi-rs
 cargo build --release
-./target/release/dhi --help
 ```
 
-```bash
-# Start monitoring with Slack alerts
-dhi --level alert --port 9090 --slack-webhook https://hooks.slack.com/...
-
-# Demo mode
-dhi demo
-```
-
-### Python (Prototyping)
+### Run
 
 ```bash
-pip install bcc  # Linux only
-python dhi_agentic.py --demo
+# Start monitoring with alerts
+./target/release/dhi --level alert --port 9090
+
+# With Slack notifications
+./target/release/dhi --level alert --slack-webhook https://hooks.slack.com/...
+
+# Demo mode (see features in action)
+./target/release/dhi demo
+
+# Block mode (actively prevent threats)
+./target/release/dhi --level block
 ```
 
 ## Architecture
@@ -120,9 +119,9 @@ python dhi_agentic.py --demo
 | Document | Description |
 |----------|-------------|
 | [CTO Guide](docs/CTO_GUIDE.md) | Executive guide addressing security concerns |
-| [Agentic Features](docs/AGENTIC_FEATURES.md) | Detailed feature documentation |
-| [Comparison](docs/COMPARISON.md) | How Dhi compares to E2B, Modal, NVIDIA |
-| [Rust Implementation](dhi-rs/README.md) | Rust implementation details |
+| [Agentic Features](docs/AGENTIC_FEATURES.md) | Full API documentation with examples |
+| [Comparison](docs/COMPARISON.md) | How Dhi compares to other tools |
+| [Branding](docs/BRANDING.md) | Brand guidelines |
 
 ## Endpoints
 
@@ -137,45 +136,84 @@ When running, Dhi exposes:
 
 ## Integration
 
-### LangChain
+### As a Library
 
-```python
-from dhi_agentic import DhiAgenticRuntime
+```rust
+use dhi::agentic::AgenticRuntime;
 
-dhi = DhiAgenticRuntime()
-dhi.register_agent("my-agent", framework="langchain")
-
-# Wrap your LLM calls
-result = dhi.track_llm_call(
-    agent_id="my-agent",
-    provider="openai",
-    model="gpt-4",
-    prompt="Hello world"
-)
-
-if result["blocked"]:
-    print("Request blocked:", result["reason"])
+#[tokio::main]
+async fn main() {
+    let runtime = AgenticRuntime::new();
+    
+    // Register agent
+    runtime.register_agent("my-agent", "langchain", None).await;
+    
+    // Track LLM calls
+    let result = runtime.track_llm_call(
+        "my-agent", "openai", "gpt-4",
+        500, 200,  // tokens
+        Some("Hello world".to_string()),
+        false, vec![],
+    ).await;
+    
+    println!("Cost: ${:.4}, Risk: {}", result.cost_usd, result.risk_score);
+    
+    // Track tool calls
+    let tool_result = runtime.track_tool_call(
+        "my-agent", "filesystem_read", "mcp",
+        serde_json::json!({"path": "/etc/passwd"}),
+    ).await;
+    
+    if !tool_result.allowed {
+        println!("Blocked: {:?}", tool_result.flags);
+    }
+}
 ```
 
-### MCP (Model Context Protocol)
+### As a Daemon
 
-```python
-# Dhi automatically monitors MCP tool calls
-result = dhi.track_tool_call(
-    agent_id="my-agent",
-    tool_name="filesystem_read",
-    protocol="mcp",
-    arguments={"path": "/etc/passwd"}
-)
-# Returns: {"allowed": False, "risk_level": "critical"}
+```bash
+# Run as background service
+./dhi --level alert --port 9090 &
+
+# Agents interact via HTTP API
+curl -X POST http://localhost:9090/api/track/llm \
+  -H "Content-Type: application/json" \
+  -d '{"agent_id": "my-agent", "provider": "openai", "model": "gpt-4"}'
 ```
 
 ## Requirements
 
-- **Linux** for eBPF monitoring (kernel 5.4+)
-- **Rust 1.75+** for the Rust implementation
-- **Python 3.8+** for the Python implementation
-- Agentic features work on any platform
+- **Rust 1.75+** for building
+- **Linux** for eBPF kernel monitoring (optional, kernel 5.4+)
+- Agentic security features work on all platforms
+
+## Project Structure
+
+```
+dhi/
+├── Cargo.toml          # Rust project configuration
+├── src/
+│   ├── main.rs         # CLI entry point
+│   ├── lib.rs          # Library exports
+│   ├── server.rs       # HTTP/metrics server
+│   ├── agentic/        # AI agent security modules
+│   │   ├── mod.rs
+│   │   ├── llm_monitor.rs
+│   │   ├── tool_monitor.rs
+│   │   ├── prompt_security.rs
+│   │   ├── secrets_detector.rs
+│   │   ├── pii_detector.rs
+│   │   ├── budget.rs
+│   │   ├── alerting.rs
+│   │   ├── metrics.rs
+│   │   └── ...
+│   ├── ebpf/           # Kernel monitoring (Linux)
+│   ├── detection/      # Risk scoring engine
+│   └── monitor/        # Statistics collection
+├── docs/               # Documentation
+└── README.md
+```
 
 ## License
 
