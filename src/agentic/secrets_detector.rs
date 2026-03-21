@@ -32,7 +32,7 @@ lazy_static! {
         },
         SecretPattern {
             name: "AWS Secret Access Key",
-            pattern: Regex::new(r"(?i)aws_secret_access_key\s*[=:]\s*['\"]?([A-Za-z0-9/+=]{40})['\"]?").unwrap(),
+            pattern: Regex::new(r#"(?i)aws_secret_access_key\s*[=:]\s*['"]?([A-Za-z0-9/+=]{40})['"]?"#).unwrap(),
             severity: "critical",
         },
 
@@ -44,7 +44,7 @@ lazy_static! {
         },
         SecretPattern {
             name: "Google OAuth Client Secret",
-            pattern: Regex::new(r"(?i)client_secret['\"]?\s*[=:]\s*['\"]?([a-zA-Z0-9_-]{24})['\"]?").unwrap(),
+            pattern: Regex::new(r#"(?i)client_secret['"]?\s*[=:]\s*['"]?([a-zA-Z0-9_-]{24})['"]?"#).unwrap(),
             severity: "high",
         },
 
@@ -99,17 +99,17 @@ lazy_static! {
         // Generic secrets
         SecretPattern {
             name: "Generic API Key",
-            pattern: Regex::new(r"(?i)(api[_-]?key|apikey)\s*[=:]\s*['\"]?([a-zA-Z0-9_-]{20,})['\"]?").unwrap(),
+            pattern: Regex::new(r#"(?i)(api[_-]?key|apikey)\s*[=:]\s*['"]?([a-zA-Z0-9_-]{20,})['"]?"#).unwrap(),
             severity: "high",
         },
         SecretPattern {
             name: "Generic Secret",
-            pattern: Regex::new(r"(?i)(secret|password|passwd|pwd)\s*[=:]\s*['\"]?([^\s'\"]{8,})['\"]?").unwrap(),
+            pattern: Regex::new(r#"(?i)(secret|password|passwd|pwd)\s*[=:]\s*['"]?([^\s'"]{8,})['"]?"#).unwrap(),
             severity: "high",
         },
         SecretPattern {
             name: "Generic Token",
-            pattern: Regex::new(r"(?i)(token|bearer)\s*[=:]\s*['\"]?([a-zA-Z0-9_.-]{20,})['\"]?").unwrap(),
+            pattern: Regex::new(r#"(?i)(token|bearer)\s*[=:]\s*['"]?([a-zA-Z0-9_.-]{20,})['"]?"#).unwrap(),
             severity: "high",
         },
 

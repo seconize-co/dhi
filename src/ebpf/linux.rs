@@ -8,7 +8,7 @@ use aya::programs::TracePoint;
 use aya::{include_bytes_aligned, Bpf};
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use super::{EbpfEventType, FileEvent, NetworkEvent};
 
@@ -44,12 +44,28 @@ pub struct RawNetworkEvent {
     pub comm: [u8; 16],
 }
 
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+struct RawSslEventHeader {
+    pub pid: u32,
+    pub tid: u32,
+    pub uid: u32,
+    pub timestamp_ns: u64,
+    pub ssl_ptr: u64,
+    pub direction: u8,
+    pub data_len: u32,
+    pub comm: [u8; 16],
+}
+
+const SSL_EVENT_MAX_DATA_SIZE: usize = 16384;
+
 /// Start the eBPF monitor
 pub async fn start_monitor(runtime: &crate::DhiRuntime) -> Result<()> {
     info!("Starting eBPF monitor on Linux");
 
     let config = runtime.config.read().await;
     let protection_level = config.protection_level;
+    let ssl_only_mode = config.ebpf_ssl_only;
     drop(config);
 
     // Start SSL/TLS interception
@@ -66,17 +82,32 @@ pub async fn start_monitor(runtime: &crate::DhiRuntime) -> Result<()> {
     let mut bpf = Bpf::load_file(bpf_path)
         .context("Failed to load BPF program")?;
 
-    // Attach tracepoints
-    attach_tracepoints(&mut bpf)?;
+    // Attach syscall tracepoints if present.
+    // Some deployments ship SSL-only BPF objects (no syscall programs/maps).
+    let attached_tracepoints = attach_tracepoints(&mut bpf, ssl_only_mode)?;
+    if attached_tracepoints == 0 {
+        info!(
+            "No syscall tracepoint programs found in {}. Running in SSL-only eBPF mode.",
+            BPF_PROGRAM_PATH
+        );
+        return Ok(());
+    }
 
     // Create event channel
     let (tx, mut rx) = mpsc::channel::<EbpfEvent>(1000);
 
     // Spawn ring buffer reader
-    let ring_buf: RingBuf<_> = bpf.take_map("events")
-        .context("Failed to get events map")?
+    let Some(events_map) = bpf.take_map("events") else {
+        warn!(
+            "No 'events' map found in {}. Syscall monitoring disabled; SSL monitoring remains active.",
+            BPF_PROGRAM_PATH
+        );
+        return Ok(());
+    };
+
+    let ring_buf: RingBuf<_> = events_map
         .try_into()
-        .context("Failed to convert to RingBuf")?;
+        .context("Failed to convert events map to RingBuf")?;
 
     tokio::spawn(async move {
         read_events(ring_buf, tx).await;
@@ -100,23 +131,40 @@ pub async fn start_monitor(runtime: &crate::DhiRuntime) -> Result<()> {
 
 /// Start SSL/TLS traffic monitoring
 async fn start_ssl_monitor(protection_level: crate::ProtectionLevel) {
-    use super::ssl_hook::{SslTracer, SslEvent, process_ssl_event};
+    use super::ssl_hook::{process_ssl_event, RawSslEvent, SslEvent, SslTracer};
     use tokio::sync::mpsc;
 
     info!("Starting SSL/TLS traffic interception...");
 
     let (tx, mut rx) = mpsc::channel::<SslEvent>(1000);
     let tracer = SslTracer::new(tx, protection_level);
+    let monitor = tracer.monitor();
 
-    // Start the tracer
-    if let Err(e) = tracer.start().await {
-        warn!("Failed to start SSL tracer: {}", e);
+    let mut bpf = match Bpf::load_file(BPF_PROGRAM_PATH) {
+        Ok(bpf) => bpf,
+        Err(e) => {
+            warn!(
+                "Failed to load BPF object for SSL tracing ({}): {}",
+                BPF_PROGRAM_PATH, e
+            );
+            return;
+        }
+    };
+
+    // Start the tracer and attach SSL probes.
+    let attached = match tracer.start(&mut bpf).await {
+        Ok(n) => n,
+        Err(e) => {
+            warn!("Failed to start SSL tracer: {}", e);
+            return;
+        }
+    };
+    if attached == 0 {
+        warn!("No SSL uprobes were attached. SSL tracing disabled.");
         return;
     }
 
-    let monitor = tracer.monitor();
-
-    // Process SSL events
+    // Process analyzed SSL events.
     tokio::spawn(async move {
         while let Some(event) = rx.recv().await {
             if let Err(e) = process_ssl_event(&event, &monitor, protection_level).await {
@@ -125,11 +173,74 @@ async fn start_ssl_monitor(protection_level: crate::ProtectionLevel) {
         }
     });
 
+    // Consume raw events from the ssl_events ring buffer.
+    let Some(ssl_events_map) = bpf.take_map("ssl_events") else {
+        warn!("No ssl_events map found in BPF object; SSL event ingestion disabled");
+        return;
+    };
+    let mut ssl_ring_buf: RingBuf<_> = match ssl_events_map.try_into() {
+        Ok(rb) => rb,
+        Err(e) => {
+            warn!("Failed to convert ssl_events map to RingBuf: {}", e);
+            return;
+        }
+    };
+
     info!("SSL/TLS interception active - monitoring encrypted traffic");
+
+    loop {
+        if let Some(event_data) = ssl_ring_buf.next() {
+            let data: &[u8] = event_data.as_ref();
+            let header_size = std::mem::size_of::<RawSslEventHeader>();
+            if data.len() < header_size {
+                continue;
+            }
+
+            // Safety: length is validated above for header.
+            let header: RawSslEventHeader =
+                unsafe { std::ptr::read_unaligned(data.as_ptr() as *const RawSslEventHeader) };
+
+            let mut raw = RawSslEvent {
+                pid: header.pid,
+                tid: header.tid,
+                uid: header.uid,
+                timestamp_ns: header.timestamp_ns,
+                ssl_ptr: header.ssl_ptr,
+                direction: header.direction,
+                data_len: 0,
+                comm: header.comm,
+                data: [0u8; SSL_EVENT_MAX_DATA_SIZE],
+            };
+
+            let available_payload = data.len().saturating_sub(header_size);
+            let declared_len = header.data_len as usize;
+            let copy_len = declared_len
+                .min(available_payload)
+                .min(SSL_EVENT_MAX_DATA_SIZE);
+            raw.data_len = copy_len as u32;
+            raw.data[..copy_len].copy_from_slice(&data[header_size..header_size + copy_len]);
+
+            debug!(
+                "SSL raw event received: pid={} tid={} dir={} data_len={}",
+                raw.pid, raw.tid, raw.direction, raw.data_len
+            );
+
+            if let Err(e) = tracer.monitor().process_raw_event(&raw).await {
+                debug!("Failed to process raw SSL event: {}", e);
+            }
+        } else {
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        }
+    }
 }
 
 /// Attach tracepoints
-fn attach_tracepoints(bpf: &mut Bpf) -> Result<()> {
+fn attach_tracepoints(bpf: &mut Bpf, ssl_only_mode: bool) -> Result<usize> {
+    if ssl_only_mode {
+        info!("SSL-only mode enabled: skipping syscall tracepoint attachment");
+        return Ok(0);
+    }
+
     // File operations
     let tracepoints = [
         ("syscalls", "sys_enter_openat", "trace_openat"),
@@ -140,6 +251,7 @@ fn attach_tracepoints(bpf: &mut Bpf) -> Result<()> {
         ("syscalls", "sys_enter_fchmodat", "trace_fchmodat"),
     ];
 
+    let mut attached = 0usize;
     for (category, name, prog_name) in tracepoints {
         match bpf.program_mut(prog_name) {
             Some(prog) => {
@@ -152,15 +264,16 @@ fn attach_tracepoints(bpf: &mut Bpf) -> Result<()> {
                     warn!("Failed to attach {} to {}/{}: {}", prog_name, category, name, e);
                 } else {
                     info!("Attached {} to {}/{}", prog_name, category, name);
+                    attached += 1;
                 }
             }
             None => {
-                warn!("Program {} not found in BPF object", prog_name);
+                debug!("Program {} not found in BPF object", prog_name);
             }
         }
     }
 
-    Ok(())
+    Ok(attached)
 }
 
 /// Event union

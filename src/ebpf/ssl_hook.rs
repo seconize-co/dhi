@@ -5,7 +5,9 @@
 //!
 //! This provides full visibility into HTTPS traffic without requiring certificate installation.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
+use aya::programs::{ProgramError, UProbe};
+use aya::Bpf;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -243,6 +245,10 @@ impl SslMonitor {
 
         let data_len = (raw.data_len as usize).min(MAX_CAPTURE_SIZE);
         let data = raw.data[..data_len].to_vec();
+        debug!(
+            "SSL event normalized: pid={} comm={} dir={:?} captured_len={} total_len={}",
+            raw.pid, comm, direction, data_len, raw.data_len
+        );
 
         // Update connection tracking
         {
@@ -283,6 +289,10 @@ impl SslMonitor {
             ssl_ptr: raw.ssl_ptr,
         };
 
+        if let Err(e) = self.event_tx.send(event.clone()).await {
+            debug!("SSL event channel closed, dropping event: {}", e);
+        }
+
         Ok(Some(event))
     }
 
@@ -300,24 +310,32 @@ impl SslMonitor {
         let mut result = SslAnalysisResult::default();
 
         // Detect secrets
-        let secrets = self.secrets_detector.scan(&text);
-        if !secrets.is_empty() {
-            result.secrets_detected = secrets.iter().map(|s| s.secret_type.clone()).collect();
+        let secrets = self.secrets_detector.scan(&text, "ssl");
+        if secrets.secrets_found {
+            result.secrets_detected = secrets
+                .secrets
+                .iter()
+                .map(|s| s.secret_type.clone())
+                .collect();
             result.has_secrets = true;
             result.risk_score = result.risk_score.max(95);
         }
 
         // Detect PII
-        let pii = self.pii_detector.scan(&text);
-        if !pii.is_empty() {
-            result.pii_detected = pii.iter().map(|p| p.pii_type.clone()).collect();
+        let pii = self.pii_detector.scan(&text, "ssl");
+        if pii.pii_found {
+            result.pii_detected = pii
+                .pii_types
+                .iter()
+                .map(|p| p.pii_type.clone())
+                .collect();
             result.has_pii = true;
             result.risk_score = result.risk_score.max(70);
         }
 
         // Check for prompt injection (only on writes/requests)
         if event.direction == SslDirection::Write {
-            let prompt_result = self.prompt_analyzer.scan(&text);
+            let prompt_result = self.prompt_analyzer.analyze(&text);
             if prompt_result.injection_detected {
                 result.injection_detected = true;
                 result.risk_score = result.risk_score.max(90);
@@ -387,74 +405,123 @@ impl SslTracer {
     }
 
     /// Start tracing SSL functions
-    pub async fn start(&self) -> Result<()> {
+    pub async fn start(&self, bpf: &mut Bpf) -> Result<usize> {
         if self.libraries.is_empty() {
             warn!("No SSL libraries found - SSL tracing disabled");
-            return Ok(());
+            return Ok(0);
         }
 
         info!("Starting SSL/TLS traffic interception via eBPF uprobes");
 
+        let mut attached = 0usize;
         for lib in &self.libraries {
             info!(
                 "Attaching probes to {:?} at {}",
                 lib.library,
                 lib.path.display()
             );
-
-            // In production, this would use aya to attach uprobes:
-            // - uprobe on SSL_write entry to capture outgoing data
-            // - uretprobe on SSL_read return to capture incoming data
-            //
-            // The eBPF program would:
-            // 1. Read the buffer pointer and length from function arguments
-            // 2. Copy data to a ring buffer (up to MAX_CAPTURE_SIZE)
-            // 3. Send event to userspace
-
-            self.attach_probes(lib).await?;
+            attached += self.attach_probes(bpf, lib).await?;
         }
 
-        Ok(())
+        Ok(attached)
     }
 
     /// Attach uprobes to a specific library
-    async fn attach_probes(&self, lib: &LibraryProbe) -> Result<()> {
-        // This is a placeholder for the actual eBPF attachment
-        // In production, would use aya::programs::UProbe
+    async fn attach_probes(&self, bpf: &mut Bpf, lib: &LibraryProbe) -> Result<usize> {
+        let mut attached = 0usize;
+        let lib_path = &lib.path;
 
-        debug!(
-            "Would attach uprobe to {}:{} (write)",
-            lib.path.display(),
-            lib.write_symbol
-        );
-        debug!(
-            "Would attach uretprobe to {}:{} (read)",
-            lib.path.display(),
-            lib.read_symbol
-        );
+        match lib.library {
+            SslLibrary::OpenSSL | SslLibrary::BoringSSL | SslLibrary::LibreSSL => {
+                attached += attach_uprobe_program(bpf, "uprobe_ssl_write", Some(lib.write_symbol), 0, lib_path)?;
+                attached += attach_uprobe_program(bpf, "uprobe_ssl_read_entry", Some(lib.read_symbol), 0, lib_path)?;
+                attached += attach_uprobe_program(bpf, "uretprobe_ssl_read", Some(lib.read_symbol), 0, lib_path)?;
 
-        if let Some(write_ex) = lib.write_ex_symbol {
-            debug!(
-                "Would attach uprobe to {}:{} (write_ex)",
-                lib.path.display(),
-                write_ex
-            );
+                if let Some(write_ex) = lib.write_ex_symbol {
+                    attached += attach_uprobe_program(bpf, "uprobe_ssl_write_ex", Some(write_ex), 0, lib_path)?;
+                }
+                if let Some(read_ex) = lib.read_ex_symbol {
+                    attached += attach_uprobe_program(bpf, "uprobe_ssl_read_ex_entry", Some(read_ex), 0, lib_path)?;
+                    attached += attach_uprobe_program(bpf, "uretprobe_ssl_read_ex", Some(read_ex), 0, lib_path)?;
+                }
+            }
+            SslLibrary::GnuTLS => {
+                attached += attach_uprobe_program(
+                    bpf,
+                    "uprobe_gnutls_send",
+                    Some("gnutls_record_send"),
+                    0,
+                    lib_path,
+                )?;
+                attached += attach_uprobe_program(
+                    bpf,
+                    "uprobe_gnutls_recv_entry",
+                    Some("gnutls_record_recv"),
+                    0,
+                    lib_path,
+                )?;
+                attached += attach_uprobe_program(
+                    bpf,
+                    "uretprobe_gnutls_recv",
+                    Some("gnutls_record_recv"),
+                    0,
+                    lib_path,
+                )?;
+            }
         }
 
-        if let Some(read_ex) = lib.read_ex_symbol {
-            debug!(
-                "Would attach uretprobe to {}:{} (read_ex)",
-                lib.path.display(),
-                read_ex
-            );
-        }
-
-        Ok(())
+        Ok(attached)
     }
 
     /// Get the monitor for analysis
     pub fn monitor(&self) -> Arc<SslMonitor> {
         Arc::clone(&self.monitor)
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn attach_uprobe_program(
+    bpf: &mut Bpf,
+    program_name: &str,
+    symbol: Option<&str>,
+    offset: u64,
+    target: &std::path::Path,
+) -> Result<usize> {
+    let Some(program) = bpf.program_mut(program_name) else {
+        debug!("BPF program {} not found; skipping", program_name);
+        return Ok(0);
+    };
+
+    let uprobe: &mut UProbe = program.try_into()?;
+    match uprobe.load() {
+        Ok(()) | Err(ProgramError::AlreadyLoaded) => {}
+        Err(e) => {
+            warn!("Failed to load uprobe program {}: {}", program_name, e);
+            return Ok(0);
+        }
+    }
+
+    match uprobe.attach(symbol, offset, target, None) {
+        Ok(_) => {
+            info!(
+                "Attached {} to {}:{}",
+                program_name,
+                target.display(),
+                symbol.unwrap_or("<offset>")
+            );
+            Ok(1)
+        }
+        Err(ProgramError::AlreadyAttached) => Ok(0),
+        Err(e) => {
+            warn!(
+                "Failed to attach {} to {}:{}: {}",
+                program_name,
+                target.display(),
+                symbol.unwrap_or("<offset>"),
+                e
+            );
+            Ok(0)
+        }
     }
 }
 
@@ -465,6 +532,17 @@ pub async fn process_ssl_event(
     protection_level: ProtectionLevel,
 ) -> Result<bool> {
     let analysis = monitor.analyze_event(event).await;
+    debug!(
+        "SSL analysis: pid={} dir={:?} len={} risk={} secrets={} pii={} inj={} jb={}",
+        event.pid,
+        event.direction,
+        event.total_len,
+        analysis.risk_score,
+        analysis.has_secrets,
+        analysis.has_pii,
+        analysis.injection_detected,
+        analysis.jailbreak_detected
+    );
 
     let direction_str = match event.direction {
         SslDirection::Write => "OUTBOUND",

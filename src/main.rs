@@ -57,6 +57,10 @@ struct Cli {
     #[arg(long)]
     no_ebpf: bool,
 
+    /// Enable SSL-only eBPF mode (skip syscall tracepoint monitoring)
+    #[arg(long)]
+    ebpf_ssl_only: bool,
+
     /// Disable agentic runtime monitoring (eBPF only)
     #[arg(long)]
     no_agentic: bool,
@@ -377,6 +381,7 @@ async fn main() -> Result<()> {
         config.max_budget_usd = Some(budget);
     }
     config.enable_ebpf = !cli.no_ebpf;
+    config.ebpf_ssl_only = cli.ebpf_ssl_only;
     config.enable_agentic = !cli.no_agentic;
 
     // Run command

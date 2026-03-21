@@ -19,6 +19,9 @@
 
 // Maximum data capture size (16KB - typical TLS record)
 #define MAX_DATA_SIZE 16384
+// Fixed-size chunk to satisfy strict verifier bounds on helper length args,
+// while still carrying enough payload for secret pattern detection.
+#define CAPTURE_CHUNK_SIZE 64
 
 // Event direction
 #define SSL_WRITE 0
@@ -55,7 +58,7 @@ struct {
 struct ssl_read_args {
     void *ssl;
     void *buf;
-    int num;
+    __u32 num;
 };
 
 struct {
@@ -87,8 +90,8 @@ static __always_inline void fill_event_common(struct ssl_event *event, void *ssl
 }
 
 // Submit event to ring buffer
-static __always_inline int submit_ssl_event(struct ssl_event *scratch, void *buf, int len) {
-    if (len <= 0 || len > MAX_DATA_SIZE) {
+static __always_inline int submit_ssl_event(struct ssl_event *scratch, void *buf, __u32 len) {
+    if (len < CAPTURE_CHUNK_SIZE || len > MAX_DATA_SIZE) {
         return 0;
     }
     
@@ -102,10 +105,10 @@ static __always_inline int submit_ssl_event(struct ssl_event *scratch, void *buf
     __builtin_memcpy(event, scratch, offsetof(struct ssl_event, data));
     
     // Capture data length
-    event->data_len = len;
+    event->data_len = CAPTURE_CHUNK_SIZE;
     
     // Read data from userspace (bounded read)
-    int to_read = len < MAX_DATA_SIZE ? len : MAX_DATA_SIZE;
+    __u32 to_read = CAPTURE_CHUNK_SIZE;
     if (bpf_probe_read_user(event->data, to_read, buf) < 0) {
         bpf_ringbuf_discard(event, 0);
         return 0;
@@ -128,7 +131,10 @@ int BPF_UPROBE(uprobe_ssl_write, void *ssl, void *buf, int num) {
     }
     
     fill_event_common(scratch, ssl, SSL_WRITE);
-    return submit_ssl_event(scratch, buf, num);
+    if (num <= 0 || num > MAX_DATA_SIZE) {
+        return 0;
+    }
+    return submit_ssl_event(scratch, buf, (__u32)num);
 }
 
 // int SSL_write_ex(SSL *ssl, const void *buf, size_t num, size_t *written)
@@ -139,8 +145,11 @@ int BPF_UPROBE(uprobe_ssl_write_ex, void *ssl, void *buf, size_t num) {
         return 0;
     }
     
+    if (num == 0 || num > MAX_DATA_SIZE) {
+        return 0;
+    }
     fill_event_common(scratch, ssl, SSL_WRITE);
-    return submit_ssl_event(scratch, buf, num > MAX_DATA_SIZE ? MAX_DATA_SIZE : num);
+    return submit_ssl_event(scratch, buf, (__u32)num);
 }
 
 // int SSL_read(SSL *ssl, void *buf, int num) - entry
@@ -178,8 +187,13 @@ int BPF_URETPROBE(uretprobe_ssl_read, int ret) {
         return 0;
     }
     
+    if (ret > MAX_DATA_SIZE) {
+        bpf_map_delete_elem(&active_ssl_reads, &tid);
+        return 0;
+    }
+
     fill_event_common(scratch, args->ssl, SSL_READ);
-    submit_ssl_event(scratch, args->buf, ret);
+    submit_ssl_event(scratch, args->buf, (__u32)ret);
     
     bpf_map_delete_elem(&active_ssl_reads, &tid);
     return 0;
@@ -219,9 +233,14 @@ int BPF_URETPROBE(uretprobe_ssl_read_ex, int ret) {
         return 0;
     }
     
+    if (args->num == 0 || args->num > MAX_DATA_SIZE) {
+        bpf_map_delete_elem(&active_ssl_reads, &tid);
+        return 0;
+    }
+
     fill_event_common(scratch, args->ssl, SSL_READ);
-    // For _ex variant, we'd need to read *readbytes, but we'll use num as upper bound
-    submit_ssl_event(scratch, args->buf, args->num > MAX_DATA_SIZE ? MAX_DATA_SIZE : args->num);
+    // For _ex variant, we'd need to read *readbytes, but we use num as an upper bound.
+    submit_ssl_event(scratch, args->buf, args->num);
     
     bpf_map_delete_elem(&active_ssl_reads, &tid);
     return 0;
@@ -239,8 +258,11 @@ int BPF_UPROBE(uprobe_gnutls_send, void *session, void *data, size_t data_size) 
         return 0;
     }
     
+    if (data_size == 0 || data_size > MAX_DATA_SIZE) {
+        return 0;
+    }
     fill_event_common(scratch, session, SSL_WRITE);
-    return submit_ssl_event(scratch, data, data_size > MAX_DATA_SIZE ? MAX_DATA_SIZE : data_size);
+    return submit_ssl_event(scratch, data, (__u32)data_size);
 }
 
 // ssize_t gnutls_record_recv(gnutls_session_t session, void *data, size_t data_size) - entry
@@ -277,8 +299,14 @@ int BPF_URETPROBE(uretprobe_gnutls_recv, ssize_t ret) {
         return 0;
     }
     
+    __u32 len = (__u32)ret;
+    if (len == 0 || len > MAX_DATA_SIZE) {
+        bpf_map_delete_elem(&active_ssl_reads, &tid);
+        return 0;
+    }
+
     fill_event_common(scratch, args->ssl, SSL_READ);
-    submit_ssl_event(scratch, args->buf, ret > MAX_DATA_SIZE ? MAX_DATA_SIZE : ret);
+    submit_ssl_event(scratch, args->buf, len);
     
     bpf_map_delete_elem(&active_ssl_reads, &tid);
     return 0;

@@ -67,6 +67,9 @@ pub struct DhiConfig {
     /// Enable eBPF kernel monitoring
     pub enable_ebpf: bool,
 
+    /// Run eBPF monitor in SSL-only mode (skip syscall tracepoint monitoring)
+    pub ebpf_ssl_only: bool,
+
     /// Enable agentic runtime monitoring
     pub enable_agentic: bool,
 }
@@ -92,6 +95,7 @@ impl Default for DhiConfig {
             ],
             tool_allowlist: vec![],
             enable_ebpf: true,
+            ebpf_ssl_only: false,
             enable_agentic: true,
         }
     }

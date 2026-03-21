@@ -16,7 +16,7 @@ use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
 use crate::agentic::{
-    AlertManager, AlertSeverity, DhiMetrics, PiiDetector, PromptSecurityAnalyzer,
+    AlertConfig, Alerter, DhiMetrics, PiiDetector, PromptSecurityAnalyzer,
     SecretsDetector,
 };
 use crate::ProtectionLevel;
@@ -144,19 +144,24 @@ pub struct DhiProxy {
     secrets_detector: Arc<SecretsDetector>,
     pii_detector: Arc<PiiDetector>,
     prompt_security: Arc<PromptSecurityAnalyzer>,
-    alerter: Arc<AlertManager>,
+    alerter: Arc<Alerter>,
     metrics: Arc<RwLock<DhiMetrics>>,
 }
 
 impl DhiProxy {
     /// Create new proxy
     pub fn new(config: ProxyConfig) -> Self {
+        let alert_config = AlertConfig {
+            slack_webhook_url: config.slack_webhook.clone(),
+            ..AlertConfig::default()
+        };
+
         Self {
             config,
             secrets_detector: Arc::new(SecretsDetector::new()),
             pii_detector: Arc::new(PiiDetector::new()),
             prompt_security: Arc::new(PromptSecurityAnalyzer::new()),
-            alerter: Arc::new(AlertManager::new()),
+            alerter: Arc::new(Alerter::new(alert_config)),
             metrics: Arc::new(RwLock::new(DhiMetrics::new())),
         }
     }
@@ -208,7 +213,7 @@ struct ProxyHandlers {
     secrets_detector: Arc<SecretsDetector>,
     pii_detector: Arc<PiiDetector>,
     prompt_security: Arc<PromptSecurityAnalyzer>,
-    alerter: Arc<AlertManager>,
+    alerter: Arc<Alerter>,
     metrics: Arc<RwLock<DhiMetrics>>,
 }
 
@@ -413,14 +418,18 @@ async fn scan_content(
         // Record metric
         let mut metrics = handlers.metrics.write().await;
         for secret in &secrets_result.secrets {
-            metrics.inc_secrets_detected("proxy", &secret.secret_type);
+            metrics.record_secret(&secret.secret_type, &secret.severity);
         }
     }
 
     // Check for PII
     let pii_result = handlers.pii_detector.scan(content, "proxy");
     if pii_result.pii_found {
-        let pii_types: Vec<_> = pii_result.pii.iter().map(|p| p.pii_type.as_str()).collect();
+        let pii_types: Vec<_> = pii_result
+            .pii_types
+            .iter()
+            .map(|p| p.pii_type.as_str())
+            .collect();
         alerts.push(format!("PII detected in {}: {:?}", direction, pii_types));
 
         let block_pii = if direction == "request" {
@@ -430,7 +439,10 @@ async fn scan_content(
         };
 
         // Only block high-risk PII
-        let has_high_risk = pii_result.pii.iter().any(|p| p.risk_score >= 80);
+        let has_high_risk = pii_result
+            .pii_types
+            .iter()
+            .any(|p| p.severity == "critical" || p.severity == "high");
         if block_pii && has_high_risk {
             should_block = true;
             reason = format!("High-risk PII detected: {:?}", pii_types);
@@ -438,8 +450,8 @@ async fn scan_content(
 
         // Record metric
         let mut metrics = handlers.metrics.write().await;
-        for p in &pii_result.pii {
-            metrics.inc_pii_detected("proxy", &p.pii_type);
+        for p in &pii_result.pii_types {
+            metrics.record_pii(&p.pii_type, p.count as u64);
         }
     }
 
@@ -452,7 +464,7 @@ async fn scan_content(
             reason = "Prompt injection detected".to_string();
 
             let mut metrics = handlers.metrics.write().await;
-            metrics.inc_injection_attempts("proxy");
+            metrics.record_injection("prompt_injection");
         }
     }
 

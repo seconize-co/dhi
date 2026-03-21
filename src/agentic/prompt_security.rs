@@ -52,7 +52,7 @@ lazy_static! {
         // Credit card
         Regex::new(r"\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14})\b").unwrap(),
         // API keys
-        Regex::new(r"(?i)(api[_-]?key|secret[_-]?key|password|token)\s*[=:]\s*[\"']?[\w-]+").unwrap(),
+        Regex::new(r#"(?i)(api[_-]?key|secret[_-]?key|password|token)\s*[=:]\s*["']?[\w-]+"#).unwrap(),
         // Private keys
         Regex::new(r"-----BEGIN\s+(RSA\s+)?PRIVATE\s+KEY-----").unwrap(),
         // AWS keys

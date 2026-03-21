@@ -92,15 +92,31 @@ async fn route_request(
         "/" => ("200 OK", "text/html", get_dashboard_html()),
         "/api/stats" => {
             let m = metrics.read().await;
+            let llm_calls = m
+                .llm_calls_total
+                .with_label_values(&["unknown", "unknown", "unknown"])
+                .get();
+            let tool_calls = m
+                .tool_calls_total
+                .with_label_values(&["unknown", "unknown", "unknown"])
+                .get();
+            let alerts = m
+                .alerts_total
+                .with_label_values(&["warning", "unknown"])
+                .get();
+            let blocked = m
+                .blocks_total
+                .with_label_values(&["unknown"])
+                .get();
             (
                 "200 OK",
                 "application/json",
                 format!(
                     r#"{{"llm_calls":{},"tool_calls":{},"alerts":{},"blocked":{}}}"#,
-                    m.llm_calls_total.iter().map(|(_, v)| v).sum::<u64>(),
-                    m.tool_calls_total.iter().map(|(_, v)| v).sum::<u64>(),
-                    m.alerts_total.iter().map(|(_, v)| v).sum::<u64>(),
-                    m.blocked_requests_total.iter().map(|(_, v)| v).sum::<u64>()
+                    llm_calls,
+                    tool_calls,
+                    alerts,
+                    blocked
                 ),
             )
         }
