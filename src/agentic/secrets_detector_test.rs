@@ -210,4 +210,54 @@ mod tests {
         assert!(!redacted.contains("sk-proj"), "Should redact the key");
         assert!(redacted.contains("[REDACTED]") || redacted.contains("***"), "Should have redaction marker");
     }
+
+    // ==================== Input Size Limits (ReDoS Prevention) ====================
+
+    #[test]
+    fn test_large_input_handled_safely() {
+        let d = detector();
+        
+        // Create input larger than MAX_SCAN_SIZE (1MB)
+        let large_input = "a".repeat(2_000_000);
+        
+        // Should not panic and should complete in reasonable time
+        let start = std::time::Instant::now();
+        let results = d.detect(&large_input);
+        let elapsed = start.elapsed();
+        
+        // Should complete quickly (truncation kicks in)
+        assert!(elapsed.as_secs() < 5, "Large input should be handled quickly via truncation");
+        
+        // No secrets in repeated 'a' characters
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_secret_at_start_of_large_input() {
+        let d = detector();
+        
+        // Put secret at the start, followed by padding
+        let secret = "sk-proj-abc123def456ghi789jkl012mno345pqr678stu901vwx234";
+        let padding = "x".repeat(2_000_000);
+        let input = format!("{}{}", secret, padding);
+        
+        // Should still detect the secret (it's within first 1MB)
+        let results = d.detect(&input);
+        assert!(!results.is_empty(), "Should detect secret at start even with large input");
+    }
+
+    #[test]
+    fn test_malicious_regex_pattern() {
+        let d = detector();
+        
+        // Pattern that could cause exponential backtracking without limits
+        let evil_input = "sk-".to_string() + &"a".repeat(100) + &"!".repeat(100);
+        
+        let start = std::time::Instant::now();
+        let _results = d.detect(&evil_input);
+        let elapsed = start.elapsed();
+        
+        // Should complete quickly (no ReDoS)
+        assert!(elapsed.as_secs() < 2, "Potential ReDoS pattern should be handled safely");
+    }
 }

@@ -260,4 +260,54 @@ mod tests {
             assert!(results[0].risk_score >= 30, "Email should have moderate risk score");
         }
     }
+
+    // ==================== Input Size Limits (ReDoS Prevention) ====================
+
+    #[test]
+    fn test_large_input_handled_safely() {
+        let d = detector();
+        
+        // Create input larger than MAX_SCAN_SIZE (1MB)
+        let large_input = "x".repeat(2_000_000);
+        
+        // Should not panic and should complete in reasonable time
+        let start = std::time::Instant::now();
+        let results = d.detect(&large_input);
+        let elapsed = start.elapsed();
+        
+        // Should complete quickly (truncation kicks in)
+        assert!(elapsed.as_secs() < 5, "Large input should be handled quickly via truncation");
+        
+        // No PII in repeated 'x' characters
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_pii_at_start_of_large_input() {
+        let d = detector();
+        
+        // Put PII at the start, followed by padding
+        let pii = "Contact: john.doe@example.com and call 555-123-4567. SSN: 123-45-6789";
+        let padding = "y".repeat(2_000_000);
+        let input = format!("{}{}", pii, padding);
+        
+        // Should still detect the PII (it's within first 1MB)
+        let results = d.detect(&input);
+        assert!(!results.is_empty(), "Should detect PII at start even with large input");
+    }
+
+    #[test]
+    fn test_email_regex_no_backtracking() {
+        let d = detector();
+        
+        // Pattern that could cause catastrophic backtracking on email regex
+        let evil_input = "a".repeat(50) + "@" + &"b".repeat(50) + "." + &"c".repeat(50);
+        
+        let start = std::time::Instant::now();
+        let _results = d.detect(&evil_input);
+        let elapsed = start.elapsed();
+        
+        // Should complete quickly (no ReDoS)
+        assert!(elapsed.as_secs() < 2, "Email regex should not cause catastrophic backtracking");
+    }
 }

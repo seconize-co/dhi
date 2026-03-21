@@ -33,6 +33,9 @@ pub mod monitor;
 pub mod proxy;
 pub mod server;
 
+#[cfg(test)]
+mod proxy_test;
+
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::RwLock;

@@ -327,4 +327,69 @@ mod tests {
         let slack = a.format_slack_message(&alert);
         assert!(slack.len() < 50000); // Slack has limits
     }
+
+    // ==================== Token Bucket Rate Limiter Tests ====================
+
+    #[test]
+    fn test_token_bucket_initial_capacity() {
+        let mut a = alerter();
+        a.set_rate_limit(10, std::time::Duration::from_secs(60));
+        
+        // Should allow exactly 10 alerts initially (full bucket)
+        let mut allowed = 0;
+        for i in 0..15 {
+            let alert = a.create_alert(AlertSeverity::Low, "test", &format!("Alert {}", i));
+            if a.try_queue_alert_rate_limited(alert) {
+                allowed += 1;
+            }
+        }
+        
+        assert_eq!(allowed, 10, "Should allow exactly 10 alerts at full capacity");
+    }
+
+    #[test]
+    fn test_per_agent_rate_limiting() {
+        let mut a = alerter();
+        a.set_per_agent_rate_limit(3, std::time::Duration::from_secs(60));
+        
+        // Agent 1 should get 3 alerts
+        let mut agent1_allowed = 0;
+        for i in 0..5 {
+            let mut alert = a.create_alert(AlertSeverity::Low, "test", &format!("Alert {}", i));
+            alert.metadata.insert("agent_id".to_string(), "agent-1".to_string());
+            if a.try_queue_alert_rate_limited_for_agent(alert, "agent-1") {
+                agent1_allowed += 1;
+            }
+        }
+        
+        // Agent 2 should also get 3 alerts (separate bucket)
+        let mut agent2_allowed = 0;
+        for i in 0..5 {
+            let mut alert = a.create_alert(AlertSeverity::Low, "test", &format!("Alert {}", i));
+            alert.metadata.insert("agent_id".to_string(), "agent-2".to_string());
+            if a.try_queue_alert_rate_limited_for_agent(alert, "agent-2") {
+                agent2_allowed += 1;
+            }
+        }
+        
+        assert!(agent1_allowed <= 3, "Agent 1 should be rate limited to 3");
+        assert!(agent2_allowed <= 3, "Agent 2 should be rate limited to 3");
+    }
+
+    #[test]
+    fn test_rate_limit_independent_agents() {
+        let mut a = alerter();
+        a.set_per_agent_rate_limit(5, std::time::Duration::from_secs(60));
+        
+        // Exhaust agent-1's limit
+        for _ in 0..10 {
+            let alert = a.create_alert(AlertSeverity::Low, "flood", "Message");
+            let _ = a.try_queue_alert_rate_limited_for_agent(alert, "agent-1");
+        }
+        
+        // Agent-2 should still have its full quota
+        let alert = a.create_alert(AlertSeverity::Low, "test", "First alert for agent-2");
+        let allowed = a.try_queue_alert_rate_limited_for_agent(alert, "agent-2");
+        assert!(allowed, "Agent-2 should not be affected by agent-1's rate limit");
+    }
 }

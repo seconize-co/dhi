@@ -546,6 +546,100 @@ allowlist = []  # empty = allow all except denylist
 [alerting]
 slack_webhook = "https://hooks.slack.com/..."
 min_severity = "high"  # low, medium, high, critical
+rate_limit_per_minute = 30  # global rate limit
+rate_limit_per_agent_per_hour = 100  # per-agent rate limit
+```
+
+---
+
+## Security Hardening
+
+Dhi includes built-in protections against common attack vectors:
+
+### 1. Input Size Limits (ReDoS Prevention)
+
+All regex-based scanners enforce a **1MB maximum input size** to prevent Regular Expression Denial of Service (ReDoS) attacks:
+
+```rust
+// Automatic truncation for large inputs
+const MAX_SCAN_SIZE: usize = 1_048_576; // 1MB
+
+// Secrets, PII, and prompt security scanners all enforce this limit
+let secrets = detector.detect(&large_input); // Safely truncated
+```
+
+**Protected components:**
+- `SecretsDetector` - API key detection
+- `PiiDetector` - Personal data detection  
+- `PromptSecurityAnalyzer` - Injection detection
+
+### 2. Alert Rate Limiting
+
+Prevents alert flooding attacks using a **token bucket algorithm**:
+
+| Limit | Default | Purpose |
+|-------|---------|---------|
+| Global | 30/minute | Prevents alert storm |
+| Per-Agent | 100/hour | Isolates noisy agents |
+
+```rust
+// Rate limiting is automatic
+alerter.send_alert(alert); // Dropped if rate exceeded
+
+// Configure limits
+alerter.set_rate_limit(30, Duration::from_secs(60));
+alerter.set_per_agent_rate_limit(100, Duration::from_secs(3600));
+```
+
+### 3. Event Storage Rotation
+
+Prevents memory exhaustion via a **circular buffer**:
+
+```rust
+const MAX_EVENTS: usize = 10_000;
+
+// Old events automatically overwritten
+// Memory usage bounded regardless of runtime duration
+runtime.track_llm_call(...); // Safe even after millions of calls
+```
+
+### 4. SSRF Protection (Proxy)
+
+The HTTP proxy blocks Server-Side Request Forgery attacks:
+
+**Blocked IP Ranges:**
+| Range | Description |
+|-------|-------------|
+| `10.0.0.0/8` | Private (Class A) |
+| `172.16.0.0/12` | Private (Class B) |
+| `192.168.0.0/16` | Private (Class C) |
+| `127.0.0.0/8` | Loopback |
+| `169.254.0.0/16` | Link-local (AWS metadata) |
+
+**Blocked Hostnames:**
+- `169.254.169.254` - AWS metadata
+- `metadata.google.internal` - GCP metadata
+- `*.internal` - Internal domains
+- `*.cluster.local` - Kubernetes internal
+- `host.docker.internal` - Docker internal
+
+```rust
+// Automatic SSRF protection
+proxy.forward(request); // Blocks if destination is private IP
+```
+
+### 5. Panic-Free Error Handling
+
+All lock operations use proper error handling to prevent panics from poisoned locks:
+
+```rust
+// Safe lock handling
+if let Ok(guard) = data.write() {
+    // Use guard
+} else {
+    // Graceful fallback
+    return default_value;
+}
 ```
 
 ---

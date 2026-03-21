@@ -36,6 +36,16 @@ AI agents are powerful but introduce **serious security risks**:
 | 🚨 **Real-time Alerts** | Slack, email, and webhook integrations |
 | 🐧 **eBPF Monitoring** | Kernel-level syscall tracking (Linux) |
 
+### Hardening Features
+
+| Protection | Description |
+|------------|-------------|
+| 📏 **Input Size Limits** | 1MB max for regex scanners (ReDoS prevention) |
+| 🚦 **Alert Rate Limiting** | Token bucket algorithm (30/min global, 100/hr per-agent) |
+| 🔄 **Event Rotation** | Circular buffer with 10K max events (memory DoS prevention) |
+| 🌐 **SSRF Protection** | Blocks private IPs and cloud metadata endpoints in proxy |
+| ⚡ **Panic-Free** | All lock operations handle poisoned locks gracefully |
+
 ## Quick Start
 
 ### Build
