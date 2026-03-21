@@ -21,6 +21,7 @@ Dhi provides comprehensive runtime security for AI agents through these core mod
 | `McpMonitor` | MCP protocol monitoring |
 | `AlertManager` | Slack/webhook alerting |
 | `DhiMetrics` | Prometheus metrics |
+| `SslTracer` | HTTPS traffic interception (eBPF) |
 
 ---
 
@@ -641,6 +642,56 @@ if let Ok(guard) = data.write() {
     return default_value;
 }
 ```
+
+### 6. HTTPS Traffic Interception (eBPF)
+
+On Linux, Dhi can intercept HTTPS traffic at the kernel level using eBPF uprobes. This captures plaintext data **before encryption** and **after decryption** - no certificate installation required.
+
+**How it works:**
+
+```
+Application                    SSL Library                Network
+    |                              |                         |
+    | SSL_write(plaintext)         |                         |
+    |----------------------------->|                         |
+    |    [eBPF captures here]      | (encrypt)               |
+    |                              |------------------------>|
+    |                              |                         |
+    |                              |<------------------------|
+    |                              | (decrypt)               |
+    |<-----------------------------|                         |
+    |    [eBPF captures here]      |                         |
+```
+
+**Supported Libraries:**
+- OpenSSL / LibreSSL - `SSL_read`, `SSL_write`
+- BoringSSL (Chrome, Go) - `SSL_read`, `SSL_write`
+- GnuTLS - `gnutls_record_recv`, `gnutls_record_send`
+
+**Setup (Linux):**
+
+```bash
+# 1. Build the eBPF program
+cd bpf
+clang -O2 -g -target bpf -c dhi_ssl.bpf.c -o dhi_ssl.bpf.o
+
+# 2. Install
+sudo mkdir -p /usr/share/dhi
+sudo cp dhi_ssl.bpf.o /usr/share/dhi/
+
+# 3. Run Dhi (needs root for eBPF)
+sudo ./target/release/dhi --level alert
+```
+
+**What gets captured:**
+- All LLM API requests (prompts, system messages)
+- All LLM API responses (completions, tool calls)
+- Automatic secrets/PII/injection scanning on captured data
+
+**Requirements:**
+- Linux kernel 5.4+ (for BTF support)
+- Root or CAP_BPF capability
+- Dynamically linked SSL library
 
 ---
 

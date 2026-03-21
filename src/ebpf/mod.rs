@@ -1,6 +1,7 @@
 //! eBPF Module
 //!
 //! Kernel-level syscall monitoring using eBPF.
+//! Includes SSL/TLS traffic interception via uprobes.
 
 use anyhow::Result;
 
@@ -9,6 +10,12 @@ mod linux;
 
 #[cfg(target_os = "linux")]
 pub use linux::*;
+
+#[cfg(target_os = "linux")]
+pub mod ssl_hook;
+
+#[cfg(target_os = "linux")]
+pub use ssl_hook::{SslEvent, SslDirection, SslAnalysisResult, SslMonitor, SslTracer};
 
 #[cfg(not(target_os = "linux"))]
 mod stub;

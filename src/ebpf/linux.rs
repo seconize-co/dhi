@@ -48,7 +48,14 @@ pub struct RawNetworkEvent {
 pub async fn start_monitor(runtime: &crate::DhiRuntime) -> Result<()> {
     info!("Starting eBPF monitor on Linux");
 
-    // Check if BPF program exists
+    let config = runtime.config.read().await;
+    let protection_level = config.protection_level;
+    drop(config);
+
+    // Start SSL/TLS interception
+    tokio::spawn(start_ssl_monitor(protection_level));
+
+    // Check if BPF program exists for syscall monitoring
     let bpf_path = std::path::Path::new(BPF_PROGRAM_PATH);
     if !bpf_path.exists() {
         warn!("BPF program not found at {}. Running in simulation mode.", BPF_PROGRAM_PATH);
@@ -75,11 +82,6 @@ pub async fn start_monitor(runtime: &crate::DhiRuntime) -> Result<()> {
         read_events(ring_buf, tx).await;
     });
 
-    // Process events
-    let config = runtime.config.read().await;
-    let protection_level = config.protection_level;
-    drop(config);
-
     info!("eBPF probes attached, processing events...");
 
     while let Some(event) = rx.recv().await {
@@ -94,6 +96,36 @@ pub async fn start_monitor(runtime: &crate::DhiRuntime) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Start SSL/TLS traffic monitoring
+async fn start_ssl_monitor(protection_level: crate::ProtectionLevel) {
+    use super::ssl_hook::{SslTracer, SslEvent, process_ssl_event};
+    use tokio::sync::mpsc;
+
+    info!("Starting SSL/TLS traffic interception...");
+
+    let (tx, mut rx) = mpsc::channel::<SslEvent>(1000);
+    let tracer = SslTracer::new(tx, protection_level);
+
+    // Start the tracer
+    if let Err(e) = tracer.start().await {
+        warn!("Failed to start SSL tracer: {}", e);
+        return;
+    }
+
+    let monitor = tracer.monitor();
+
+    // Process SSL events
+    tokio::spawn(async move {
+        while let Some(event) = rx.recv().await {
+            if let Err(e) = process_ssl_event(&event, &monitor, protection_level).await {
+                error!("Error processing SSL event: {}", e);
+            }
+        }
+    });
+
+    info!("SSL/TLS interception active - monitoring encrypted traffic");
 }
 
 /// Attach tracepoints

@@ -35,6 +35,7 @@ AI agents are powerful but introduce **serious security risks**:
 | 📊 **Prometheus Metrics** | 22 security metrics for Grafana dashboards |
 | 🚨 **Real-time Alerts** | Slack, email, and webhook integrations |
 | 🐧 **eBPF Monitoring** | Kernel-level syscall tracking (Linux) |
+| 🔒 **HTTPS Interception** | SSL/TLS traffic capture via eBPF uprobes (Linux) |
 
 ### Hardening Features
 
