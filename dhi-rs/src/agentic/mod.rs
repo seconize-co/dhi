@@ -27,6 +27,9 @@ mod prompt_security;
 mod secrets_detector;
 mod tool_monitor;
 
+#[cfg(test)]
+mod tests;
+
 pub use alerting::*;
 pub use budget::*;
 pub use data_protection::*;
