@@ -20,6 +20,7 @@ logs/
 
 # Config files with secrets
 config.local.toml
+dhi.toml
 .env
 .env.local
 
@@ -36,3 +37,8 @@ temp/
 *.so
 *.dylib
 *.dll
+*.o
+
+# eBPF generated artifacts
+bpf/vmlinux.h
+bpf/*.bpf.o
