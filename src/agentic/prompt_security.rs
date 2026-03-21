@@ -2,6 +2,7 @@
 //!
 //! Detects prompt injection, jailbreak attempts, and sensitive data.
 
+#![allow(clippy::unwrap_used)]
 use lazy_static::lazy_static;
 use regex::Regex;
 use serde::{Deserialize, Serialize};

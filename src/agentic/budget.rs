@@ -59,6 +59,29 @@ struct AgentSpending {
     call_count: u64,
 }
 
+impl AgentSpending {
+    fn with_current_periods() -> Self {
+        let now = chrono::Utc::now();
+        let today = now
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .map(|t| t.and_utc().timestamp())
+            .unwrap_or(0);
+        let this_month = now
+            .date_naive()
+            .with_day(1)
+            .and_then(|d| d.and_hms_opt(0, 0, 0))
+            .map(|t| t.and_utc().timestamp())
+            .unwrap_or(0);
+
+        Self {
+            last_daily_reset: today,
+            last_monthly_reset: this_month,
+            ..Default::default()
+        }
+    }
+}
+
 /// Budget controller
 pub struct BudgetController {
     /// Global limits
@@ -81,21 +104,16 @@ pub struct BudgetController {
 }
 
 /// Action to take when budget exceeded
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum BudgetAction {
     /// Block the request
+    #[default]
     Block,
     /// Allow but alert
     Alert,
     /// Throttle (slow down)
     Throttle,
-}
-
-impl Default for BudgetAction {
-    fn default() -> Self {
-        Self::Block
-    }
 }
 
 impl BudgetController {
@@ -239,7 +257,9 @@ impl BudgetController {
 
         // Update agent spending
         if let Ok(mut spending) = self.spending.write() {
-            let agent_spend = spending.entry(agent_id.to_string()).or_default();
+            let agent_spend = spending
+                .entry(agent_id.to_string())
+                .or_insert_with(AgentSpending::with_current_periods);
             agent_spend.daily_total += amount_usd;
             agent_spend.monthly_total += amount_usd;
             agent_spend.call_count += 1;

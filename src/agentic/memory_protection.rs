@@ -9,19 +9,12 @@ use std::collections::HashMap;
 /// Memory protection system
 pub struct MemoryProtection {
     checksums: HashMap<String, String>,
-    protected_keys: Vec<String>,
 }
 
 impl MemoryProtection {
     pub fn new() -> Self {
         Self {
             checksums: HashMap::new(),
-            protected_keys: vec![
-                "system_prompt".to_string(),
-                "instructions".to_string(),
-                "rules".to_string(),
-                "constraints".to_string(),
-            ],
         }
     }
 
@@ -94,15 +87,14 @@ impl MemoryProtection {
             }
 
             // Hidden instructions in user messages
-            if role == "user" {
-                if content_lower.contains("[system]")
+            if role == "user"
+                && (content_lower.contains("[system]")
                     || content_lower.contains("<<sys>>")
-                    || content_lower.contains("<|im_start|>system")
-                {
-                    result.injection_detected = true;
-                    result.suspicious_messages.push(i);
-                    result.risk_score += 40;
-                }
+                    || content_lower.contains("<|im_start|>system"))
+            {
+                result.injection_detected = true;
+                result.suspicious_messages.push(i);
+                result.risk_score += 40;
             }
         }
 

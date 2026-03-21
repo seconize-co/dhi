@@ -3,8 +3,8 @@
 //! Tests the security functions that prevent Server-Side Request Forgery attacks.
 
 #[cfg(test)]
-mod tests {
-    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+mod proxy_ssrf_tests {
+    use std::net::{IpAddr, Ipv4Addr};
 
     // Re-implement the functions here for testing since they're private in proxy.rs
     // In production, consider making these pub(crate) for testability

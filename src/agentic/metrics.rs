@@ -1,16 +1,13 @@
 //! Metrics Module
 //!
 //! Prometheus-compatible metrics for monitoring.
+#![allow(clippy::expect_used)]
 
 use prometheus::{
-    Counter, CounterVec, Gauge, GaugeVec, Histogram, HistogramOpts, HistogramVec,
-    IntCounter, IntCounterVec, IntGauge, IntGaugeVec, Opts, Registry,
+    CounterVec, Gauge, GaugeVec, HistogramOpts, HistogramVec, IntCounterVec, IntGauge, Opts,
+    Registry,
 };
-use std::sync::Arc;
 use tracing::error;
-
-/// Result type for metrics operations
-type MetricsResult<T> = Result<T, prometheus::Error>;
 
 /// Dhi metrics
 pub struct DhiMetrics {

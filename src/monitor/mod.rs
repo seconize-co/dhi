@@ -2,8 +2,6 @@
 //!
 //! Unified monitoring orchestration.
 
-use anyhow::Result;
-
 /// Monitor configuration
 #[derive(Debug, Clone)]
 pub struct MonitorConfig {

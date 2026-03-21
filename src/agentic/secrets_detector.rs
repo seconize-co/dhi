@@ -2,6 +2,7 @@
 //!
 //! Detects credentials and secrets in prompts, tool parameters, and data.
 
+#![allow(clippy::unwrap_used)]
 use lazy_static::lazy_static;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -305,7 +306,7 @@ mod tests {
     #[test]
     fn test_detect_openai_key() {
         let detector = SecretsDetector::new();
-        let text = "My API key is sk-proj-abc123def456ghi789jklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefgh";
+        let text = "My API key is sk-proj-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let result = detector.scan(text, "prompt");
         
         assert!(result.secrets_found);

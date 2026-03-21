@@ -1,6 +1,7 @@
 //! Dhi CLI - Runtime Intelligence & Protection System
 //!
 //! धी (Sanskrit: Intellect | Perception | Clear Vision)
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -139,7 +140,7 @@ async fn run_monitor(config: DhiConfig, port: u16, slack_webhook: Option<String>
     });
 
     // Setup alerting if Slack webhook provided
-    if let Some(ref webhook_url) = slack_webhook {
+    if let Some(ref _webhook_url) = slack_webhook {
         info!("Slack alerts enabled (webhook configured)");
         // Note: In production, pass webhook via config struct rather than env var
         // This is kept for backward compatibility but marked as TODO

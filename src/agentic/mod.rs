@@ -14,6 +14,7 @@
 //! - Metrics
 //! - Data protection
 //! - Agent fingerprinting
+#![allow(clippy::too_many_arguments)]
 
 mod alerting;
 mod budget;
@@ -180,7 +181,7 @@ pub struct AgenticRuntime {
     agents: Arc<RwLock<HashMap<String, AgentContext>>>,
     llm_monitor: Arc<LlmMonitor>,
     tool_monitor: Arc<ToolMonitor>,
-    mcp_monitor: Arc<McpMonitor>,
+    _mcp_monitor: Arc<McpMonitor>,
     prompt_security: Arc<PromptSecurityAnalyzer>,
     memory_protection: Arc<RwLock<MemoryProtection>>,
     events: Arc<RwLock<CircularEventBuffer>>,
@@ -217,22 +218,6 @@ impl CircularEventBuffer {
         }
     }
 
-    fn iter(&self) -> impl Iterator<Item = &AgentEvent> {
-        let start = if self.events.len() < self.capacity {
-            0
-        } else {
-            self.head
-        };
-        
-        (0..self.len).map(move |i| {
-            let idx = (start + i) % self.capacity;
-            &self.events[idx]
-        })
-    }
-
-    fn len(&self) -> usize {
-        self.len.min(self.capacity)
-    }
 }
 
 /// Agent event
@@ -250,7 +235,7 @@ impl AgenticRuntime {
             agents: Arc::new(RwLock::new(HashMap::new())),
             llm_monitor: Arc::new(LlmMonitor::new()),
             tool_monitor: Arc::new(ToolMonitor::new()),
-            mcp_monitor: Arc::new(McpMonitor::new()),
+            _mcp_monitor: Arc::new(McpMonitor::new()),
             prompt_security: Arc::new(PromptSecurityAnalyzer::new()),
             memory_protection: Arc::new(RwLock::new(MemoryProtection::new())),
             events: Arc::new(RwLock::new(CircularEventBuffer::new(MAX_EVENTS))),

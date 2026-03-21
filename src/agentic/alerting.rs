@@ -147,7 +147,7 @@ struct RateLimiter {
     /// Per-agent alerts per hour
     agent_buckets: RwLock<HashMap<String, TokenBucket>>,
     /// Configuration
-    global_limit: u32,
+    _global_limit: u32,
     agent_limit: u32,
 }
 
@@ -194,7 +194,7 @@ impl RateLimiter {
                 global_per_minute as f64 / 60.0, // refill per second
             )),
             agent_buckets: RwLock::new(HashMap::new()),
-            global_limit: global_per_minute,
+            _global_limit: global_per_minute,
             agent_limit: per_agent_per_hour,
         }
     }

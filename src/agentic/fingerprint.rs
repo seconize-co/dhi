@@ -415,7 +415,7 @@ impl AgentFingerprinter {
         }
         
         // Check custom headers
-        for (key, _value) in &request.headers {
+        for key in request.headers.keys() {
             let key_lower = key.to_lowercase();
             
             if key_lower.contains("langchain") || key_lower == "x-langchain-request" {

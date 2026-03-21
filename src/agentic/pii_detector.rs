@@ -2,6 +2,7 @@
 //!
 //! Detects Personally Identifiable Information in agent communications.
 
+#![allow(clippy::unwrap_used)]
 use lazy_static::lazy_static;
 use regex::Regex;
 use serde::{Deserialize, Serialize};

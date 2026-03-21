@@ -60,7 +60,7 @@ struct PromptOccurrence {
     count: u32,
     agent_ids: Vec<String>,
     estimated_cost: f64,
-    first_seen: i64,
+    _first_seen: i64,
     last_seen: i64,
 }
 
@@ -69,7 +69,6 @@ struct ToolCallRecord {
     tool_name: String,
     params_hash: String,
     timestamp: i64,
-    success: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -135,7 +134,7 @@ impl EfficiencyAnalyzer {
                 count: 0,
                 agent_ids: Vec::new(),
                 estimated_cost: 0.0,
-                first_seen: now,
+                _first_seen: now,
                 last_seen: now,
             });
 
@@ -171,7 +170,7 @@ impl EfficiencyAnalyzer {
         agent_id: &str,
         tool_name: &str,
         params_hash: &str,
-        success: bool,
+        _success: bool,
     ) -> Option<EfficiencyIssue> {
         let mut patterns = match self.tool_patterns.write() {
             Ok(p) => p,
@@ -191,7 +190,6 @@ impl EfficiencyAnalyzer {
             tool_name: tool_name.to_string(),
             params_hash: params_hash.to_string(),
             timestamp: now,
-            success,
         });
 
         // Count identical calls

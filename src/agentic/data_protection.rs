@@ -233,7 +233,7 @@ mod tests {
     fn test_combined_detection() {
         let protection = DataProtection::default();
 
-        let text = "Contact john@example.com, SSN: 123-45-6789, API key: sk-proj-abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefgh";
+        let text = "Contact john@example.com, SSN: 123-45-6789, api_key=abcdefghijklmnopqrstuvwxyz1234567890";
         let result = protection.scan(text, "prompt");
 
         assert!(result.secrets.secrets_found);

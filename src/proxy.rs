@@ -203,7 +203,7 @@ impl DhiProxy {
             secrets_detector: Arc::clone(&self.secrets_detector),
             pii_detector: Arc::clone(&self.pii_detector),
             prompt_security: Arc::clone(&self.prompt_security),
-            alerter: Arc::clone(&self.alerter),
+            _alerter: Arc::clone(&self.alerter),
             metrics: Arc::clone(&self.metrics),
         }
     }
@@ -213,14 +213,14 @@ struct ProxyHandlers {
     secrets_detector: Arc<SecretsDetector>,
     pii_detector: Arc<PiiDetector>,
     prompt_security: Arc<PromptSecurityAnalyzer>,
-    alerter: Arc<Alerter>,
+    _alerter: Arc<Alerter>,
     metrics: Arc<RwLock<DhiMetrics>>,
 }
 
 /// Handle incoming connection
 async fn handle_connection(
     mut client: TcpStream,
-    client_addr: SocketAddr,
+    _client_addr: SocketAddr,
     handlers: ProxyHandlers,
     config: ProxyConfig,
 ) -> Result<()> {
@@ -263,8 +263,8 @@ async fn handle_connection(
 async fn handle_connect(
     mut client: TcpStream,
     target: &str,
-    handlers: ProxyHandlers,
-    config: ProxyConfig,
+    _handlers: ProxyHandlers,
+    _config: ProxyConfig,
 ) -> Result<()> {
     // Parse host:port
     let (host, port) = if let Some(colon) = target.rfind(':') {
@@ -288,7 +288,7 @@ async fn handle_connect(
 
     // Connect to upstream
     let upstream_addr = format!("{}:{}", host, port);
-    let mut upstream = match TcpStream::connect(&upstream_addr).await {
+    let upstream = match TcpStream::connect(&upstream_addr).await {
         Ok(s) => s,
         Err(e) => {
             let response = format!("HTTP/1.1 502 Bad Gateway\r\n\r\nCannot connect to {}: {}", target, e);
@@ -416,7 +416,7 @@ async fn scan_content(
         }
 
         // Record metric
-        let mut metrics = handlers.metrics.write().await;
+        let metrics = handlers.metrics.write().await;
         for secret in &secrets_result.secrets {
             metrics.record_secret(&secret.secret_type, &secret.severity);
         }
@@ -449,7 +449,7 @@ async fn scan_content(
         }
 
         // Record metric
-        let mut metrics = handlers.metrics.write().await;
+        let metrics = handlers.metrics.write().await;
         for p in &pii_result.pii_types {
             metrics.record_pii(&p.pii_type, p.count as u64);
         }
@@ -463,7 +463,7 @@ async fn scan_content(
             should_block = true;
             reason = "Prompt injection detected".to_string();
 
-            let mut metrics = handlers.metrics.write().await;
+            let metrics = handlers.metrics.write().await;
             metrics.record_injection("prompt_injection");
         }
     }

@@ -5,8 +5,7 @@
 use anyhow::{Context, Result};
 use aya::maps::RingBuf;
 use aya::programs::TracePoint;
-use aya::{include_bytes_aligned, Bpf};
-use std::sync::Arc;
+use aya::Bpf;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
@@ -167,7 +166,7 @@ async fn start_ssl_monitor(protection_level: crate::ProtectionLevel) {
     // Process analyzed SSL events.
     tokio::spawn(async move {
         while let Some(event) = rx.recv().await {
-            if let Err(e) = process_ssl_event(&event, &monitor, protection_level).await {
+            if let Err(e) = process_ssl_event(&event, &monitor).await {
                 error!("Error processing SSL event: {}", e);
             }
         }
