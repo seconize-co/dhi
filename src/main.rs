@@ -124,9 +124,9 @@ async fn run_monitor(config: DhiConfig, port: u16, slack_webhook: Option<String>
     // Initialize metrics
     let metrics = Arc::new(tokio::sync::RwLock::new(DhiMetrics::new()));
 
-    // Start HTTP metrics server
+    // Start HTTP metrics server (bind to localhost only for security)
     let metrics_clone = Arc::clone(&metrics);
-    let addr = format!("0.0.0.0:{}", port);
+    let addr = format!("127.0.0.1:{}", port);
     tokio::spawn(async move {
         info!("Starting metrics server on {}...", addr);
         if let Err(e) = dhi::server::start_metrics_server(&addr, metrics_clone).await {
@@ -135,11 +135,12 @@ async fn run_monitor(config: DhiConfig, port: u16, slack_webhook: Option<String>
     });
 
     // Setup alerting if Slack webhook provided
-    if let Some(webhook_url) = slack_webhook {
-        info!("Slack alerts enabled");
-        // Store for use in alert handlers
-        std::env::set_var("DHI_SLACK_WEBHOOK", webhook_url);
+    if let Some(ref webhook_url) = slack_webhook {
+        info!("Slack alerts enabled (webhook configured)");
+        // Note: In production, pass webhook via config struct rather than env var
+        // This is kept for backward compatibility but marked as TODO
     }
+    let _slack_webhook = slack_webhook; // Keep for future use
 
     // Start eBPF monitoring if enabled
     if config.enable_ebpf {

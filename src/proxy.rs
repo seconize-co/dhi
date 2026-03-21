@@ -291,9 +291,9 @@ async fn scan_content(
     let mut alerts = Vec::new();
 
     // Check for secrets
-    let secrets = handlers.secrets_detector.detect(content);
-    if !secrets.is_empty() {
-        let secret_types: Vec<_> = secrets.iter().map(|s| s.secret_type.as_str()).collect();
+    let secrets_result = handlers.secrets_detector.scan(content, "proxy");
+    if secrets_result.secrets_found {
+        let secret_types: Vec<_> = secrets_result.secrets.iter().map(|s| s.secret_type.as_str()).collect();
         alerts.push(format!("Secrets detected in {}: {:?}", direction, secret_types));
 
         let block_secrets = if direction == "request" {
@@ -309,15 +309,15 @@ async fn scan_content(
 
         // Record metric
         let mut metrics = handlers.metrics.write().await;
-        for secret in &secrets {
+        for secret in &secrets_result.secrets {
             metrics.inc_secrets_detected("proxy", &secret.secret_type);
         }
     }
 
     // Check for PII
-    let pii = handlers.pii_detector.detect(content);
-    if !pii.is_empty() {
-        let pii_types: Vec<_> = pii.iter().map(|p| p.pii_type.as_str()).collect();
+    let pii_result = handlers.pii_detector.scan(content, "proxy");
+    if pii_result.pii_found {
+        let pii_types: Vec<_> = pii_result.pii.iter().map(|p| p.pii_type.as_str()).collect();
         alerts.push(format!("PII detected in {}: {:?}", direction, pii_types));
 
         let block_pii = if direction == "request" {
@@ -327,7 +327,7 @@ async fn scan_content(
         };
 
         // Only block high-risk PII
-        let has_high_risk = pii.iter().any(|p| p.risk_score >= 80);
+        let has_high_risk = pii_result.pii.iter().any(|p| p.risk_score >= 80);
         if block_pii && has_high_risk {
             should_block = true;
             reason = format!("High-risk PII detected: {:?}", pii_types);
@@ -335,7 +335,7 @@ async fn scan_content(
 
         // Record metric
         let mut metrics = handlers.metrics.write().await;
-        for p in &pii {
+        for p in &pii_result.pii {
             metrics.inc_pii_detected("proxy", &p.pii_type);
         }
     }

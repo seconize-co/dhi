@@ -1,0 +1,30 @@
+# Clippy configuration for Dhi
+# This enforces security-focused linting rules
+
+# Deny all panicking operations in production code
+warn = [
+    "clippy::unwrap_used",
+    "clippy::expect_used",
+    "clippy::panic",
+    "clippy::unreachable",
+]
+
+# Security-related lints
+deny = [
+    # Prevent accidental panics
+    "clippy::indexing_slicing",
+    
+    # Prevent unsafe code without explicit opt-in
+    "unsafe_code",
+    
+    # Prevent potential security issues
+    "clippy::string_to_string",
+    "clippy::str_to_string",
+]
+
+# Allow certain patterns that are acceptable
+allow = [
+    # Allow in tests
+    "clippy::unwrap_used",
+    "clippy::expect_used",
+]

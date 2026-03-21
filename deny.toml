@@ -1,0 +1,44 @@
+# Cargo deny configuration
+# Run: cargo deny check
+
+[advisories]
+vulnerability = "deny"
+unmaintained = "warn"
+yanked = "warn"
+notice = "warn"
+
+[licenses]
+unlicensed = "deny"
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "MPL-2.0",
+    "Unicode-DFS-2016",
+]
+copyleft = "warn"
+confidence-threshold = 0.8
+
+[bans]
+multiple-versions = "warn"
+wildcards = "allow"
+highlight = "all"
+
+# Deny specific problematic crates
+deny = [
+    # Known problematic crates
+    # { name = "example-crate" }
+]
+
+# Skip certain crates from duplicate checking
+skip = [
+    # Allow multiple versions of these if needed
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "warn"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
