@@ -169,6 +169,9 @@ pub struct OverallStats {
     pub high_risk_agents: Vec<String>,
 }
 
+/// Maximum number of events to store (circular buffer)
+const MAX_EVENTS: usize = 10_000;
+
 /// Main agentic runtime
 pub struct AgenticRuntime {
     agents: Arc<RwLock<HashMap<String, AgentContext>>>,
@@ -177,8 +180,56 @@ pub struct AgenticRuntime {
     mcp_monitor: Arc<McpMonitor>,
     prompt_security: Arc<PromptSecurityAnalyzer>,
     memory_protection: Arc<RwLock<MemoryProtection>>,
-    events: Arc<RwLock<Vec<AgentEvent>>>,
+    events: Arc<RwLock<CircularEventBuffer>>,
     total_events: Arc<RwLock<u64>>,
+}
+
+/// Circular buffer for events to prevent unbounded memory growth
+struct CircularEventBuffer {
+    events: Vec<AgentEvent>,
+    head: usize,
+    len: usize,
+    capacity: usize,
+}
+
+impl CircularEventBuffer {
+    fn new(capacity: usize) -> Self {
+        Self {
+            events: Vec::with_capacity(capacity),
+            head: 0,
+            len: 0,
+            capacity,
+        }
+    }
+
+    fn push(&mut self, event: AgentEvent) {
+        if self.events.len() < self.capacity {
+            // Still filling up
+            self.events.push(event);
+            self.len += 1;
+        } else {
+            // Circular overwrite
+            self.events[self.head] = event;
+            self.head = (self.head + 1) % self.capacity;
+        }
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &AgentEvent> {
+        let start = if self.events.len() < self.capacity {
+            0
+        } else {
+            self.head
+        };
+        
+        (0..self.len).map(move |i| {
+            let idx = (start + i) % self.capacity;
+            &self.events[idx]
+        })
+    }
+
+    fn len(&self) -> usize {
+        self.len.min(self.capacity)
+    }
 }
 
 /// Agent event
@@ -199,7 +250,7 @@ impl AgenticRuntime {
             mcp_monitor: Arc::new(McpMonitor::new()),
             prompt_security: Arc::new(PromptSecurityAnalyzer::new()),
             memory_protection: Arc::new(RwLock::new(MemoryProtection::new())),
-            events: Arc::new(RwLock::new(Vec::new())),
+            events: Arc::new(RwLock::new(CircularEventBuffer::new(MAX_EVENTS))),
             total_events: Arc::new(RwLock::new(0)),
         }
     }

@@ -6,6 +6,9 @@ use lazy_static::lazy_static;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
+/// Maximum input size for scanning (1MB)
+const MAX_SCAN_SIZE: usize = 1024 * 1024;
+
 lazy_static! {
     /// PII detection patterns
     static ref PII_PATTERNS: Vec<PiiPattern> = vec![
@@ -161,6 +164,8 @@ impl PiiDetector {
     }
 
     /// Scan text for PII
+    ///
+    /// Input is limited to MAX_SCAN_SIZE (1MB) to prevent ReDoS attacks.
     pub fn scan(&self, text: &str, location: &str) -> PiiDetectionResult {
         let mut result = PiiDetectionResult {
             pii_found: false,
@@ -168,6 +173,18 @@ impl PiiDetector {
             critical_count: 0,
             pii_types: Vec::new(),
             risk_score: 0,
+        };
+
+        // Limit input size to prevent ReDoS
+        let scan_text = if text.len() > MAX_SCAN_SIZE {
+            tracing::warn!(
+                "Input truncated from {} to {} bytes for PII scanning",
+                text.len(),
+                MAX_SCAN_SIZE
+            );
+            &text[..MAX_SCAN_SIZE]
+        } else {
+            text
         };
 
         let mut type_counts: std::collections::HashMap<&str, (usize, &str, Vec<String>)> =
@@ -178,7 +195,7 @@ impl PiiDetector {
                 continue;
             }
 
-            let matches: Vec<_> = pattern.pattern.find_iter(text).collect();
+            let matches: Vec<_> = pattern.pattern.find_iter(scan_text).collect();
             if !matches.is_empty() {
                 let entry = type_counts
                     .entry(pattern.pii_type)

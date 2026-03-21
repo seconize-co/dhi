@@ -123,7 +123,10 @@ impl EfficiencyAnalyzer {
         prompt_hash: &str,
         estimated_cost: f64,
     ) -> Option<EfficiencyIssue> {
-        let mut hashes = self.prompt_hashes.write().unwrap();
+        let mut hashes = match self.prompt_hashes.write() {
+            Ok(h) => h,
+            Err(_) => return None, // Lock poisoned, skip tracking
+        };
         let now = chrono::Utc::now().timestamp();
 
         let occurrence = hashes
@@ -170,7 +173,10 @@ impl EfficiencyAnalyzer {
         params_hash: &str,
         success: bool,
     ) -> Option<EfficiencyIssue> {
-        let mut patterns = self.tool_patterns.write().unwrap();
+        let mut patterns = match self.tool_patterns.write() {
+            Ok(p) => p,
+            Err(_) => return None, // Lock poisoned, skip tracking
+        };
         let now = chrono::Utc::now().timestamp();
 
         let records = patterns
@@ -221,7 +227,10 @@ impl EfficiencyAnalyzer {
         context_used: u64,
         context_available: u64,
     ) -> Option<EfficiencyIssue> {
-        let mut usage = self.token_usage.write().unwrap();
+        let mut usage = match self.token_usage.write() {
+            Ok(u) => u,
+            Err(_) => return None, // Lock poisoned, skip tracking
+        };
         
         let agent_usage = usage
             .entry(agent_id.to_string())
@@ -254,12 +263,20 @@ impl EfficiencyAnalyzer {
     }
 
     /// Generate efficiency report
-    pub fn generate_report(&self, agents: &[String]) -> EfficiencyReport {
+    pub fn generate_report(&self, _agents: &[String]) -> EfficiencyReport {
         let mut issues = Vec::new();
         let mut total_savings = 0.0;
 
         // Check for duplicate prompts
-        let hashes = self.prompt_hashes.read().unwrap();
+        let hashes = match self.prompt_hashes.read() {
+            Ok(h) => h,
+            Err(_) => return EfficiencyReport {
+                total_cost_usd: 0.0,
+                potential_savings_usd: 0.0,
+                savings_percentage: 0.0,
+                issues: vec![],
+            },
+        };
         for (_, occurrence) in hashes.iter() {
             if occurrence.count >= self.config.duplicate_prompt_threshold {
                 let savings = occurrence.estimated_cost * 0.8;
@@ -295,15 +312,17 @@ impl EfficiencyAnalyzer {
         let now = chrono::Utc::now().timestamp();
 
         // Clean prompt hashes
-        let mut hashes = self.prompt_hashes.write().unwrap();
-        hashes.retain(|_, v| now - v.last_seen < max_age_secs);
+        if let Ok(mut hashes) = self.prompt_hashes.write() {
+            hashes.retain(|_, v| now - v.last_seen < max_age_secs);
+        }
 
         // Clean tool patterns
-        let mut patterns = self.tool_patterns.write().unwrap();
-        for records in patterns.values_mut() {
-            records.retain(|r| now - r.timestamp < max_age_secs);
+        if let Ok(mut patterns) = self.tool_patterns.write() {
+            for records in patterns.values_mut() {
+                records.retain(|r| now - r.timestamp < max_age_secs);
+            }
+            patterns.retain(|_, v| !v.is_empty());
         }
-        patterns.retain(|_, v| !v.is_empty());
     }
 }
 

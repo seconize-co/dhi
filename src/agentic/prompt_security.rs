@@ -6,6 +6,9 @@ use lazy_static::lazy_static;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
+/// Maximum input size for scanning (1MB)
+const MAX_SCAN_SIZE: usize = 1024 * 1024;
+
 lazy_static! {
     /// Prompt injection patterns
     static ref INJECTION_PATTERNS: Vec<Regex> = vec![
@@ -84,6 +87,8 @@ impl PromptSecurityAnalyzer {
     }
 
     /// Analyze text for security issues
+    ///
+    /// Input is limited to MAX_SCAN_SIZE (1MB) to prevent ReDoS attacks.
     pub fn analyze(&self, text: &str) -> SecurityAnalysis {
         let mut result = SecurityAnalysis {
             injection_detected: false,
@@ -93,9 +98,21 @@ impl PromptSecurityAnalyzer {
             findings: Vec::new(),
         };
 
+        // Limit input size to prevent ReDoS
+        let scan_text = if text.len() > MAX_SCAN_SIZE {
+            tracing::warn!(
+                "Input truncated from {} to {} bytes for security analysis",
+                text.len(),
+                MAX_SCAN_SIZE
+            );
+            &text[..MAX_SCAN_SIZE]
+        } else {
+            text
+        };
+
         // Check for prompt injection
         for pattern in INJECTION_PATTERNS.iter() {
-            if pattern.is_match(text) {
+            if pattern.is_match(scan_text) {
                 result.injection_detected = true;
                 result.risk_score += 40;
                 result.findings.push(SecurityFinding {
@@ -108,7 +125,7 @@ impl PromptSecurityAnalyzer {
 
         // Check for jailbreak attempts
         for pattern in JAILBREAK_PATTERNS.iter() {
-            if pattern.is_match(text) {
+            if pattern.is_match(scan_text) {
                 result.jailbreak_detected = true;
                 result.risk_score += 30;
                 result.findings.push(SecurityFinding {
@@ -121,7 +138,7 @@ impl PromptSecurityAnalyzer {
 
         // Check for sensitive data
         for pattern in SENSITIVE_PATTERNS.iter() {
-            let matches: Vec<_> = pattern.find_iter(text).collect();
+            let matches: Vec<_> = pattern.find_iter(scan_text).collect();
             if !matches.is_empty() {
                 result.sensitive_data_detected = true;
                 result.risk_score += 25;

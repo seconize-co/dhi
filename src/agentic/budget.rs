@@ -26,7 +26,7 @@ impl Default for BudgetLimit {
 }
 
 /// Budget status
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BudgetStatus {
     pub daily_spent: f64,
     pub daily_limit: f64,
@@ -111,17 +111,19 @@ impl BudgetController {
 
     /// Set global budget limit
     pub fn set_global_limit(&self, limit: BudgetLimit) {
-        *self.global_limit.write().unwrap() = limit;
-        info!("Global budget set: ${}/day, ${}/month", 
-              self.global_limit.read().unwrap().daily_usd,
-              self.global_limit.read().unwrap().monthly_usd);
+        if let Ok(mut global) = self.global_limit.write() {
+            info!("Global budget set: ${}/day, ${}/month", limit.daily_usd, limit.monthly_usd);
+            *global = limit;
+        }
     }
 
     /// Set per-agent budget limit
     pub fn set_agent_limit(&self, agent_id: &str, limit: BudgetLimit) {
-        self.agent_limits.write().unwrap().insert(agent_id.to_string(), limit.clone());
-        info!("Agent {} budget set: ${}/day, ${}/month", 
-              agent_id, limit.daily_usd, limit.monthly_usd);
+        if let Ok(mut limits) = self.agent_limits.write() {
+            info!("Agent {} budget set: ${}/day, ${}/month", 
+                  agent_id, limit.daily_usd, limit.monthly_usd);
+            limits.insert(agent_id.to_string(), limit);
+        }
     }
 
     /// Set action on budget exceeded
@@ -133,10 +135,42 @@ impl BudgetController {
     pub fn check_budget(&self, agent_id: &str, amount_usd: f64) -> BudgetCheckResult {
         self.reset_if_needed(agent_id);
 
-        let global_limit = self.global_limit.read().unwrap();
-        let agent_limits = self.agent_limits.read().unwrap();
-        let spending = self.spending.read().unwrap();
-        let global_spending = self.global_spending.read().unwrap();
+        // Get locks - if poisoned, return a safe default (deny)
+        let global_limit = match self.global_limit.read() {
+            Ok(g) => g,
+            Err(_) => return BudgetCheckResult {
+                allowed: false,
+                reason: Some("Internal error: lock poisoned".to_string()),
+                status: BudgetStatus::default(),
+            },
+        };
+        
+        let agent_limits = match self.agent_limits.read() {
+            Ok(a) => a,
+            Err(_) => return BudgetCheckResult {
+                allowed: false,
+                reason: Some("Internal error: lock poisoned".to_string()),
+                status: BudgetStatus::default(),
+            },
+        };
+        
+        let spending = match self.spending.read() {
+            Ok(s) => s,
+            Err(_) => return BudgetCheckResult {
+                allowed: false,
+                reason: Some("Internal error: lock poisoned".to_string()),
+                status: BudgetStatus::default(),
+            },
+        };
+        
+        let global_spending = match self.global_spending.read() {
+            Ok(g) => g,
+            Err(_) => return BudgetCheckResult {
+                allowed: false,
+                reason: Some("Internal error: lock poisoned".to_string()),
+                status: BudgetStatus::default(),
+            },
+        };
 
         // Get effective limit (agent-specific or global)
         let limit = agent_limits.get(agent_id).unwrap_or(&global_limit);
@@ -203,36 +237,48 @@ impl BudgetController {
         self.reset_if_needed(agent_id);
 
         // Update agent spending
-        let mut spending = self.spending.write().unwrap();
-        let agent_spend = spending.entry(agent_id.to_string()).or_default();
-        agent_spend.daily_total += amount_usd;
-        agent_spend.monthly_total += amount_usd;
-        agent_spend.call_count += 1;
+        if let Ok(mut spending) = self.spending.write() {
+            let agent_spend = spending.entry(agent_id.to_string()).or_default();
+            agent_spend.daily_total += amount_usd;
+            agent_spend.monthly_total += amount_usd;
+            agent_spend.call_count += 1;
+
+            // Check for warnings
+            if let Ok(limit) = self.global_limit.read() {
+                if limit.daily_usd > 0.0 && agent_spend.daily_total / limit.daily_usd >= self.warning_threshold {
+                    warn!(
+                        "Agent {} approaching daily budget: ${:.2} / ${:.2} ({:.0}%)",
+                        agent_id,
+                        agent_spend.daily_total,
+                        limit.daily_usd,
+                        (agent_spend.daily_total / limit.daily_usd) * 100.0
+                    );
+                }
+            }
+        }
 
         // Update global spending
-        let mut global = self.global_spending.write().unwrap();
-        global.daily_total += amount_usd;
-        global.monthly_total += amount_usd;
-        global.call_count += 1;
-
-        // Check for warnings
-        let limit = self.global_limit.read().unwrap();
-        if agent_spend.daily_total / limit.daily_usd >= self.warning_threshold {
-            warn!(
-                "Agent {} approaching daily budget: ${:.2} / ${:.2} ({:.0}%)",
-                agent_id,
-                agent_spend.daily_total,
-                limit.daily_usd,
-                (agent_spend.daily_total / limit.daily_usd) * 100.0
-            );
+        if let Ok(mut global) = self.global_spending.write() {
+            global.daily_total += amount_usd;
+            global.monthly_total += amount_usd;
+            global.call_count += 1;
         }
     }
 
     /// Get spending status for an agent
     pub fn get_status(&self, agent_id: &str) -> BudgetStatus {
-        let global_limit = self.global_limit.read().unwrap();
-        let agent_limits = self.agent_limits.read().unwrap();
-        let spending = self.spending.read().unwrap();
+        let global_limit = match self.global_limit.read() {
+            Ok(g) => g,
+            Err(_) => return BudgetStatus::default(),
+        };
+        let agent_limits = match self.agent_limits.read() {
+            Ok(a) => a,
+            Err(_) => return BudgetStatus::default(),
+        };
+        let spending = match self.spending.read() {
+            Ok(s) => s,
+            Err(_) => return BudgetStatus::default(),
+        };
 
         let limit = agent_limits.get(agent_id).unwrap_or(&global_limit);
         let agent_spend = spending.get(agent_id).cloned().unwrap_or_default();
@@ -242,8 +288,14 @@ impl BudgetController {
 
     /// Get global spending status
     pub fn get_global_status(&self) -> BudgetStatus {
-        let limit = self.global_limit.read().unwrap();
-        let global = self.global_spending.read().unwrap();
+        let limit = match self.global_limit.read() {
+            Ok(l) => l,
+            Err(_) => return BudgetStatus::default(),
+        };
+        let global = match self.global_spending.read() {
+            Ok(g) => g,
+            Err(_) => return BudgetStatus::default(),
+        };
         self.build_status(&global, &limit)
     }
 
@@ -279,32 +331,41 @@ impl BudgetController {
     /// Reset counters if day/month changed
     fn reset_if_needed(&self, agent_id: &str) {
         let now = chrono::Utc::now();
-        let today = now.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
-        let this_month = now.date_naive().with_day(1).unwrap().and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
+        let today = now.date_naive()
+            .and_hms_opt(0, 0, 0)
+            .map(|t| t.and_utc().timestamp())
+            .unwrap_or(0);
+        let this_month = now.date_naive()
+            .with_day(1)
+            .and_then(|d| d.and_hms_opt(0, 0, 0))
+            .map(|t| t.and_utc().timestamp())
+            .unwrap_or(0);
 
-        let mut spending = self.spending.write().unwrap();
-        if let Some(agent_spend) = spending.get_mut(agent_id) {
-            // Reset daily
-            if agent_spend.last_daily_reset < today {
-                agent_spend.daily_total = 0.0;
-                agent_spend.last_daily_reset = today;
-            }
-            // Reset monthly
-            if agent_spend.last_monthly_reset < this_month {
-                agent_spend.monthly_total = 0.0;
-                agent_spend.last_monthly_reset = this_month;
+        if let Ok(mut spending) = self.spending.write() {
+            if let Some(agent_spend) = spending.get_mut(agent_id) {
+                // Reset daily
+                if agent_spend.last_daily_reset < today {
+                    agent_spend.daily_total = 0.0;
+                    agent_spend.last_daily_reset = today;
+                }
+                // Reset monthly
+                if agent_spend.last_monthly_reset < this_month {
+                    agent_spend.monthly_total = 0.0;
+                    agent_spend.last_monthly_reset = this_month;
+                }
             }
         }
 
         // Reset global
-        let mut global = self.global_spending.write().unwrap();
-        if global.last_daily_reset < today {
-            global.daily_total = 0.0;
-            global.last_daily_reset = today;
-        }
-        if global.last_monthly_reset < this_month {
-            global.monthly_total = 0.0;
-            global.last_monthly_reset = this_month;
+        if let Ok(mut global) = self.global_spending.write() {
+            if global.last_daily_reset < today {
+                global.daily_total = 0.0;
+                global.last_daily_reset = today;
+            }
+            if global.last_monthly_reset < this_month {
+                global.monthly_total = 0.0;
+                global.last_monthly_reset = this_month;
+            }
         }
     }
 }

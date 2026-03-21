@@ -1,14 +1,16 @@
 //! Alerting Module
 //!
 //! Send alerts via Slack, Email, webhooks, etc.
+//! Includes rate limiting to prevent alert flooding.
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use tracing::{error, info};
+use std::sync::RwLock;
+use tracing::{error, info, warn};
 
 /// Alert severity levels
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AlertSeverity {
     Info,
@@ -116,6 +118,10 @@ pub struct AlertConfig {
     pub min_severity: AlertSeverity,
     /// Enable/disable alerting
     pub enabled: bool,
+    /// Rate limit: max alerts per minute
+    pub rate_limit_per_minute: u32,
+    /// Rate limit: max alerts per hour per agent
+    pub rate_limit_per_hour_per_agent: u32,
 }
 
 impl Default for AlertConfig {
@@ -128,7 +134,103 @@ impl Default for AlertConfig {
             webhook_urls: Vec::new(),
             min_severity: AlertSeverity::Warning,
             enabled: true,
+            rate_limit_per_minute: 30,
+            rate_limit_per_hour_per_agent: 100,
         }
+    }
+}
+
+/// Rate limiter for alerts (token bucket algorithm)
+struct RateLimiter {
+    /// Global alerts per minute
+    global_bucket: RwLock<TokenBucket>,
+    /// Per-agent alerts per hour
+    agent_buckets: RwLock<HashMap<String, TokenBucket>>,
+    /// Configuration
+    global_limit: u32,
+    agent_limit: u32,
+}
+
+struct TokenBucket {
+    tokens: f64,
+    last_update: i64,
+    max_tokens: f64,
+    refill_rate: f64, // tokens per second
+}
+
+impl TokenBucket {
+    fn new(max_tokens: f64, refill_rate: f64) -> Self {
+        Self {
+            tokens: max_tokens,
+            last_update: chrono::Utc::now().timestamp(),
+            max_tokens,
+            refill_rate,
+        }
+    }
+
+    fn try_consume(&mut self) -> bool {
+        let now = chrono::Utc::now().timestamp();
+        let elapsed = (now - self.last_update) as f64;
+        
+        // Refill tokens
+        self.tokens = (self.tokens + elapsed * self.refill_rate).min(self.max_tokens);
+        self.last_update = now;
+
+        // Try to consume
+        if self.tokens >= 1.0 {
+            self.tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+impl RateLimiter {
+    fn new(global_per_minute: u32, per_agent_per_hour: u32) -> Self {
+        Self {
+            global_bucket: RwLock::new(TokenBucket::new(
+                global_per_minute as f64,
+                global_per_minute as f64 / 60.0, // refill per second
+            )),
+            agent_buckets: RwLock::new(HashMap::new()),
+            global_limit: global_per_minute,
+            agent_limit: per_agent_per_hour,
+        }
+    }
+
+    fn check(&self, agent_id: Option<&str>) -> bool {
+        // Check global limit
+        {
+            let mut global = match self.global_bucket.write() {
+                Ok(g) => g,
+                Err(_) => return false, // Poisoned lock, deny
+            };
+            if !global.try_consume() {
+                return false;
+            }
+        }
+
+        // Check per-agent limit if agent_id provided
+        if let Some(agent) = agent_id {
+            let mut buckets = match self.agent_buckets.write() {
+                Ok(b) => b,
+                Err(_) => return false,
+            };
+            
+            let bucket = buckets.entry(agent.to_string()).or_insert_with(|| {
+                TokenBucket::new(
+                    self.agent_limit as f64,
+                    self.agent_limit as f64 / 3600.0, // refill per second (hourly rate)
+                )
+            });
+            
+            if !bucket.try_consume() {
+                return false;
+            }
+        }
+
+        true
     }
 }
 
@@ -136,13 +238,19 @@ impl Default for AlertConfig {
 pub struct Alerter {
     config: AlertConfig,
     client: reqwest::Client,
+    rate_limiter: RateLimiter,
 }
 
 impl Alerter {
     pub fn new(config: AlertConfig) -> Self {
+        let rate_limiter = RateLimiter::new(
+            config.rate_limit_per_minute,
+            config.rate_limit_per_hour_per_agent,
+        );
         Self {
             config,
             client: reqwest::Client::new(),
+            rate_limiter,
         }
     }
 
@@ -154,6 +262,16 @@ impl Alerter {
 
         // Check severity threshold
         if !self.meets_severity_threshold(alert.severity) {
+            return Ok(());
+        }
+
+        // Check rate limit
+        if !self.rate_limiter.check(alert.agent_id.as_deref()) {
+            warn!(
+                "Alert rate limited: {} (agent: {:?})",
+                alert.title,
+                alert.agent_id
+            );
             return Ok(());
         }
 

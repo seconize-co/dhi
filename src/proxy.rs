@@ -5,9 +5,10 @@
 //! - PII in prompts and responses
 //! - Dangerous tool calls
 //! - Budget enforcement
+//! - SSRF protection (blocks private IP ranges)
 
 use anyhow::Result;
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -19,6 +20,97 @@ use crate::agentic::{
     SecretsDetector,
 };
 use crate::ProtectionLevel;
+
+/// Check if an IP address is in a private/internal range (SSRF protection)
+fn is_private_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ipv4) => {
+            let octets = ipv4.octets();
+            // Private ranges
+            octets[0] == 10 // 10.0.0.0/8
+            || (octets[0] == 172 && (16..=31).contains(&octets[1])) // 172.16.0.0/12
+            || (octets[0] == 192 && octets[1] == 168) // 192.168.0.0/16
+            // Loopback
+            || octets[0] == 127 // 127.0.0.0/8
+            // Link-local
+            || (octets[0] == 169 && octets[1] == 254) // 169.254.0.0/16 (includes AWS metadata)
+            // Localhost
+            || ipv4 == Ipv4Addr::LOCALHOST
+            // Broadcast
+            || ipv4 == Ipv4Addr::BROADCAST
+            // Unspecified
+            || ipv4 == Ipv4Addr::UNSPECIFIED
+            // Documentation ranges
+            || (octets[0] == 192 && octets[1] == 0 && octets[2] == 2) // 192.0.2.0/24
+            || (octets[0] == 198 && octets[1] == 51 && octets[2] == 100) // 198.51.100.0/24
+            || (octets[0] == 203 && octets[1] == 0 && octets[2] == 113) // 203.0.113.0/24
+        }
+        IpAddr::V6(ipv6) => {
+            ipv6.is_loopback()
+            || ipv6.is_unspecified()
+            // Unique local addresses (fc00::/7)
+            || (ipv6.segments()[0] & 0xfe00) == 0xfc00
+            // Link-local (fe80::/10)
+            || (ipv6.segments()[0] & 0xffc0) == 0xfe80
+        }
+    }
+}
+
+/// Check if hostname is suspicious (cloud metadata endpoints, etc.)
+fn is_suspicious_hostname(host: &str) -> bool {
+    let host_lower = host.to_lowercase();
+    
+    // Cloud metadata endpoints
+    host_lower == "169.254.169.254"
+    || host_lower == "metadata.google.internal"
+    || host_lower.ends_with(".internal")
+    || host_lower == "metadata"
+    || host_lower.contains("metadata.azure")
+    || host_lower == "fd00:ec2::254"
+    
+    // Localhost variations
+    || host_lower == "localhost"
+    || host_lower == "localhost.localdomain"
+    || host_lower.ends_with(".localhost")
+    
+    // Kubernetes internal
+    || host_lower.ends_with(".cluster.local")
+    || host_lower.ends_with(".svc")
+    
+    // Docker internal
+    || host_lower == "host.docker.internal"
+    || host_lower == "gateway.docker.internal"
+}
+
+/// Validate that a host is safe to connect to (SSRF protection)
+fn validate_host(host: &str, port: u16) -> Result<(), String> {
+    // Check suspicious hostnames first
+    if is_suspicious_hostname(host) {
+        return Err(format!("SSRF: Suspicious hostname blocked: {}", host));
+    }
+    
+    // Try to resolve the hostname
+    let addr_str = format!("{}:{}", host, port);
+    match addr_str.to_socket_addrs() {
+        Ok(addrs) => {
+            for addr in addrs {
+                if is_private_ip(addr.ip()) {
+                    return Err(format!(
+                        "SSRF: Private IP address blocked: {} resolved to {}",
+                        host, addr.ip()
+                    ));
+                }
+            }
+            Ok(())
+        }
+        Err(e) => {
+            // DNS resolution failed - could be legitimate or could be attack
+            // Allow it but log (the connection will fail naturally)
+            warn!("DNS resolution failed for {}: {}", host, e);
+            Ok(())
+        }
+    }
+}
 
 /// Proxy configuration
 #[derive(Debug, Clone)]
@@ -177,6 +269,17 @@ async fn handle_connect(
     } else {
         (target.to_string(), 443)
     };
+
+    // SSRF protection: validate the target host
+    if let Err(ssrf_err) = validate_host(&host, port) {
+        warn!("[BLOCKED] {}", ssrf_err);
+        let response = format!(
+            "HTTP/1.1 403 Forbidden\r\n\r\n{}\n",
+            ssrf_err
+        );
+        client.write_all(response.as_bytes()).await?;
+        return Ok(());
+    }
 
     // Connect to upstream
     let upstream_addr = format!("{}:{}", host, port);

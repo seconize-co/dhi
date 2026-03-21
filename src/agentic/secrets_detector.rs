@@ -6,6 +6,9 @@ use lazy_static::lazy_static;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
+/// Maximum input size for scanning (1MB)
+const MAX_SCAN_SIZE: usize = 1024 * 1024;
+
 lazy_static! {
     /// Secret detection patterns
     static ref SECRET_PATTERNS: Vec<SecretPattern> = vec![
@@ -199,6 +202,8 @@ impl SecretsDetector {
     }
 
     /// Scan text for secrets
+    /// 
+    /// Input is limited to MAX_SCAN_SIZE (1MB) to prevent ReDoS attacks.
     pub fn scan(&self, text: &str, location: &str) -> SecretsDetectionResult {
         let mut result = SecretsDetectionResult {
             secrets_found: false,
@@ -208,8 +213,20 @@ impl SecretsDetector {
             risk_score: 0,
         };
 
+        // Limit input size to prevent ReDoS
+        let scan_text = if text.len() > MAX_SCAN_SIZE {
+            tracing::warn!(
+                "Input truncated from {} to {} bytes for secrets scanning",
+                text.len(),
+                MAX_SCAN_SIZE
+            );
+            &text[..MAX_SCAN_SIZE]
+        } else {
+            text
+        };
+
         for pattern in SECRET_PATTERNS.iter() {
-            for matched in pattern.pattern.find_iter(text) {
+            for matched in pattern.pattern.find_iter(scan_text) {
                 let matched_str = matched.as_str();
 
                 // Check allowlist
