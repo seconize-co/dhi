@@ -1261,7 +1261,7 @@ fn build_request_info_from_ssl_event(event: &SslEvent) -> RequestInfo {
 
     let user_agent = headers
         .iter()
-        .find(|(k, _)| k.to_ascii_lowercase() == "user-agent")
+        .find(|(k, _)| k.eq_ignore_ascii_case("user-agent"))
         .map(|(_, v)| v.clone());
     let exe_path = std::fs::read_link(format!("/proc/{}/exe", event.pid))
         .ok()
