@@ -243,6 +243,16 @@ async fn start_ssl_monitor(
                 "SSL raw event received: pid={} tid={} dir={} data_len={}",
                 raw.pid, raw.tid, raw.direction, raw.data_len
             );
+            let comm_str = std::str::from_utf8(&raw.comm)
+                .unwrap_or("")
+                .trim_end_matches('\0')
+                .to_ascii_lowercase();
+            if comm_str.contains("copilot") || comm_str.contains("mainthread") {
+                info!(
+                    "[COPILOT RAW EVENT] pid={} tid={} dir={} data_len={}",
+                    raw.pid, raw.tid, raw.direction, raw.data_len
+                );
+            }
 
             if let Err(e) = tracer.monitor().process_raw_event(&raw).await {
                 debug!("Failed to process raw SSL event: {}", e);

@@ -20,8 +20,8 @@
 // Maximum data capture size (16KB - typical TLS record)
 #define MAX_DATA_SIZE 16384
 // Fixed-size chunk to satisfy strict verifier bounds on helper length args,
-// while still carrying enough payload for secret pattern detection.
-#define CAPTURE_CHUNK_SIZE 64
+// while still carrying enough payload for secret/pii/prompt-injection detection.
+#define CAPTURE_CHUNK_SIZE 512
 
 // Event direction
 #define SSL_WRITE 0
@@ -59,6 +59,7 @@ struct ssl_read_args {
     void *ssl;
     void *buf;
     __u32 num;
+    void *readbytes_ptr; // SSL_read_ex: size_t *readbytes
 };
 
 struct {
@@ -91,7 +92,7 @@ static __always_inline void fill_event_common(struct ssl_event *event, void *ssl
 
 // Submit event to ring buffer
 static __always_inline int submit_ssl_event(struct ssl_event *scratch, void *buf, __u32 len) {
-    if (len < CAPTURE_CHUNK_SIZE || len > MAX_DATA_SIZE) {
+    if (len == 0 || len > MAX_DATA_SIZE) {
         return 0;
     }
     
@@ -104,11 +105,11 @@ static __always_inline int submit_ssl_event(struct ssl_event *scratch, void *buf
     // Copy common fields
     __builtin_memcpy(event, scratch, offsetof(struct ssl_event, data));
     
-    // Capture data length
-    event->data_len = CAPTURE_CHUNK_SIZE;
-    
+    // Capture data length (bounded by configured chunk size)
+    __u32 to_read = len < CAPTURE_CHUNK_SIZE ? len : CAPTURE_CHUNK_SIZE;
+    event->data_len = to_read;
+
     // Read data from userspace (bounded read)
-    __u32 to_read = CAPTURE_CHUNK_SIZE;
     if (bpf_probe_read_user(event->data, to_read, buf) < 0) {
         bpf_ringbuf_discard(event, 0);
         return 0;
@@ -162,6 +163,7 @@ int BPF_UPROBE(uprobe_ssl_read_entry, void *ssl, void *buf, int num) {
         .ssl = ssl,
         .buf = buf,
         .num = num,
+        .readbytes_ptr = 0,
     };
     
     bpf_map_update_elem(&active_ssl_reads, &tid, &args, BPF_ANY);
@@ -201,13 +203,14 @@ int BPF_URETPROBE(uretprobe_ssl_read, int ret) {
 
 // int SSL_read_ex(SSL *ssl, void *buf, size_t num, size_t *readbytes) - entry
 SEC("uprobe/ssl_read_ex")
-int BPF_UPROBE(uprobe_ssl_read_ex_entry, void *ssl, void *buf, size_t num) {
+int BPF_UPROBE(uprobe_ssl_read_ex_entry, void *ssl, void *buf, size_t num, void *readbytes) {
     __u64 tid = bpf_get_current_pid_tgid();
     
     struct ssl_read_args args = {
         .ssl = ssl,
         .buf = buf,
         .num = num,
+        .readbytes_ptr = readbytes,
     };
     
     bpf_map_update_elem(&active_ssl_reads, &tid, &args, BPF_ANY);
@@ -238,9 +241,20 @@ int BPF_URETPROBE(uretprobe_ssl_read_ex, int ret) {
         return 0;
     }
 
+    // SSL_read_ex returns bytes via *readbytes.
+    __u64 readbytes = 0;
+    if (!args->readbytes_ptr ||
+        bpf_probe_read_user(&readbytes, sizeof(readbytes), args->readbytes_ptr) < 0) {
+        bpf_map_delete_elem(&active_ssl_reads, &tid);
+        return 0;
+    }
+    if (readbytes == 0 || readbytes > MAX_DATA_SIZE) {
+        bpf_map_delete_elem(&active_ssl_reads, &tid);
+        return 0;
+    }
+
     fill_event_common(scratch, args->ssl, SSL_READ);
-    // For _ex variant, we'd need to read *readbytes, but we use num as an upper bound.
-    submit_ssl_event(scratch, args->buf, args->num);
+    submit_ssl_event(scratch, args->buf, (__u32)readbytes);
     
     bpf_map_delete_elem(&active_ssl_reads, &tid);
     return 0;
@@ -274,6 +288,7 @@ int BPF_UPROBE(uprobe_gnutls_recv_entry, void *session, void *data, size_t data_
         .ssl = session,
         .buf = data,
         .num = data_size,
+        .readbytes_ptr = 0,
     };
     
     bpf_map_update_elem(&active_ssl_reads, &tid, &args, BPF_ANY);

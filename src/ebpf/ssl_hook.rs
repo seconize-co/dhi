@@ -8,7 +8,8 @@
 use anyhow::Result;
 use aya::programs::{ProgramError, UProbe};
 use aya::Bpf;
-use std::collections::HashMap;
+use object::{Object, ObjectSection, ObjectSymbol};
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
@@ -113,6 +114,7 @@ impl LibraryProbe {
 /// Find SSL libraries on the system
 pub fn find_ssl_libraries() -> Vec<LibraryProbe> {
     let mut libraries = Vec::new();
+    let mut seen_targets: HashSet<PathBuf> = HashSet::new();
 
     // Common OpenSSL paths
     let openssl_paths = [
@@ -128,7 +130,9 @@ pub fn find_ssl_libraries() -> Vec<LibraryProbe> {
         let path_buf = PathBuf::from(path);
         if path_buf.exists() {
             info!("Found OpenSSL at: {}", path);
-            libraries.push(LibraryProbe::openssl(path_buf));
+            if seen_targets.insert(path_buf.clone()) {
+                libraries.push(LibraryProbe::openssl(path_buf));
+            }
             break;
         }
     }
@@ -144,7 +148,9 @@ pub fn find_ssl_libraries() -> Vec<LibraryProbe> {
         let path_buf = PathBuf::from(path);
         if path_buf.exists() {
             info!("Found GnuTLS at: {}", path);
-            libraries.push(LibraryProbe::gnutls(path_buf));
+            if seen_targets.insert(path_buf.clone()) {
+                libraries.push(LibraryProbe::gnutls(path_buf));
+            }
             break;
         }
     }
@@ -160,7 +166,19 @@ pub fn find_ssl_libraries() -> Vec<LibraryProbe> {
         let path_buf = PathBuf::from(path);
         if path_buf.exists() {
             info!("Found BoringSSL at: {}", path);
-            libraries.push(LibraryProbe::boringssl(path_buf));
+            if seen_targets.insert(path_buf.clone()) {
+                libraries.push(LibraryProbe::boringssl(path_buf));
+            }
+        }
+    }
+
+    // Copilot CLI and similar Rust binaries may embed OpenSSL symbols directly
+    // in the executable (not in shared libssl). In that case, attach uprobes to
+    // the executable path itself so SSL_* hooks still fire.
+    for target in discover_runtime_ssl_targets() {
+        if seen_targets.insert(target.clone()) {
+            info!("Found runtime SSL target at: {}", target.display());
+            libraries.push(LibraryProbe::openssl(target));
         }
     }
 
@@ -169,6 +187,122 @@ pub fn find_ssl_libraries() -> Vec<LibraryProbe> {
     }
 
     libraries
+}
+
+fn discover_runtime_ssl_targets() -> Vec<PathBuf> {
+    let mut targets = Vec::new();
+    let mut seen = HashSet::new();
+
+    let mut add_target = |p: PathBuf| {
+        if !p.exists() {
+            return;
+        }
+        if !is_elf_binary(&p) {
+            debug!(
+                "Skipping non-ELF runtime SSL target candidate: {}",
+                p.display()
+            );
+            return;
+        }
+        if seen.insert(p.clone()) {
+            targets.push(p);
+        }
+    };
+
+    // Allow explicit overrides for controlled environments.
+    // Example:
+    //   DHI_SSL_EXTRA_TARGETS=/home/user/.local/bin/copilot,/opt/custom-agent/bin/agent
+    if let Ok(extra) = std::env::var("DHI_SSL_EXTRA_TARGETS") {
+        for raw in extra.split(',') {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let p = PathBuf::from(trimmed);
+            if p.exists() {
+                add_target(p);
+            } else {
+                warn!("Ignoring missing DHI_SSL_EXTRA_TARGETS entry: {}", trimmed);
+            }
+        }
+    }
+
+    // Common Copilot install paths.
+    add_target(PathBuf::from("/usr/local/bin/copilot"));
+    add_target(PathBuf::from("/root/.local/bin/copilot"));
+    if let Ok(home_entries) = std::fs::read_dir("/home") {
+        for entry in home_entries.flatten() {
+            let p = entry.path().join(".local/bin/copilot");
+            add_target(p);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        // Auto-discover running Copilot executable targets from /proc.
+        // This keeps eBPF SSL capture functional when Copilot embeds SSL symbols.
+        if let Ok(entries) = std::fs::read_dir("/proc") {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let Some(pid_str) = name.to_str() else {
+                    continue;
+                };
+                if !pid_str.chars().all(|c| c.is_ascii_digit()) {
+                    continue;
+                }
+
+                // First try cmdline argv[0] for currently launched executable path.
+                let cmdline_path = entry.path().join("cmdline");
+                if let Ok(cmdline_bytes) = std::fs::read(cmdline_path) {
+                    if let Some(first) = cmdline_bytes.split(|b| *b == 0).next() {
+                        if let Ok(arg0) = std::str::from_utf8(first) {
+                            let p = PathBuf::from(arg0);
+                            if p.file_name().and_then(|n| n.to_str()) == Some("copilot") {
+                                add_target(p);
+                            }
+                        }
+                    }
+                }
+
+                let exe_link = entry.path().join("exe");
+                let Ok(exe_path) = std::fs::read_link(exe_link) else {
+                    continue;
+                };
+                let mut normalized = exe_path.clone();
+                if let Some(exe_str) = exe_path.to_str() {
+                    if let Some(stripped) = exe_str.strip_suffix(" (deleted)") {
+                        normalized = PathBuf::from(stripped);
+                    }
+                }
+
+                let Some(file_name) = normalized.file_name().and_then(|n| n.to_str()) else {
+                    continue;
+                };
+                if file_name == "copilot" {
+                    add_target(normalized);
+                }
+            }
+        }
+    }
+
+    targets.sort();
+    targets
+}
+
+fn is_elf_binary(path: &std::path::Path) -> bool {
+    use std::io::Read;
+
+    let mut f = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(_) => return false,
+    };
+
+    let mut magic = [0u8; 4];
+    if f.read_exact(&mut magic).is_err() {
+        return false;
+    }
+
+    magic == [0x7F, b'E', b'L', b'F']
 }
 
 /// Raw SSL event from eBPF (C struct representation)
@@ -212,7 +346,11 @@ pub struct SslConnectionInfo {
     pub bytes_read: u64,
     pub write_count: u64,
     pub read_count: u64,
+    pub write_buffer: Vec<u8>,
+    pub read_buffer: Vec<u8>,
 }
+
+const ANALYSIS_BUFFER_LIMIT: usize = 4096;
 
 impl SslMonitor {
     /// Create a new SSL monitor
@@ -260,16 +398,28 @@ impl SslMonitor {
                     bytes_read: 0,
                     write_count: 0,
                     read_count: 0,
+                    write_buffer: Vec::new(),
+                    read_buffer: Vec::new(),
                 });
 
             match direction {
                 SslDirection::Write => {
                     conn.bytes_written += data_len as u64;
                     conn.write_count += 1;
+                    conn.write_buffer.extend_from_slice(&data);
+                    if conn.write_buffer.len() > ANALYSIS_BUFFER_LIMIT {
+                        let excess = conn.write_buffer.len() - ANALYSIS_BUFFER_LIMIT;
+                        conn.write_buffer.drain(0..excess);
+                    }
                 },
                 SslDirection::Read => {
                     conn.bytes_read += data_len as u64;
                     conn.read_count += 1;
+                    conn.read_buffer.extend_from_slice(&data);
+                    if conn.read_buffer.len() > ANALYSIS_BUFFER_LIMIT {
+                        let excess = conn.read_buffer.len() - ANALYSIS_BUFFER_LIMIT;
+                        conn.read_buffer.drain(0..excess);
+                    }
                 },
             }
         }
@@ -295,14 +445,22 @@ impl SslMonitor {
 
     /// Analyze SSL event for security issues
     pub async fn analyze_event(&self, event: &SslEvent) -> SslAnalysisResult {
-        // Try to interpret as UTF-8 text
-        let text = match std::str::from_utf8(&event.data) {
-            Ok(s) => s.to_string(),
-            Err(_) => {
-                // Binary data - could be encrypted or non-text protocol
-                return SslAnalysisResult::default();
-            },
+        let analysis_bytes = {
+            let connections = self.connections.read().await;
+            if let Some(conn) = connections.get(&event.ssl_ptr) {
+                match event.direction {
+                    SslDirection::Write if !conn.write_buffer.is_empty() => conn.write_buffer.clone(),
+                    SslDirection::Read if !conn.read_buffer.is_empty() => conn.read_buffer.clone(),
+                    _ => event.data.clone(),
+                }
+            } else {
+                event.data.clone()
+            }
         };
+
+        // SSL payloads can mix text and binary framing (e.g., HTTP/2).
+        // Use lossy UTF-8 so detectors can still match ASCII patterns.
+        let text = String::from_utf8_lossy(&analysis_bytes).to_string();
 
         let mut result = SslAnalysisResult::default();
 
@@ -539,6 +697,39 @@ fn attach_uprobe_program(
         },
         Err(ProgramError::AlreadyAttached) => Ok(0),
         Err(e) => {
+            // Some binaries (notably self-contained runtimes) may fail symbol-name
+            // resolution through perf_event APIs even when symbols exist. Try
+            // resolving the symbol offset from ELF and attaching by offset.
+            if symbol.is_some() && offset == 0 {
+                if let Some(sym) = symbol {
+                    if let Some(fallback_offset) = resolve_symbol_offset(target, sym) {
+                        match uprobe.attach(None, fallback_offset, target, None) {
+                            Ok(_) => {
+                                info!(
+                                    "Attached {} to {} at offset 0x{:x} (fallback from symbol {})",
+                                    program_name,
+                                    target.display(),
+                                    fallback_offset,
+                                    sym
+                                );
+                                return Ok(1);
+                            },
+                            Err(ProgramError::AlreadyAttached) => return Ok(0),
+                            Err(e2) => {
+                                warn!(
+                                    "Fallback attach failed for {} on {} (symbol {} offset 0x{:x}): {}",
+                                    program_name,
+                                    target.display(),
+                                    sym,
+                                    fallback_offset,
+                                    e2
+                                );
+                            },
+                        }
+                    }
+                }
+            }
+
             warn!(
                 "Failed to attach {} to {}:{}: {}",
                 program_name,
@@ -551,9 +742,57 @@ fn attach_uprobe_program(
     }
 }
 
+fn resolve_symbol_offset(target: &std::path::Path, symbol: &str) -> Option<u64> {
+    let bytes = std::fs::read(target).ok()?;
+    let file = object::File::parse(&*bytes).ok()?;
+
+    for sym in file.symbols() {
+        let Ok(name) = sym.name() else {
+            continue;
+        };
+        if name == symbol {
+            // Prefer true file offset mapping (required for reliable uprobe offset attach).
+            if let Some(section_idx) = sym.section_index() {
+                if let Ok(section) = file.section_by_index(section_idx) {
+                    let sec_addr = section.address();
+                    if let Some((sec_file_off, sec_file_size)) = section.file_range() {
+                        let sym_addr = sym.address();
+                        if sym_addr >= sec_addr {
+                            let delta = sym_addr - sec_addr;
+                            if delta < sec_file_size {
+                                return Some(sec_file_off + delta);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Fallback for unusual binaries where section mapping is unavailable.
+            let sym_addr = sym.address();
+            if sym_addr > 0 {
+                return Some(sym_addr);
+            }
+        }
+    }
+
+    None
+}
+
 /// Process captured SSL event and take action
 pub async fn process_ssl_event(event: &SslEvent, monitor: &SslMonitor) -> Result<bool> {
     let analysis = monitor.analyze_event(event).await;
+    let comm_lower = event.comm.to_ascii_lowercase();
+    let is_copilot_event = comm_lower.contains("copilot") || comm_lower.contains("mainthread");
+
+    if is_copilot_event {
+        let preview_len = event.data.len().min(64);
+        let preview = String::from_utf8_lossy(&event.data[..preview_len]).replace('\n', "\\n");
+        info!(
+            "[COPILOT SSL EVENT] pid={} comm={} dir={:?} len={} risk={} preview=\"{}\"",
+            event.pid, event.comm, event.direction, event.total_len, analysis.risk_score, preview
+        );
+    }
+
     debug!(
         "SSL analysis: pid={} dir={:?} len={} risk={} secrets={} pii={} inj={} jb={}",
         event.pid,
