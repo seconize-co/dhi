@@ -217,6 +217,28 @@ execute_prompt() {
   rm -f "$output_file"
 }
 
+wait_for_stats_delta() {
+  local before_alerts="$1"
+  local before_blocked="$2"
+  local expected_alerts="$3"
+  local expected_blocked="$4"
+  local after_alerts="$before_alerts"
+  local after_blocked="$before_blocked"
+
+  # Allow asynchronous SSL processing to flush into /api/stats.
+  for _ in 1 2 3 4 5 6; do
+    IFS=$'\t' read -r after_alerts after_blocked <<< "$(get_stats)"
+    local delta_alerts=$((after_alerts - before_alerts))
+    local delta_blocked=$((after_blocked - before_blocked))
+    if (( delta_alerts >= expected_alerts && delta_blocked >= expected_blocked )); then
+      break
+    fi
+    sleep 1
+  done
+
+  printf '%s\t%s\n' "$after_alerts" "$after_blocked"
+}
+
 echo "== Dhi Copilot CLI E2E Harness =="
 echo "Mode: $MODE"
 echo "Vectors: $VECTORS_FILE"
@@ -254,7 +276,7 @@ for line in "${TEST_LINES[@]}"; do
 
   IFS=$'\t' read -r before_alerts before_blocked <<< "$(get_stats)"
   execute_prompt "$id" "$prompt"
-  IFS=$'\t' read -r after_alerts after_blocked <<< "$(get_stats)"
+  IFS=$'\t' read -r after_alerts after_blocked <<< "$(wait_for_stats_delta "$before_alerts" "$before_blocked" "$alerts_min" "$blocked_min")"
 
   delta_alerts=$((after_alerts - before_alerts))
   delta_blocked=$((after_blocked - before_blocked))
