@@ -120,7 +120,36 @@ fn lockfile_path() -> PathBuf {
 }
 
 fn process_alive(pid: u32) -> bool {
-    PathBuf::from(format!("/proc/{pid}")).exists()
+    if pid == std::process::id() {
+        return true;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        PathBuf::from(format!("/proc/{pid}")).exists()
+    }
+
+    #[cfg(all(unix, not(target_os = "linux")))]
+    {
+        std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    }
+
+    #[cfg(windows)]
+    {
+        std::process::Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+            .output()
+            .map(|output| {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                stdout.contains(&pid.to_string())
+                    && !stdout.to_ascii_lowercase().contains("no tasks are running")
+            })
+            .unwrap_or(false)
+    }
 }
 
 fn parse_lock_pid(contents: &str) -> Option<u32> {
@@ -221,8 +250,13 @@ async fn run_monitor(config: DhiConfig, port: u16, slack_webhook: Option<String>
     let addr = format!("127.0.0.1:{}", port);
     tokio::spawn(async move {
         info!("Starting metrics server on {}...", addr);
-        if let Err(e) =
-            dhi::server::start_metrics_server(&addr, metrics_clone, stats_clone, fingerprinter_clone).await
+        if let Err(e) = dhi::server::start_metrics_server(
+            &addr,
+            metrics_clone,
+            stats_clone,
+            fingerprinter_clone,
+        )
+        .await
         {
             warn!("Metrics server error: {}", e);
         }
@@ -604,7 +638,10 @@ mod tests {
         .expect("should write lockfile fixture");
 
         let result = acquire_instance_lock_at(&path, "proxy", 18080);
-        assert!(result.is_err(), "live lock owner should block second instance");
+        assert!(
+            result.is_err(),
+            "live lock owner should block second instance"
+        );
         let err = result.expect_err("lock acquisition should fail for live pid");
         assert!(
             err.to_string()
@@ -623,7 +660,10 @@ mod tests {
 
         let lock = acquire_instance_lock_at(&path, "monitor", 9090)
             .expect("stale lock should be reclaimed");
-        assert!(path.exists(), "new lockfile should exist while lock is held");
+        assert!(
+            path.exists(),
+            "new lockfile should exist while lock is held"
+        );
         drop(lock);
         assert!(
             !path.exists(),

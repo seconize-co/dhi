@@ -149,6 +149,29 @@ src/
 └── monitor/        # System monitoring
 ```
 
+## High-Impact Contribution Areas
+
+We welcome PRs that expand Dhi in three major directions:
+
+1. **New Framework Support**
+   - Add/improve framework fingerprinting (Claude wrappers, CrewAI variants, OpenCode, etc.).
+   - Start with `src/agentic/fingerprint.rs`.
+   - Follow `docs/FRAMEWORK_ONBOARDING_GUIDE.md`.
+
+2. **New Security Use Cases**
+   - New secret/PII/prompt patterns
+   - Better bypass resistance and lower false positives
+   - Alerting, redaction, budget/risk control improvements
+   - Primary files: `src/agentic/*`, `src/detection/*`
+
+3. **Additional OS/Runtime Support**
+   - Improve behavior on Linux/macOS/Windows paths
+   - Extend eBPF/TLS visibility where feasible
+   - Improve fallback behavior in proxy mode
+   - Primary files: `src/ebpf/*`, `src/proxy.rs`, `docs/OPERATIONS.md`
+
+If you are proposing a larger platform/security change, open a draft PR early so maintainers can review direction before deep implementation.
+
 ## Adding New Detection Patterns
 
 ### Secrets

@@ -277,62 +277,76 @@ impl AgentFingerprinter {
 
     /// Analyze request and fingerprint the agent
     pub fn analyze_request(&self, request: &RequestInfo) -> AgentFingerprint {
-        // Generate fingerprint ID from available signals
         let fingerprint_id = self.generate_fingerprint_id(request);
-
-        // Detect framework from various signals
         let framework = self.detect_framework(request);
-
-        // Detect provider from hostname
         let provider = LlmProvider::from_hostname(&request.hostname);
-
-        // Detect model from request body
         let model = self.extract_model(&request.body);
-
-        // Extract session information
         let sessions = self.extract_sessions(request);
-
-        // Get or create fingerprint
         let mut agents = self.agents.write().unwrap_or_else(|e| e.into_inner());
 
-        let fingerprint =
-            agents
-                .entry(fingerprint_id.clone())
-                .or_insert_with(|| AgentFingerprint {
-                    id: fingerprint_id.clone(),
-                    framework: framework.clone(),
-                    providers: vec![],
-                    process_name: request.process_name.clone(),
-                    pid: request.pid,
-                    user_agent: request.user_agent.clone(),
-                    custom_headers: HashMap::new(),
-                    models: vec![],
-                    sessions: HashMap::new(),
-                    first_seen: SystemTime::now(),
-                    last_seen: SystemTime::now(),
-                    request_count: 0,
-                    total_tokens: 0,
-                    total_tool_calls: 0,
-                    estimated_cost: 0.0,
-                    risk_score: 0,
-                    security_events: vec![],
-                });
+        let fingerprint = agents
+            .entry(fingerprint_id.clone())
+            .or_insert_with(|| self.new_fingerprint(&fingerprint_id, &framework, request));
 
-        // Update fingerprint
+        self.update_fingerprint_core(fingerprint, provider, model.as_ref());
+        self.update_sessions(fingerprint, sessions, model.as_ref());
+        self.store_custom_headers(fingerprint, &request.headers);
+        self.update_process_map(request.pid, &fingerprint_id);
+
+        fingerprint.clone()
+    }
+
+    fn new_fingerprint(
+        &self,
+        fingerprint_id: &str,
+        framework: &AgentFramework,
+        request: &RequestInfo,
+    ) -> AgentFingerprint {
+        AgentFingerprint {
+            id: fingerprint_id.to_string(),
+            framework: framework.clone(),
+            providers: vec![],
+            process_name: request.process_name.clone(),
+            pid: request.pid,
+            user_agent: request.user_agent.clone(),
+            custom_headers: HashMap::new(),
+            models: vec![],
+            sessions: HashMap::new(),
+            first_seen: SystemTime::now(),
+            last_seen: SystemTime::now(),
+            request_count: 0,
+            total_tokens: 0,
+            total_tool_calls: 0,
+            estimated_cost: 0.0,
+            risk_score: 0,
+            security_events: vec![],
+        }
+    }
+
+    fn update_fingerprint_core(
+        &self,
+        fingerprint: &mut AgentFingerprint,
+        provider: LlmProvider,
+        model: Option<&String>,
+    ) {
         fingerprint.last_seen = SystemTime::now();
-        fingerprint.request_count += 1;
-
+        fingerprint.request_count = fingerprint.request_count.saturating_add(1);
         if !fingerprint.providers.contains(&provider) {
             fingerprint.providers.push(provider);
         }
-
-        if let Some(ref m) = model {
+        if let Some(m) = model {
             if !fingerprint.models.contains(m) {
                 fingerprint.models.push(m.clone());
             }
         }
+    }
 
-        // Update session tracking
+    fn update_sessions(
+        &self,
+        fingerprint: &mut AgentFingerprint,
+        sessions: Vec<ExtractedSession>,
+        model: Option<&String>,
+    ) {
         for extracted in sessions {
             let session_id = extracted.session_id;
             let session_type = extracted.session_type;
@@ -351,20 +365,26 @@ impl AgentFingerprinter {
                     total_tokens: 0,
                     total_tool_calls: 0,
                 });
+
             if session.session_name.is_none() && session_name.is_some() {
-                session.session_name = session_name.clone();
+                session.session_name = session_name;
             }
             session.last_seen = SystemTime::now();
-            session.request_count += 1;
-            if let Some(ref m) = model {
+            session.request_count = session.request_count.saturating_add(1);
+            if let Some(m) = model {
                 if !session.models.contains(m) {
                     session.models.push(m.clone());
                 }
             }
         }
+    }
 
-        // Store custom headers
-        for (key, value) in &request.headers {
+    fn store_custom_headers(
+        &self,
+        fingerprint: &mut AgentFingerprint,
+        headers: &HashMap<String, String>,
+    ) {
+        for (key, value) in headers {
             let key_lower = key.to_lowercase();
             if key_lower.starts_with("x-")
                 || key_lower.contains("langchain")
@@ -376,14 +396,13 @@ impl AgentFingerprinter {
                     .insert(key.clone(), value.clone());
             }
         }
+    }
 
-        // Update process map
-        if let Some(pid) = request.pid {
+    fn update_process_map(&self, pid: Option<u32>, fingerprint_id: &str) {
+        if let Some(pid) = pid {
             let mut pmap = self.process_map.write().unwrap_or_else(|e| e.into_inner());
-            pmap.insert(pid, fingerprint_id.clone());
+            pmap.insert(pid, fingerprint_id.to_string());
         }
-
-        fingerprint.clone()
     }
 
     /// Generate a unique fingerprint ID from request signals
@@ -584,168 +603,37 @@ impl AgentFingerprinter {
             .as_ref()
             .and_then(|body| serde_json::from_str::<serde_json::Value>(body).ok());
 
-        // Check headers for session identifiers
-        for (key, value) in &request.headers {
-            let key_lower = key.to_lowercase();
-
-            // LangChain session headers
-            if key_lower == "x-langchain-run-id" || key_lower == "langchain-run-id" {
-                sessions.push(ExtractedSession {
-                    session_id: value.clone(),
-                    session_type: SessionType::LangChainRun,
-                    session_name: self.derive_session_name(
-                        value,
-                        &SessionType::LangChainRun,
-                        &request.headers,
-                        body_json.as_ref(),
-                    ),
-                });
-            }
-            if key_lower == "x-langchain-trace-id" || key_lower == "langchain-trace-id" {
-                sessions.push(ExtractedSession {
-                    session_id: value.clone(),
-                    session_type: SessionType::LangChainTrace,
-                    session_name: self.derive_session_name(
-                        value,
-                        &SessionType::LangChainTrace,
-                        &request.headers,
-                        body_json.as_ref(),
-                    ),
-                });
-            }
-            if key_lower == "x-langchain-session-id" || key_lower == "langchain-session-id" {
-                sessions.push(ExtractedSession {
-                    session_id: value.clone(),
-                    session_type: SessionType::LangChainRun,
-                    session_name: self.derive_session_name(
-                        value,
-                        &SessionType::LangChainRun,
-                        &request.headers,
-                        body_json.as_ref(),
-                    ),
-                });
-            }
-
-            // OpenAI headers
-            if key_lower == "x-request-id" && request.hostname.contains("openai") {
-                sessions.push(ExtractedSession {
-                    session_id: value.clone(),
-                    session_type: SessionType::OpenAIRequest,
-                    session_name: self.derive_session_name(
-                        value,
-                        &SessionType::OpenAIRequest,
-                        &request.headers,
-                        body_json.as_ref(),
-                    ),
-                });
-            }
-            if key_lower == "openai-organization" {
-                // Not a session but useful context
-            }
-
-            // Anthropic headers
-            if key_lower == "x-request-id" && request.hostname.contains("anthropic") {
-                sessions.push(ExtractedSession {
-                    session_id: value.clone(),
-                    session_type: SessionType::AnthropicRequest,
-                    session_name: self.derive_session_name(
-                        value,
-                        &SessionType::AnthropicRequest,
-                        &request.headers,
-                        body_json.as_ref(),
-                    ),
-                });
-            }
-
-            // Generic trace/session headers
-            if key_lower == "x-trace-id" || key_lower == "trace-id" || key_lower == "traceparent" {
-                sessions.push(ExtractedSession {
-                    session_id: value.clone(),
-                    session_type: SessionType::TraceId,
-                    session_name: self.derive_session_name(
-                        value,
-                        &SessionType::TraceId,
-                        &request.headers,
-                        body_json.as_ref(),
-                    ),
-                });
-            }
-            if key_lower == "x-session-id" || key_lower == "session-id" {
-                sessions.push(ExtractedSession {
-                    session_id: value.clone(),
-                    session_type: SessionType::Custom("Session".to_string()),
-                    session_name: self.derive_session_name(
-                        value,
-                        &SessionType::Custom("Session".to_string()),
-                        &request.headers,
-                        body_json.as_ref(),
-                    ),
-                });
-            }
-            if key_lower == "x-conversation-id" || key_lower == "conversation-id" {
-                sessions.push(ExtractedSession {
-                    session_id: value.clone(),
-                    session_type: SessionType::ClaudeConversation,
-                    session_name: self.derive_session_name(
-                        value,
-                        &SessionType::ClaudeConversation,
-                        &request.headers,
-                        body_json.as_ref(),
-                    ),
-                });
-            }
-
-            // Stainless SDK headers (used by official SDKs)
-            if key_lower == "x-stainless-retry-count" {
-                // Indicates SDK retry, not a session
-            }
-        }
+        self.extract_header_sessions(request, body_json.as_ref(), &mut sessions);
 
         // Check request body for session information
         if let Some(json) = body_json {
-                // Claude Code conversation ID in metadata
-                if let Some(metadata) = json.get("metadata") {
-                    if let Some(conv_id) = metadata.get("conversation_id").and_then(|v| v.as_str())
-                    {
-                        sessions.push(ExtractedSession {
-                            session_id: conv_id.to_string(),
-                            session_type: SessionType::ClaudeConversation,
-                            session_name: self.derive_session_name(
-                                conv_id,
-                                &SessionType::ClaudeConversation,
-                                &request.headers,
-                                Some(&json),
-                            ),
-                        });
-                    }
-                    if let Some(session_id) = metadata.get("session_id").and_then(|v| v.as_str()) {
-                        sessions.push(ExtractedSession {
-                            session_id: session_id.to_string(),
-                            session_type: SessionType::Custom("Session".to_string()),
-                            session_name: self.derive_session_name(
-                                session_id,
-                                &SessionType::Custom("Session".to_string()),
-                                &request.headers,
-                                Some(&json),
-                            ),
-                        });
-                    }
-                    if let Some(run_id) = metadata.get("run_id").and_then(|v| v.as_str()) {
-                        sessions.push(ExtractedSession {
-                            session_id: run_id.to_string(),
-                            session_type: SessionType::LangChainRun,
-                            session_name: self.derive_session_name(
-                                run_id,
-                                &SessionType::LangChainRun,
-                                &request.headers,
-                                Some(&json),
-                            ),
-                        });
-                    }
+            // Claude Code conversation ID in metadata
+            if let Some(metadata) = json.get("metadata") {
+                if let Some(conv_id) = metadata.get("conversation_id").and_then(|v| v.as_str()) {
+                    sessions.push(ExtractedSession {
+                        session_id: conv_id.to_string(),
+                        session_type: SessionType::ClaudeConversation,
+                        session_name: self.derive_session_name(
+                            conv_id,
+                            &SessionType::ClaudeConversation,
+                            &request.headers,
+                            Some(&json),
+                        ),
+                    });
                 }
-
-                // LangChain includes run_id in some requests
-                if let Some(run_id) = json.get("run_id").and_then(|v| v.as_str()) {
+                if let Some(session_id) = metadata.get("session_id").and_then(|v| v.as_str()) {
+                    sessions.push(ExtractedSession {
+                        session_id: session_id.to_string(),
+                        session_type: SessionType::Custom("Session".to_string()),
+                        session_name: self.derive_session_name(
+                            session_id,
+                            &SessionType::Custom("Session".to_string()),
+                            &request.headers,
+                            Some(&json),
+                        ),
+                    });
+                }
+                if let Some(run_id) = metadata.get("run_id").and_then(|v| v.as_str()) {
                     sessions.push(ExtractedSession {
                         session_id: run_id.to_string(),
                         session_type: SessionType::LangChainRun,
@@ -757,28 +645,64 @@ impl AgentFingerprinter {
                         ),
                     });
                 }
+            }
 
-                // Check for thread_id (OpenAI Assistants API)
-                if let Some(thread_id) = json.get("thread_id").and_then(|v| v.as_str()) {
+            // LangChain includes run_id in some requests
+            if let Some(run_id) = json.get("run_id").and_then(|v| v.as_str()) {
+                sessions.push(ExtractedSession {
+                    session_id: run_id.to_string(),
+                    session_type: SessionType::LangChainRun,
+                    session_name: self.derive_session_name(
+                        run_id,
+                        &SessionType::LangChainRun,
+                        &request.headers,
+                        Some(&json),
+                    ),
+                });
+            }
+
+            // Check for thread_id (OpenAI Assistants API)
+            if let Some(thread_id) = json.get("thread_id").and_then(|v| v.as_str()) {
+                sessions.push(ExtractedSession {
+                    session_id: thread_id.to_string(),
+                    session_type: SessionType::Custom("Thread".to_string()),
+                    session_name: self.derive_session_name(
+                        thread_id,
+                        &SessionType::Custom("Thread".to_string()),
+                        &request.headers,
+                        Some(&json),
+                    ),
+                });
+            }
+
+            for key in [
+                "sessionId",
+                "agent_session_id",
+                "agentSessionId",
+                "conversationId",
+            ] {
+                if let Some(session_id) = json.get(key).and_then(|v| v.as_str()) {
                     sessions.push(ExtractedSession {
-                        session_id: thread_id.to_string(),
-                        session_type: SessionType::Custom("Thread".to_string()),
+                        session_id: session_id.to_string(),
+                        session_type: SessionType::Custom("AgentSession".to_string()),
                         session_name: self.derive_session_name(
-                            thread_id,
-                            &SessionType::Custom("Thread".to_string()),
+                            session_id,
+                            &SessionType::Custom("AgentSession".to_string()),
                             &request.headers,
                             Some(&json),
                         ),
                     });
                 }
+            }
 
+            if let Some(metadata) = json.get("metadata") {
                 for key in [
                     "sessionId",
                     "agent_session_id",
                     "agentSessionId",
                     "conversationId",
                 ] {
-                    if let Some(session_id) = json.get(key).and_then(|v| v.as_str()) {
+                    if let Some(session_id) = metadata.get(key).and_then(|v| v.as_str()) {
                         sessions.push(ExtractedSession {
                             session_id: session_id.to_string(),
                             session_type: SessionType::Custom("AgentSession".to_string()),
@@ -791,28 +715,7 @@ impl AgentFingerprinter {
                         });
                     }
                 }
-
-                if let Some(metadata) = json.get("metadata") {
-                    for key in [
-                        "sessionId",
-                        "agent_session_id",
-                        "agentSessionId",
-                        "conversationId",
-                    ] {
-                        if let Some(session_id) = metadata.get(key).and_then(|v| v.as_str()) {
-                            sessions.push(ExtractedSession {
-                                session_id: session_id.to_string(),
-                                session_type: SessionType::Custom("AgentSession".to_string()),
-                                session_name: self.derive_session_name(
-                                    session_id,
-                                    &SessionType::Custom("AgentSession".to_string()),
-                                    &request.headers,
-                                    Some(&json),
-                                ),
-                            });
-                        }
-                    }
-                }
+            }
         }
 
         if let Some(body) = &request.body {
@@ -848,6 +751,112 @@ impl AgentFingerprinter {
         sessions
     }
 
+    fn extract_header_sessions(
+        &self,
+        request: &RequestInfo,
+        body_json: Option<&serde_json::Value>,
+        out: &mut Vec<ExtractedSession>,
+    ) {
+        const LANGCHAIN_RUN_KEYS: &[&str] = &[
+            "x-langchain-run-id",
+            "langchain-run-id",
+            "x-langchain-session-id",
+            "langchain-session-id",
+        ];
+        const LANGCHAIN_TRACE_KEYS: &[&str] = &["x-langchain-trace-id", "langchain-trace-id"];
+        const TRACE_KEYS: &[&str] = &["x-trace-id", "trace-id", "traceparent"];
+        const SESSION_KEYS: &[&str] = &["x-session-id", "session-id"];
+        const CONVERSATION_KEYS: &[&str] = &["x-conversation-id", "conversation-id"];
+
+        for (key, value) in &request.headers {
+            let key_lower = key.to_ascii_lowercase();
+
+            if LANGCHAIN_RUN_KEYS.contains(&key_lower.as_str()) {
+                self.push_extracted_session(
+                    out,
+                    value,
+                    SessionType::LangChainRun,
+                    request,
+                    body_json,
+                );
+                continue;
+            }
+            if LANGCHAIN_TRACE_KEYS.contains(&key_lower.as_str()) {
+                self.push_extracted_session(
+                    out,
+                    value,
+                    SessionType::LangChainTrace,
+                    request,
+                    body_json,
+                );
+                continue;
+            }
+            if key_lower == "x-request-id" && request.hostname.contains("openai") {
+                self.push_extracted_session(
+                    out,
+                    value,
+                    SessionType::OpenAIRequest,
+                    request,
+                    body_json,
+                );
+                continue;
+            }
+            if key_lower == "x-request-id" && request.hostname.contains("anthropic") {
+                self.push_extracted_session(
+                    out,
+                    value,
+                    SessionType::AnthropicRequest,
+                    request,
+                    body_json,
+                );
+                continue;
+            }
+            if TRACE_KEYS.contains(&key_lower.as_str()) {
+                self.push_extracted_session(out, value, SessionType::TraceId, request, body_json);
+                continue;
+            }
+            if SESSION_KEYS.contains(&key_lower.as_str()) {
+                self.push_extracted_session(
+                    out,
+                    value,
+                    SessionType::Custom("Session".to_string()),
+                    request,
+                    body_json,
+                );
+                continue;
+            }
+            if CONVERSATION_KEYS.contains(&key_lower.as_str()) {
+                self.push_extracted_session(
+                    out,
+                    value,
+                    SessionType::ClaudeConversation,
+                    request,
+                    body_json,
+                );
+            }
+        }
+    }
+
+    fn push_extracted_session(
+        &self,
+        out: &mut Vec<ExtractedSession>,
+        session_id: &str,
+        session_type: SessionType,
+        request: &RequestInfo,
+        body_json: Option<&serde_json::Value>,
+    ) {
+        out.push(ExtractedSession {
+            session_id: session_id.to_string(),
+            session_name: self.derive_session_name(
+                session_id,
+                &session_type,
+                &request.headers,
+                body_json,
+            ),
+            session_type,
+        });
+    }
+
     fn derive_process_context_session(&self, request: &RequestInfo) -> Option<ExtractedSession> {
         let pid = request.pid?;
         let process_name = request
@@ -869,7 +878,10 @@ impl AgentFingerprinter {
         let derived_session_name = self
             .read_session_name_from_environ(pid)
             .or_else(|| self.read_copilot_workspace_name(pid))
-            .or_else(|| self.read_tmux_session_name(&tty_suffix).map(|s| format!("tmux:{s}")))
+            .or_else(|| {
+                self.read_tmux_session_name(&tty_suffix)
+                    .map(|s| format!("tmux:{s}"))
+            })
             .unwrap_or_else(|| format!("{process_name}@{cwd_suffix} ({tty_suffix})"));
 
         let (session_type, prefix) = if self.looks_like_copilot(request) {
@@ -927,7 +939,11 @@ impl AgentFingerprinter {
             return None;
         }
         let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if name.is_empty() { None } else { Some(name) }
+        if name.is_empty() {
+            None
+        } else {
+            Some(name)
+        }
     }
 
     fn read_copilot_workspace_name(&self, pid: u32) -> Option<String> {
@@ -955,7 +971,11 @@ impl AgentFingerprinter {
         None
     }
 
-    fn read_copilot_workspace_name_from(&self, session_state_base: &Path, pid: u32) -> Option<String> {
+    fn read_copilot_workspace_name_from(
+        &self,
+        session_state_base: &Path,
+        pid: u32,
+    ) -> Option<String> {
         let entries = std::fs::read_dir(session_state_base).ok()?;
         let lock_name = format!("inuse.{pid}.lock");
         for entry in entries.filter_map(Result::ok) {

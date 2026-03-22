@@ -15,7 +15,9 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, warn};
 
-use crate::agentic::{AgentFingerprinter, PiiDetector, PromptSecurityAnalyzer, RequestInfo, SecretsDetector};
+use crate::agentic::{
+    AgentFingerprinter, PiiDetector, PromptSecurityAnalyzer, RequestInfo, SecretsDetector,
+};
 use crate::ProtectionLevel;
 
 /// Maximum data capture size per SSL operation (16KB - typical TLS record size)
@@ -356,10 +358,7 @@ const ANALYSIS_BUFFER_LIMIT: usize = 4096;
 
 impl SslMonitor {
     /// Create a new SSL monitor
-    pub fn new(
-        event_tx: mpsc::Sender<SslEvent>,
-        protection_level: ProtectionLevel,
-    ) -> Self {
+    pub fn new(event_tx: mpsc::Sender<SslEvent>, protection_level: ProtectionLevel) -> Self {
         Self::new_with_fingerprinter(
             event_tx,
             protection_level,
@@ -530,7 +529,9 @@ impl SslMonitor {
             let connections = self.connections.read().await;
             if let Some(conn) = connections.get(&event.ssl_ptr) {
                 match event.direction {
-                    SslDirection::Write if !conn.write_buffer.is_empty() => conn.write_buffer.clone(),
+                    SslDirection::Write if !conn.write_buffer.is_empty() => {
+                        conn.write_buffer.clone()
+                    },
                     SslDirection::Read if !conn.read_buffer.is_empty() => conn.read_buffer.clone(),
                     _ => event.data.clone(),
                 }
@@ -860,7 +861,10 @@ pub async fn process_ssl_event_with_outcome(
             event.pid, event.comm, event.direction, event.total_len, analysis.risk_score, preview
         );
         for clean_marker in extract_run_markers(&text) {
-            info!("[COPILOT RUN MARKER] pid={} marker={}", event.pid, clean_marker);
+            info!(
+                "[COPILOT RUN MARKER] pid={} marker={}",
+                event.pid, clean_marker
+            );
             monitor.fingerprinter.upsert_session(
                 &fingerprint.id,
                 &clean_marker,
@@ -926,39 +930,39 @@ pub async fn process_ssl_event_with_outcome(
 
     // Log based on protection level
     if analysis.risk_score > 0 {
-            if analysis.has_secrets {
-                monitor.fingerprinter.record_security_event(
-                    &fingerprint.id,
-                    "ssl_secret_detected",
-                    "critical",
-                    "Secret detected in SSL traffic",
-                );
-            }
-            if analysis.has_pii {
-                monitor.fingerprinter.record_security_event(
-                    &fingerprint.id,
-                    "ssl_pii_detected",
-                    "high",
-                    "PII detected in SSL traffic",
-                );
-            }
-            if analysis.injection_detected {
-                monitor.fingerprinter.record_security_event(
-                    &fingerprint.id,
-                    "ssl_prompt_injection_detected",
-                    "high",
-                    "Prompt injection detected in SSL traffic",
-                );
-            }
-            if analysis.jailbreak_detected {
-                monitor.fingerprinter.record_security_event(
-                    &fingerprint.id,
-                    "ssl_jailbreak_detected",
-                    "high",
-                    "Jailbreak pattern detected in SSL traffic",
-                );
-            }
-            match monitor.protection_level {
+        if analysis.has_secrets {
+            monitor.fingerprinter.record_security_event(
+                &fingerprint.id,
+                "ssl_secret_detected",
+                "critical",
+                "Secret detected in SSL traffic",
+            );
+        }
+        if analysis.has_pii {
+            monitor.fingerprinter.record_security_event(
+                &fingerprint.id,
+                "ssl_pii_detected",
+                "high",
+                "PII detected in SSL traffic",
+            );
+        }
+        if analysis.injection_detected {
+            monitor.fingerprinter.record_security_event(
+                &fingerprint.id,
+                "ssl_prompt_injection_detected",
+                "high",
+                "Prompt injection detected in SSL traffic",
+            );
+        }
+        if analysis.jailbreak_detected {
+            monitor.fingerprinter.record_security_event(
+                &fingerprint.id,
+                "ssl_jailbreak_detected",
+                "high",
+                "Jailbreak pattern detected in SSL traffic",
+            );
+        }
+        match monitor.protection_level {
             ProtectionLevel::Log => {
                 info!(
                     "[SSL {}] PID={} ({}) LEN={} RISK={}",
@@ -1041,7 +1045,11 @@ fn sanitize_run_marker(raw: &str) -> String {
             break;
         }
     }
-    if out.starts_with("RUN-") { out } else { String::new() }
+    if out.starts_with("RUN-") {
+        out
+    } else {
+        String::new()
+    }
 }
 
 fn extract_run_markers(text: &str) -> Vec<String> {
@@ -1050,8 +1058,8 @@ fn extract_run_markers(text: &str) -> Vec<String> {
     let mut i = 0usize;
     while i + 4 <= bytes.len() {
         if &bytes[i..i + 4] == b"RUN-" {
-            let prev_ok = i == 0
-                || !char::from(bytes[i - 1]).is_ascii_alphanumeric() && bytes[i - 1] != b'_';
+            let prev_ok =
+                i == 0 || !char::from(bytes[i - 1]).is_ascii_alphanumeric() && bytes[i - 1] != b'_';
             if !prev_ok {
                 i += 1;
                 continue;
@@ -1089,7 +1097,8 @@ fn extract_runtime_usage(text: &str) -> (u64, u64) {
                     count = count.saturating_add(1);
                 }
                 for (k, v) in map {
-                    if k == "tool_calls" || k == "tools" || k == "tool_use" || k == "function_call" {
+                    if k == "tool_calls" || k == "tools" || k == "tool_use" || k == "function_call"
+                    {
                         if let Some(arr) = v.as_array() {
                             count = count.saturating_add(arr.len() as u64);
                         } else if v.is_object() {
@@ -1151,7 +1160,10 @@ fn extract_runtime_usage(text: &str) -> (u64, u64) {
 
     for line in text.lines() {
         let trimmed = line.trim();
-        let payload = trimmed.strip_prefix("data:").map(str::trim).unwrap_or(trimmed);
+        let payload = trimmed
+            .strip_prefix("data:")
+            .map(str::trim)
+            .unwrap_or(trimmed);
         if payload.is_empty() || payload == "[DONE]" {
             continue;
         }

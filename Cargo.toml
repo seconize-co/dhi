@@ -2,6 +2,7 @@
 name = "dhi"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.88"
 authors = ["Seconize <hello@seconize.co>"]
 description = "Dhi - Runtime Intelligence & Protection System for AI Agents"
 license = "MIT"
