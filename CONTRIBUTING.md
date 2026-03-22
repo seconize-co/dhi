@@ -184,7 +184,7 @@ Add patterns to `src/agentic/prompt_security.rs`.
 
 **Do NOT open public issues for security vulnerabilities.**
 
-Email: security@seconize.co
+Email: sashank@seconize.co
 
 See [SECURITY.md](SECURITY.md) for details.
 

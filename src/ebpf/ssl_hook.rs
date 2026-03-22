@@ -836,6 +836,7 @@ pub async fn process_ssl_event_with_outcome(
     let analysis = monitor.analyze_event(event).await;
     let request_info = build_request_info_from_ssl_event(event);
     let mut fingerprint = monitor.fingerprinter.analyze_request(&request_info);
+    let text = monitor.connection_text_for_event(event).await;
     let comm_lower = event.comm.to_ascii_lowercase();
     let is_copilot_event = comm_lower.contains("copilot") || comm_lower.contains("mainthread");
 
@@ -852,7 +853,6 @@ pub async fn process_ssl_event_with_outcome(
             "[COPILOT SSL EVENT] pid={} comm={} dir={:?} len={} risk={} preview=\"{}\"",
             event.pid, event.comm, event.direction, event.total_len, analysis.risk_score, preview
         );
-        let text = monitor.connection_text_for_event(event).await;
         if let Some(run_pos) = text.find("RUN-") {
             let marker = text[run_pos..]
                 .split_whitespace()
@@ -883,6 +883,28 @@ pub async fn process_ssl_event_with_outcome(
                     name
                 );
             }
+        }
+    }
+
+    let (token_count, tool_calls) = extract_runtime_usage(&text);
+    if token_count > 0 {
+        monitor
+            .fingerprinter
+            .record_usage(&fingerprint.id, token_count, 0.0);
+    }
+    if tool_calls > 0 {
+        monitor
+            .fingerprinter
+            .record_tool_calls(&fingerprint.id, tool_calls);
+    }
+    if (token_count > 0 || tool_calls > 0) && !fingerprint.sessions.is_empty() {
+        for session_id in fingerprint.sessions.keys() {
+            monitor.fingerprinter.record_session_runtime_usage(
+                &fingerprint.id,
+                session_id,
+                token_count,
+                tool_calls,
+            );
         }
     }
 
@@ -1023,6 +1045,79 @@ fn sanitize_run_marker(raw: &str) -> String {
     if out.starts_with("RUN-") { out } else { String::new() }
 }
 
+fn extract_runtime_usage(text: &str) -> (u64, u64) {
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(text) else {
+        return (0, 0);
+    };
+
+    let mut tokens = 0u64;
+    if let Some(usage) = json.get("usage") {
+        let total_tokens = usage
+            .get("total_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        if total_tokens > 0 {
+            tokens = total_tokens;
+        } else {
+            tokens = tokens.saturating_add(
+                usage
+                    .get("prompt_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+            );
+            tokens = tokens.saturating_add(
+                usage
+                    .get("completion_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+            );
+            tokens = tokens.saturating_add(
+                usage
+                    .get("input_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+            );
+            tokens = tokens.saturating_add(
+                usage
+                    .get("output_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+            );
+        }
+    }
+
+    fn count_tool_calls(value: &serde_json::Value) -> u64 {
+        let mut count = 0u64;
+        match value {
+            serde_json::Value::Object(map) => {
+                if map.get("type").and_then(|v| v.as_str()) == Some("tool_use") {
+                    count = count.saturating_add(1);
+                }
+                for (k, v) in map {
+                    if k == "tool_calls" || k == "tools" || k == "tool_use" || k == "function_call" {
+                        if let Some(arr) = v.as_array() {
+                            count = count.saturating_add(arr.len() as u64);
+                        } else if v.is_object() {
+                            count = count.saturating_add(1);
+                        }
+                    }
+                    count = count.saturating_add(count_tool_calls(v));
+                }
+            },
+            serde_json::Value::Array(arr) => {
+                for item in arr {
+                    count = count.saturating_add(count_tool_calls(item));
+                }
+            },
+            _ => {},
+        }
+        count
+    }
+
+    let tool_calls = count_tool_calls(&json);
+    (tokens, tool_calls)
+}
+
 /// Process captured SSL event and return whether it should be blocked.
 pub async fn process_ssl_event(event: &SslEvent, monitor: &SslMonitor) -> Result<bool> {
     let outcome = process_ssl_event_with_outcome(event, monitor).await?;
@@ -1156,6 +1251,28 @@ mod tests {
         assert_eq!(sanitize_run_marker("RUN-DHI-001`"), "RUN-DHI-001");
         assert_eq!(sanitize_run_marker("RUN-DHI-001\\n"), "RUN-DHI-001");
         assert_eq!(sanitize_run_marker("foo"), "");
+    }
+
+    #[test]
+    fn test_extract_runtime_usage_openai_tokens_and_tools() {
+        let payload = r#"{
+            "usage":{"prompt_tokens":11,"completion_tokens":7},
+            "choices":[{"message":{"tool_calls":[{"id":"a"},{"id":"b"}]}}]
+        }"#;
+        let (tokens, tool_calls) = extract_runtime_usage(payload);
+        assert_eq!(tokens, 18);
+        assert_eq!(tool_calls, 2);
+    }
+
+    #[test]
+    fn test_extract_runtime_usage_anthropic_style() {
+        let payload = r#"{
+            "usage":{"input_tokens":15,"output_tokens":9},
+            "content":[{"type":"tool_use","id":"t1"}]
+        }"#;
+        let (tokens, tool_calls) = extract_runtime_usage(payload);
+        assert_eq!(tokens, 24);
+        assert_eq!(tool_calls, 1);
     }
 
     #[tokio::test]

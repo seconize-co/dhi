@@ -334,6 +334,6 @@ A: Open-source, self-hosted, no vendor lock-in, no per-seat pricing.
 
 ---
 
-*Questions? Contact security@seconize.co*
+*Questions? Contact sashank@seconize.co*
 
 *Dhi is open source under MIT license.*

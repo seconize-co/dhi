@@ -87,6 +87,10 @@ sudo ./target/release/dhi --level alert --slack-webhook "https://hooks.slack.com
 
 ### Proxy Mode (macOS/Windows - Limited)
 
+> ✅ Supported runtime modes today: **eBPF mode** and **proxy mode**.
+>
+> 🔮 **MITM mode is not supported yet** and is a future enhancement.
+>
 > ⚠️ Proxy mode only sees **hostnames**, not content. HTTPS is encrypted end-to-end. Use eBPF mode on Linux for full inspection.
 >
 > ⚠️ In production, run **one mode at a time**. Do not run both eBPF and proxy mode together unless you have a specific, documented operational reason.
@@ -190,6 +194,22 @@ When running, Dhi exposes:
 | `GET /metrics` | Prometheus metrics |
 | `GET /health` | Health check |
 | `GET /api/stats` | JSON statistics |
+| `GET /api/agents` | Agent/session fingerprint report (frameworks, sessions, token/tool counters) |
+
+### Session attribution model
+
+Dhi uses a hybrid model:
+
+- **Deterministic identity**: stable `session_id` and agent identity based on process/session signals.
+- **Best-effort naming**: `session_name` enrichment from strongest available source.
+
+Session name precedence is:
+
+1. Request payload/header names (`session_name`, `conversation_name`, etc.)
+2. Environment variables (`DHI_SESSION_NAME`, `COPILOT_SESSION_NAME`, etc.)
+3. Copilot disk metadata (`~/.copilot/session-state/*/workspace.yaml`)
+4. tmux session name via tty mapping
+5. Fallback: `process@cwd(tty)`
 
 ## Configuration
 

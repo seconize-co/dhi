@@ -5,6 +5,8 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::Path;
+use std::process::Command;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime};
 
@@ -163,6 +165,10 @@ pub struct SessionInfo {
     pub request_count: u64,
     /// Models used in this session
     pub models: Vec<String>,
+    /// Total tokens observed for this session
+    pub total_tokens: u64,
+    /// Total tool calls observed for this session
+    pub total_tool_calls: u64,
 }
 
 /// Type of session identifier
@@ -227,6 +233,8 @@ pub struct AgentFingerprint {
     pub request_count: u64,
     /// Total tokens (estimated)
     pub total_tokens: u64,
+    /// Total tool calls observed
+    pub total_tool_calls: u64,
     /// Estimated cost
     pub estimated_cost: f64,
     /// Risk score (0-100)
@@ -304,6 +312,7 @@ impl AgentFingerprinter {
                     last_seen: SystemTime::now(),
                     request_count: 0,
                     total_tokens: 0,
+                    total_tool_calls: 0,
                     estimated_cost: 0.0,
                     risk_score: 0,
                     security_events: vec![],
@@ -339,6 +348,8 @@ impl AgentFingerprinter {
                     last_seen: SystemTime::now(),
                     request_count: 0,
                     models: vec![],
+                    total_tokens: 0,
+                    total_tool_calls: 0,
                 });
             if session.session_name.is_none() && session_name.is_some() {
                 session.session_name = session_name.clone();
@@ -855,6 +866,12 @@ impl AgentFingerprinter {
             .filter(|v| v.contains("/dev/"))
             .unwrap_or_else(|| "no-tty".to_string());
 
+        let derived_session_name = self
+            .read_session_name_from_environ(pid)
+            .or_else(|| self.read_copilot_workspace_name(pid))
+            .or_else(|| self.read_tmux_session_name(&tty_suffix).map(|s| format!("tmux:{s}")))
+            .unwrap_or_else(|| format!("{process_name}@{cwd_suffix} ({tty_suffix})"));
+
         let (session_type, prefix) = if self.looks_like_copilot(request) {
             (
                 SessionType::Custom("CopilotProcess".to_string()),
@@ -870,8 +887,114 @@ impl AgentFingerprinter {
         Some(ExtractedSession {
             session_id: format!("{prefix}:{pid}"),
             session_type,
-            session_name: Some(format!("{process_name}@{cwd_suffix} ({tty_suffix})")),
+            session_name: Some(derived_session_name),
         })
+    }
+
+    fn read_session_name_from_environ(&self, pid: u32) -> Option<String> {
+        let data = std::fs::read(format!("/proc/{pid}/environ")).ok()?;
+        let candidates = [
+            "DHI_SESSION_NAME=",
+            "COPILOT_SESSION_NAME=",
+            "AGENT_SESSION_NAME=",
+            "SESSION_NAME=",
+        ];
+        for entry in data.split(|b| *b == 0) {
+            let Ok(text) = std::str::from_utf8(entry) else {
+                continue;
+            };
+            for key in candidates {
+                if let Some(value) = text.strip_prefix(key) {
+                    let trimmed = value.trim();
+                    if !trimmed.is_empty() {
+                        return Some(trimmed.to_string());
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn read_tmux_session_name(&self, tty: &str) -> Option<String> {
+        if !tty.starts_with("/dev/pts/") {
+            return None;
+        }
+        let output = Command::new("tmux")
+            .args(["display-message", "-p", "-t", tty, "#S"])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if name.is_empty() { None } else { Some(name) }
+    }
+
+    fn read_copilot_workspace_name(&self, pid: u32) -> Option<String> {
+        let home_dir = self
+            .read_home_from_environ(pid)
+            .or_else(|| std::env::var("HOME").ok())
+            .unwrap_or_else(|| "/home/sashank".to_string());
+        let base = std::path::PathBuf::from(home_dir).join(".copilot/session-state");
+        self.read_copilot_workspace_name_from(&base, pid)
+    }
+
+    fn read_home_from_environ(&self, pid: u32) -> Option<String> {
+        let data = std::fs::read(format!("/proc/{pid}/environ")).ok()?;
+        for entry in data.split(|b| *b == 0) {
+            let Ok(text) = std::str::from_utf8(entry) else {
+                continue;
+            };
+            if let Some(home) = text.strip_prefix("HOME=") {
+                let trimmed = home.trim();
+                if !trimmed.is_empty() {
+                    return Some(trimmed.to_string());
+                }
+            }
+        }
+        None
+    }
+
+    fn read_copilot_workspace_name_from(&self, session_state_base: &Path, pid: u32) -> Option<String> {
+        let entries = std::fs::read_dir(session_state_base).ok()?;
+        let lock_name = format!("inuse.{pid}.lock");
+        for entry in entries.filter_map(Result::ok) {
+            let dir_path = entry.path();
+            if !dir_path.is_dir() {
+                continue;
+            }
+            if !dir_path.join(&lock_name).exists() {
+                continue;
+            }
+            let workspace_path = dir_path.join("workspace.yaml");
+            let Ok(content) = std::fs::read_to_string(workspace_path) else {
+                continue;
+            };
+            if let Some(name) = Self::extract_workspace_yaml_name(&content) {
+                return Some(name);
+            }
+        }
+        None
+    }
+
+    fn extract_workspace_yaml_name(content: &str) -> Option<String> {
+        let mut summary: Option<String> = None;
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if let Some(v) = trimmed.strip_prefix("name:") {
+                let name = v.trim();
+                if !name.is_empty() {
+                    return Some(name.to_string());
+                }
+            }
+            if let Some(v) = trimmed.strip_prefix("summary:") {
+                let s = v.trim();
+                if !s.is_empty() {
+                    summary = Some(s.to_string());
+                }
+            }
+        }
+        summary
     }
 
     fn derive_session_name(
@@ -1017,6 +1140,37 @@ impl AgentFingerprinter {
         }
     }
 
+    pub fn record_tool_calls(&self, fingerprint_id: &str, tool_calls: u64) {
+        if tool_calls == 0 {
+            return;
+        }
+        if let Ok(mut agents) = self.agents.write() {
+            if let Some(agent) = agents.get_mut(fingerprint_id) {
+                agent.total_tool_calls = agent.total_tool_calls.saturating_add(tool_calls);
+            }
+        }
+    }
+
+    pub fn record_session_runtime_usage(
+        &self,
+        fingerprint_id: &str,
+        session_id: &str,
+        tokens: u64,
+        tool_calls: u64,
+    ) {
+        if session_id.trim().is_empty() || (tokens == 0 && tool_calls == 0) {
+            return;
+        }
+        if let Ok(mut agents) = self.agents.write() {
+            if let Some(agent) = agents.get_mut(fingerprint_id) {
+                if let Some(session) = agent.sessions.get_mut(session_id) {
+                    session.total_tokens = session.total_tokens.saturating_add(tokens);
+                    session.total_tool_calls = session.total_tool_calls.saturating_add(tool_calls);
+                }
+            }
+        }
+    }
+
     pub fn upsert_session(
         &self,
         fingerprint_id: &str,
@@ -1045,6 +1199,8 @@ impl AgentFingerprinter {
                     last_seen: SystemTime::now(),
                     request_count: 0,
                     models: vec![],
+                    total_tokens: 0,
+                    total_tool_calls: 0,
                 });
 
             session.last_seen = SystemTime::now();
@@ -1160,6 +1316,7 @@ impl AgentFingerprinter {
 
         let mut total_requests = 0u64;
         let mut total_tokens = 0u64;
+        let mut total_tool_calls = 0u64;
         let mut total_cost = 0.0f64;
         let mut total_security_events = 0usize;
 
@@ -1187,6 +1344,7 @@ impl AgentFingerprinter {
 
             total_requests += agent.request_count;
             total_tokens += agent.total_tokens;
+            total_tool_calls += agent.total_tool_calls;
             total_cost += agent.estimated_cost;
             total_security_events += agent.security_events.len();
         }
@@ -1214,6 +1372,7 @@ impl AgentFingerprinter {
             session_type_distribution: session_type_counts,
             total_requests,
             total_tokens,
+            total_tool_calls,
             total_estimated_cost: total_cost,
             total_security_events,
             high_risk_agents,
@@ -1265,6 +1424,7 @@ pub struct AgentAnalysisReport {
     pub session_type_distribution: HashMap<String, u64>,
     pub total_requests: u64,
     pub total_tokens: u64,
+    pub total_tool_calls: u64,
     pub total_estimated_cost: f64,
     pub total_security_events: usize,
     pub high_risk_agents: Vec<HighRiskAgentSummary>,
@@ -1709,5 +1869,76 @@ mod tests {
         assert!(fp.sessions.contains_key("sess-explicit"));
         let synthetic_key = format!("process-session:{}", std::process::id());
         assert!(!fp.sessions.contains_key(&synthetic_key));
+    }
+
+    #[test]
+    fn test_extract_workspace_yaml_name_prefers_name() {
+        let yaml = "id: abc\nsummary: Clone DHI Repository Locally\nname: dhi-test\n";
+        let name = AgentFingerprinter::extract_workspace_yaml_name(yaml);
+        assert_eq!(name.as_deref(), Some("dhi-test"));
+    }
+
+    #[test]
+    fn test_read_copilot_workspace_name_from_lock_match() {
+        use std::fs::{create_dir_all, write};
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time should be monotonic here")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("dhi-copilot-meta-{nanos}"));
+        let session_dir = root.join("session-x");
+        create_dir_all(&session_dir).expect("should create session test dir");
+
+        let pid = 424242;
+        write(session_dir.join(format!("inuse.{pid}.lock")), "").expect("should create lock file");
+        write(
+            session_dir.join("workspace.yaml"),
+            "id: session-x\nname: dhi-test2\nsummary: fallback\n",
+        )
+        .expect("should create workspace.yaml");
+
+        let fp = AgentFingerprinter::new();
+        let resolved = fp.read_copilot_workspace_name_from(&root, pid);
+        assert_eq!(resolved.as_deref(), Some("dhi-test2"));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_record_usage_and_tool_calls_updates_agent_and_session() {
+        let fingerprinter = AgentFingerprinter::new();
+        let mut headers = HashMap::new();
+        headers.insert("X-Session-Id".to_string(), "sess-metrics".to_string());
+
+        let request = RequestInfo {
+            hostname: "api.openai.com".to_string(),
+            path: "/v1/chat/completions".to_string(),
+            method: "POST".to_string(),
+            headers,
+            user_agent: Some("copilot-cli/1.0".to_string()),
+            body: Some("{\"model\":\"gpt-4\"}".to_string()),
+            process_name: Some("copilot".to_string()),
+            pid: Some(424242),
+            exe_path: Some("/usr/bin/copilot".to_string()),
+        };
+
+        let fp = fingerprinter.analyze_request(&request);
+        fingerprinter.record_usage(&fp.id, 21, 0.0);
+        fingerprinter.record_tool_calls(&fp.id, 3);
+        fingerprinter.record_session_runtime_usage(&fp.id, "sess-metrics", 21, 3);
+
+        let updated = fingerprinter
+            .get_agent(&fp.id)
+            .expect("agent should exist after update");
+        assert_eq!(updated.total_tokens, 21);
+        assert_eq!(updated.total_tool_calls, 3);
+        let sess = updated
+            .sessions
+            .get("sess-metrics")
+            .expect("session should exist");
+        assert_eq!(sess.total_tokens, 21);
+        assert_eq!(sess.total_tool_calls, 3);
     }
 }

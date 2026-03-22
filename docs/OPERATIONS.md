@@ -164,6 +164,10 @@ Expected:
 
 ## Proxy Mode (Limited - Hostname Only)
 
+> ✅ Supported runtime modes today: **eBPF mode** and **proxy mode**.
+>
+> 🔮 **MITM mode is not supported yet** and is a future enhancement.
+>
 > ⚠️ **Note**: Proxy mode can only see **hostnames**, not request/response content. HTTPS traffic is encrypted end-to-end through the proxy. Use eBPF mode for full content inspection.
 
 Proxy mode is useful for:
@@ -212,6 +216,12 @@ StartLimitBurst=5
 NoNewPrivileges=false
 ProtectSystem=strict
 ProtectHome=read-only
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+LockPersonality=true
+RestrictSUIDSGID=true
 ReadWritePaths=/var/log/dhi
 
 # For eBPF mode (needs capabilities)
@@ -276,6 +286,16 @@ Restart=always
 RestartPreventExitStatus=73
 RestartSec=5
 WorkingDirectory=/var/log/dhi
+UMask=0027
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+LockPersonality=true
+RestrictSUIDSGID=true
+ReadWritePaths=/var/log/dhi
 AmbientCapabilities=CAP_BPF CAP_PERFMON CAP_SYS_ADMIN CAP_SYS_PTRACE CAP_NET_ADMIN
 CapabilityBoundingSet=CAP_BPF CAP_PERFMON CAP_SYS_ADMIN CAP_SYS_PTRACE CAP_NET_ADMIN
 
@@ -319,6 +339,7 @@ StartLimitIntervalSec=60  # Within 60 seconds
 This means:
 - If Dhi crashes, it restarts automatically in 5 seconds
 - If it crashes 5 times in 60 seconds, systemd stops trying (likely a config error)
+- If startup exits with code `73` (singleton lock conflict), systemd does **not** loop-restart.
 
 ### What Happens on Crash
 
@@ -387,6 +408,28 @@ Dhi exposes a health endpoint:
 curl http://127.0.0.1:9090/health
 # Returns: {"status": "healthy", "uptime_seconds": 3600}
 ```
+
+### Agent/session observability endpoint
+
+Use `/api/agents` for framework/session attribution and runtime usage counters:
+
+```bash
+curl -s http://127.0.0.1:9090/api/agents | jq '.total_agents, .total_sessions, .total_tokens, .total_tool_calls'
+```
+
+Key fields:
+
+- Report: `total_tokens`, `total_tool_calls`
+- Per agent: `id`, `framework`, `pid`, `total_tokens`, `total_tool_calls`
+- Per session: `session_id`, `session_name`, `total_tokens`, `total_tool_calls`
+
+Session naming uses best-effort enrichment with deterministic IDs:
+
+1. Request payload/header names
+2. Environment variables (`DHI_SESSION_NAME`, `COPILOT_SESSION_NAME`, ...)
+3. Copilot disk metadata (`~/.copilot/session-state/*/workspace.yaml`)
+4. tmux session name from tty
+5. Fallback `process@cwd(tty)`
 
 ### Monitoring Script
 

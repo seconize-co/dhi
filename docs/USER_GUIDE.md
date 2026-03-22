@@ -101,6 +101,17 @@ Dhi is provider/framework agnostic at runtime and supports common coding assista
 - `GET /health`
 - `GET /ready`
 - `GET /api/stats`
+- `GET /api/agents`
+
+### Agent/session report fields (`/api/agents`)
+
+The agents report now includes runtime usage counters at multiple levels:
+
+- Report-level: `total_tokens`, `total_tool_calls`
+- Agent-level: `total_tokens`, `total_tool_calls`
+- Session-level: `total_tokens`, `total_tool_calls`, `session_name`
+
+For multi-terminal Copilot runs, sessions are separated by deterministic process-session IDs (e.g. `copilot-process:<pid>`), with `session_name` populated via best-effort enrichment.
 
 ### Reporting output
 - Reporting directory is configurable in `dhi.toml` under `[reporting].output_dir`.
