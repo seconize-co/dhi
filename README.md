@@ -166,6 +166,7 @@ export HTTPS_PROXY=http://127.0.0.1:8080
 |----------|-------------|
 | [Operations Guide](docs/OPERATIONS.md) | **Start here** - Install, start, stop, troubleshoot |
 | [User Guide](docs/USER_GUIDE.md) | Consolidated usage, modes, protections, integrations, reporting |
+| [CTO Guide](docs/CTO_GUIDE.md) | Executive-ready security narrative for blog/announcement reuse |
 | [Testing Guide](docs/TESTING.md) | Manual acceptance test cases for alert/block release validation |
 | [Security Guide](docs/SECURITY.md) | Security posture, hardening, and vulnerability reporting |
 | [Comparison](docs/COMPARISON.md) | How Dhi compares to other tools |
