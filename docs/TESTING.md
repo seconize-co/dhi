@@ -38,7 +38,7 @@ This plan validates these major Dhi capabilities:
 
 ### CTO Main Use Cases (Explicitly Identified)
 
-From `docs/CTO_GUIDE.md`, the 6 primary use cases are:
+Primary use cases for release validation are:
 1. Credential leakage prevention.
 2. Customer PII exfiltration prevention.
 3. Cost explosion control (budget/cost visibility).

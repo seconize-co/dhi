@@ -165,11 +165,11 @@ export HTTPS_PROXY=http://127.0.0.1:8080
 | Document | Description |
 |----------|-------------|
 | [Operations Guide](docs/OPERATIONS.md) | **Start here** - Install, start, stop, troubleshoot |
-| [Agentic Features](docs/AGENTIC_FEATURES.md) | Complete feature documentation |
-| [Integration Guide](docs/INTEGRATION.md) | Setup for Claude Code, Copilot CLI, etc. |
-| [CTO Guide](docs/CTO_GUIDE.md) | Executive security guide |
+| [User Guide](docs/USER_GUIDE.md) | Consolidated usage, modes, protections, integrations, reporting |
 | [Testing Guide](docs/TESTING.md) | Manual acceptance test cases for alert/block release validation |
+| [Security Guide](docs/SECURITY.md) | Security posture, hardening, and vulnerability reporting |
 | [Comparison](docs/COMPARISON.md) | How Dhi compares to other tools |
+| [Branding](docs/BRANDING.md) | Brand and positioning assets |
 
 ## Crash Resistance
 
