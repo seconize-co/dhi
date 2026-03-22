@@ -530,16 +530,14 @@ scripts/reporting-e2e.sh --reports-dir /tmp/log/dhi/reports
 
 Use a dedicated script for Copilot CLI/eBPF path coverage:
 ```bash
-scripts/copilot-cli-e2e.sh --mode alert \
-  --copilot-run-template 'copilot chat --prompt-file "{prompt_file}"'
+scripts/copilot-cli-e2e.sh --mode alert
 ```
 
 Block mode example:
 ```bash
 scripts/copilot-cli-e2e.sh --mode block \
   --dhi-log-file /tmp/log/dhi/dhi.log \
-  --tmp-dir /tmp/log/dhi/tmp \
-  --copilot-run-template 'copilot chat --prompt-file "{prompt_file}"'
+  --tmp-dir /tmp/log/dhi/tmp
 ```
 
 What it validates:
@@ -555,6 +553,9 @@ Important:
 1. Start Dhi before running this harness.
 2. Keep using `scripts/security-e2e.sh` for deterministic proxy regression.
 3. Use `scripts/copilot-cli-e2e.sh` for higher-fidelity eBPF/Copilot scenarios.
+4. The script auto-detects Copilot CLI mode:
+- Uses `copilot chat --prompt-file` when supported.
+- Falls back to `copilot -p "<prompt>"` for older CLI versions.
 
 ---
 

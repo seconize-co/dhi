@@ -12,6 +12,9 @@ COPILOT_RUN_TEMPLATE="${COPILOT_RUN_TEMPLATE:-copilot chat --prompt-file \"{prom
 RUN_ID="${RUN_ID:-$(date +%s)}"
 DHI_LOG_FILE="${DHI_LOG_FILE:-}"
 TMP_DIR="${TMP_DIR:-/tmp/log/dhi/tmp}"
+USER_SET_TEMPLATE=0
+AUTO_TMP_DIR=0
+COPILOT_EXEC_MODE=""
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -28,12 +31,11 @@ Options:
   --dhi-log-file PATH         Optional Dhi log file path for regex assertions
   --tmp-dir PATH              Temp directory for prompt/output files (default: /tmp/log/dhi/tmp)
   --sleep-after-prompt SEC    Wait between prompt execution and stats check (default: 2)
-  --copilot-run-template CMD  Copilot command template containing {prompt_file}
+  --copilot-run-template CMD  Optional command template containing {prompt_file}
   -h, --help                  Show help
 
 Examples:
-  scripts/copilot-cli-e2e.sh --mode alert \
-    --copilot-run-template 'copilot chat --prompt-file "{prompt_file}"'
+  scripts/copilot-cli-e2e.sh --mode alert
 
   scripts/copilot-cli-e2e.sh --mode block --dhi-log-file /tmp/log/dhi/dhi.log \
     --copilot-run-template 'copilot chat --prompt-file "{prompt_file}"'
@@ -77,6 +79,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --copilot-run-template)
       COPILOT_RUN_TEMPLATE="$2"
+      USER_SET_TEMPLATE=1
       shift 2
       ;;
     -h|--help)
@@ -107,12 +110,40 @@ fi
 
 [[ -f "$VECTORS_FILE" ]] || { echo "Vectors file not found: $VECTORS_FILE" >&2; exit 2; }
 
-if [[ "$COPILOT_RUN_TEMPLATE" != *"{prompt_file}"* ]]; then
-  echo "--copilot-run-template must contain {prompt_file}" >&2
-  exit 2
+if ! mkdir -p "$TMP_DIR" >/dev/null 2>&1 || [[ ! -w "$TMP_DIR" ]]; then
+  TMP_DIR="$(mktemp -d /tmp/dhi-copilot-tmp-XXXX)"
+  AUTO_TMP_DIR=1
+  echo "WARN: Falling back to writable tmp dir: $TMP_DIR"
 fi
 
-mkdir -p "$TMP_DIR"
+cleanup() {
+  if [[ "$AUTO_TMP_DIR" -eq 1 && -d "$TMP_DIR" ]]; then
+    rm -rf "$TMP_DIR"
+  fi
+}
+trap cleanup EXIT
+
+detect_copilot_exec_mode() {
+  local help_text
+
+  help_text="$(copilot chat --help 2>&1 || true)"
+  if [[ "$help_text" == *"--prompt-file"* ]]; then
+    COPILOT_EXEC_MODE="prompt_file"
+  else
+    COPILOT_EXEC_MODE="prompt_inline"
+  fi
+}
+
+validate_template() {
+  if [[ "$USER_SET_TEMPLATE" -eq 0 ]]; then
+    return 0
+  fi
+
+  if [[ "$COPILOT_RUN_TEMPLATE" != *"{prompt_file}"* ]]; then
+    echo "--copilot-run-template must contain {prompt_file}" >&2
+    exit 2
+  fi
+}
 
 pass() {
   PASS_COUNT=$((PASS_COUNT + 1))
@@ -151,26 +182,48 @@ execute_prompt() {
   local output_file
   local cmd
 
-  prompt_file="$(mktemp "$TMP_DIR/dhi-copilot-prompt-${id}-XXXX.txt")"
   output_file="$(mktemp "$TMP_DIR/dhi-copilot-output-${id}-XXXX.log")"
-  printf '%s\n' "$prompt" > "$prompt_file"
 
-  cmd="${COPILOT_RUN_TEMPLATE//\{prompt_file\}/$prompt_file}"
-  if bash -lc "$cmd" > "$output_file" 2>&1; then
-    pass "${id}-copilot-command"
+  if [[ "$COPILOT_EXEC_MODE" == "prompt_file" ]]; then
+    prompt_file="$(mktemp "$TMP_DIR/dhi-copilot-prompt-${id}-XXXX.txt")"
+    printf '%s\n' "$prompt" > "$prompt_file"
+
+    if [[ "$USER_SET_TEMPLATE" -eq 1 ]]; then
+      cmd="${COPILOT_RUN_TEMPLATE//\{prompt_file\}/$prompt_file}"
+      if bash -lc "$cmd" > "$output_file" 2>&1; then
+        pass "${id}-copilot-command"
+      else
+        fail "${id}-copilot-command"
+      fi
+    else
+      if copilot chat --prompt-file "$prompt_file" > "$output_file" 2>&1; then
+        pass "${id}-copilot-command"
+      else
+        fail "${id}-copilot-command"
+      fi
+    fi
+
+    rm -f "$prompt_file"
   else
-    fail "${id}-copilot-command"
+    if copilot -p "$prompt" > "$output_file" 2>&1; then
+      pass "${id}-copilot-command"
+    else
+      fail "${id}-copilot-command"
+    fi
   fi
 
   sleep "$SLEEP_AFTER_PROMPT_SEC"
 
-  rm -f "$prompt_file" "$output_file"
+  rm -f "$output_file"
 }
 
 echo "== Dhi Copilot CLI E2E Harness =="
 echo "Mode: $MODE"
 echo "Vectors: $VECTORS_FILE"
 echo "Run ID: $RUN_ID"
+detect_copilot_exec_mode
+validate_template
+echo "Copilot exec mode: $COPILOT_EXEC_MODE"
 
 mapfile -t TEST_LINES < <(python3 - "$VECTORS_FILE" "$MODE" "$RUN_ID" <<'PY'
 import json
