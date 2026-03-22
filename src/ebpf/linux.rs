@@ -71,6 +71,7 @@ pub async fn start_monitor(runtime: &crate::DhiRuntime) -> Result<()> {
 
     // Start SSL/TLS interception
     tokio::spawn(start_ssl_monitor(
+        runtime.agentic.fingerprinter(),
         runtime.stats.clone(),
         protection_level,
         block_action,
@@ -138,6 +139,7 @@ pub async fn start_monitor(runtime: &crate::DhiRuntime) -> Result<()> {
 
 /// Start SSL/TLS traffic monitoring
 async fn start_ssl_monitor(
+    fingerprinter: std::sync::Arc<crate::agentic::AgentFingerprinter>,
     runtime_stats: std::sync::Arc<tokio::sync::RwLock<crate::RuntimeStats>>,
     protection_level: crate::ProtectionLevel,
     block_action: crate::EbpfBlockAction,
@@ -148,7 +150,7 @@ async fn start_ssl_monitor(
     info!("Starting SSL/TLS traffic interception...");
 
     let (tx, mut rx) = mpsc::channel::<SslEvent>(1000);
-    let tracer = SslTracer::new(tx, protection_level);
+    let tracer = SslTracer::new(tx, protection_level, fingerprinter);
     let monitor = tracer.monitor();
 
     let mut bpf = match Bpf::load_file(BPF_PROGRAM_PATH) {
@@ -366,7 +368,7 @@ async fn read_events(mut ring_buf: RingBuf<aya::maps::MapData>, tx: mpsc::Sender
     loop {
         if let Some(event_data) = ring_buf.next() {
             // Parse event based on size
-            let data = event_data.as_ref();
+            let data: &[u8] = event_data.as_ref();
 
             if data.len() >= std::mem::size_of::<RawFileEvent>() {
                 // Try to parse as file event

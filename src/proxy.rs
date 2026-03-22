@@ -8,6 +8,7 @@
 //! - SSRF protection (blocks private IP ranges)
 
 use anyhow::Result;
+use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -16,7 +17,8 @@ use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
 use crate::agentic::{
-    AlertConfig, Alerter, DhiMetrics, PiiDetector, PromptSecurityAnalyzer, SecretsDetector,
+    AgentFingerprinter, AlertConfig, Alerter, DhiMetrics, PiiDetector, PromptSecurityAnalyzer,
+    RequestInfo, SecretsDetector,
 };
 use crate::ProtectionLevel;
 
@@ -158,6 +160,7 @@ pub struct DhiProxy {
     prompt_security: Arc<PromptSecurityAnalyzer>,
     alerter: Arc<Alerter>,
     metrics: Arc<RwLock<DhiMetrics>>,
+    fingerprinter: Arc<AgentFingerprinter>,
 }
 
 impl DhiProxy {
@@ -175,6 +178,7 @@ impl DhiProxy {
             prompt_security: Arc::new(PromptSecurityAnalyzer::new()),
             alerter: Arc::new(Alerter::new(alert_config)),
             metrics: Arc::new(RwLock::new(DhiMetrics::new())),
+            fingerprinter: Arc::new(AgentFingerprinter::new()),
         }
     }
 
@@ -217,6 +221,7 @@ impl DhiProxy {
             prompt_security: Arc::clone(&self.prompt_security),
             _alerter: Arc::clone(&self.alerter),
             metrics: Arc::clone(&self.metrics),
+            fingerprinter: Arc::clone(&self.fingerprinter),
         }
     }
 }
@@ -227,6 +232,7 @@ struct ProxyHandlers {
     prompt_security: Arc<PromptSecurityAnalyzer>,
     _alerter: Arc<Alerter>,
     metrics: Arc<RwLock<DhiMetrics>>,
+    fingerprinter: Arc<AgentFingerprinter>,
 }
 
 /// Handle incoming connection
@@ -488,6 +494,20 @@ fn split_request_parts(request: &str) -> (String, String, String, String) {
     (request_target, auth_headers, non_auth_headers, body)
 }
 
+fn extract_header_map(request: &str) -> HashMap<String, String> {
+    let mut headers = HashMap::new();
+    let mut sections = request.splitn(2, "\r\n\r\n");
+    let header_block = sections.next().unwrap_or_default();
+    let mut lines = header_block.lines();
+    let _ = lines.next();
+    for line in lines {
+        if let Some((name, value)) = line.split_once(':') {
+            headers.insert(name.trim().to_string(), value.trim().to_string());
+        }
+    }
+    headers
+}
+
 fn add_alert(alerts: &mut Vec<String>, message: String) {
     if !alerts.iter().any(|a| a == &message) {
         alerts.push(message);
@@ -519,6 +539,28 @@ async fn scan_http_request(
         .unwrap_or(false);
 
     let (request_target, auth_headers, non_auth_headers, body) = split_request_parts(request);
+    let request_headers = extract_header_map(request);
+    let user_agent = request_headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("user-agent"))
+        .map(|(_, v)| v.clone());
+    let request_info = RequestInfo {
+        hostname: host.clone().unwrap_or_else(|| "unknown".to_string()),
+        path: request_target.clone(),
+        method: request
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().next())
+            .unwrap_or("UNKNOWN")
+            .to_string(),
+        headers: request_headers,
+        user_agent,
+        body: Some(body.clone()),
+        process_name: None,
+        pid: None,
+        exe_path: None,
+    };
+    let fingerprint = handlers.fingerprinter.analyze_request(&request_info);
     let request_text_for_prompt = format!("{}\n{}", request_target, body);
 
     // 1) Auth headers: allow for trusted destinations.
@@ -556,6 +598,12 @@ async fn scan_http_request(
                     "Credentials in auth headers to untrusted destination".to_string(),
                 );
             }
+            handlers.fingerprinter.record_security_event(
+                &fingerprint.id,
+                "proxy_auth_secret_untrusted",
+                "critical",
+                "Credentials in auth headers to untrusted destination",
+            );
         }
 
         let metrics = handlers.metrics.write().await;
@@ -589,6 +637,12 @@ async fn scan_http_request(
                     format!("Credentials detected in {}", location_label),
                 );
             }
+            handlers.fingerprinter.record_security_event(
+                &fingerprint.id,
+                "proxy_secret_detected",
+                "critical",
+                &format!("Secrets detected in {}", location_label),
+            );
 
             let metrics = handlers.metrics.write().await;
             for secret in &secrets_result.secrets {
@@ -619,6 +673,12 @@ async fn scan_http_request(
                     format!("High-risk PII detected in {}", location_label),
                 );
             }
+            handlers.fingerprinter.record_security_event(
+                &fingerprint.id,
+                "proxy_pii_detected",
+                if has_high_risk { "high" } else { "medium" },
+                &format!("PII detected in {}", location_label),
+            );
 
             let metrics = handlers.metrics.write().await;
             for p in &pii_result.pii_types {
@@ -639,6 +699,12 @@ async fn scan_http_request(
 
         let metrics = handlers.metrics.write().await;
         metrics.record_injection("prompt_injection");
+        handlers.fingerprinter.record_security_event(
+            &fingerprint.id,
+            "proxy_prompt_injection",
+            "high",
+            "Prompt injection attempt detected",
+        );
     }
 
     ScanResult {
@@ -665,6 +731,7 @@ mod tests {
             prompt_security: Arc::new(PromptSecurityAnalyzer::new()),
             _alerter: Arc::new(Alerter::new(AlertConfig::default())),
             metrics: Arc::new(RwLock::new(DhiMetrics::new())),
+            fingerprinter: Arc::new(AgentFingerprinter::new()),
         }
     }
 

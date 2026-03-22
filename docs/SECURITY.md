@@ -46,7 +46,7 @@ If you discover a security vulnerability in Dhi, please report it responsibly.
 1. **Never expose to public network**
    ```bash
    # GOOD: Bind to localhost only
-   dhi proxy --port 8080  # Binds to 127.0.0.1 by default
+   dhi proxy --port 18080  # Binds to 127.0.0.1 by default
    
    # BAD: Don't do this
    # Exposing metrics to 0.0.0.0 is disabled by default
@@ -63,7 +63,7 @@ If you discover a security vulnerability in Dhi, please report it responsibly.
 
 3. **Enable blocking mode in production**
    ```bash
-   dhi proxy --port 8080 --level block --block-secrets
+   dhi proxy --port 18080 --level block --block-secrets
    ```
 
 ### Configuration

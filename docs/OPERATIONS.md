@@ -173,11 +173,11 @@ Proxy mode is useful for:
 
 ```bash
 # Start proxy
-dhi proxy --port 8080
+dhi proxy --port 18080
 
 # Configure applications
-export HTTP_PROXY=http://127.0.0.1:8080
-export HTTPS_PROXY=http://127.0.0.1:8080
+export HTTP_PROXY=http://127.0.0.1:18080
+export HTTPS_PROXY=http://127.0.0.1:18080
 ```
 
 | Proxy Mode Can See | Proxy Mode CANNOT See |
@@ -273,6 +273,7 @@ StartLimitBurst=5
 Type=simple
 ExecStart=/usr/local/bin/dhi --level alert --ebpf-ssl-only --port 9090
 Restart=always
+RestartPreventExitStatus=73
 RestartSec=5
 WorkingDirectory=/var/log/dhi
 AmbientCapabilities=CAP_BPF CAP_PERFMON CAP_SYS_ADMIN CAP_SYS_PTRACE CAP_NET_ADMIN
@@ -309,6 +310,7 @@ The systemd service above includes:
 
 ```ini
 Restart=always          # Always restart on crash
+RestartPreventExitStatus=73  # Do not loop-restart on singleton lock conflict
 RestartSec=5            # Wait 5 seconds before restart
 StartLimitBurst=5       # Max 5 restarts
 StartLimitIntervalSec=60  # Within 60 seconds
@@ -346,8 +348,8 @@ Create `/usr/local/bin/safe-proxy`:
 #!/bin/bash
 # Check if Dhi is running
 if nc -z 127.0.0.1 8080 2>/dev/null; then
-    export HTTP_PROXY=http://127.0.0.1:8080
-    export HTTPS_PROXY=http://127.0.0.1:8080
+    export HTTP_PROXY=http://127.0.0.1:18080
+    export HTTPS_PROXY=http://127.0.0.1:18080
 else
     echo "WARNING: Dhi proxy not running, proceeding without protection"
     unset HTTP_PROXY HTTPS_PROXY

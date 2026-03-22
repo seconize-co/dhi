@@ -8,6 +8,9 @@ use clap::{Parser, Subcommand};
 use dhi::agentic::DhiMetrics;
 use dhi::proxy::ProxyConfig;
 use dhi::{DhiConfig, DhiRuntime, EbpfBlockAction, ProtectionLevel};
+use std::fs::{remove_file, OpenOptions};
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::{info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
@@ -79,7 +82,7 @@ enum Commands {
     /// Start HTTP proxy for AI tools (Claude Code, Copilot CLI)
     Proxy {
         /// Proxy port
-        #[arg(short, long, default_value = "8080")]
+        #[arg(short, long, default_value = "18080")]
         port: u16,
 
         /// Block requests containing secrets
@@ -99,6 +102,72 @@ enum Commands {
 
     /// Show detected agents
     Agents,
+}
+
+#[derive(Debug)]
+struct InstanceLock {
+    path: PathBuf,
+}
+
+impl Drop for InstanceLock {
+    fn drop(&mut self) {
+        let _ = remove_file(&self.path);
+    }
+}
+
+fn lockfile_path() -> PathBuf {
+    std::env::temp_dir().join("dhi.instance.lock")
+}
+
+fn process_alive(pid: u32) -> bool {
+    PathBuf::from(format!("/proc/{pid}")).exists()
+}
+
+fn parse_lock_pid(contents: &str) -> Option<u32> {
+    contents.lines().find_map(|line| {
+        line.strip_prefix("pid=")
+            .and_then(|pid| pid.trim().parse::<u32>().ok())
+    })
+}
+
+fn acquire_instance_lock(mode: &str, port: u16) -> Result<InstanceLock> {
+    let path = lockfile_path();
+    acquire_instance_lock_at(&path, mode, port)
+}
+
+fn acquire_instance_lock_at(path: &Path, mode: &str, port: u16) -> Result<InstanceLock> {
+    let pid = std::process::id();
+    let payload = format!("pid={pid}\nmode={mode}\nport={port}\n");
+
+    for _ in 0..2 {
+        match OpenOptions::new().write(true).create_new(true).open(path) {
+            Ok(mut file) => {
+                use std::io::Write as _;
+                file.write_all(payload.as_bytes())?;
+                return Ok(InstanceLock {
+                    path: path.to_path_buf(),
+                });
+            },
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => {
+                let existing = std::fs::read_to_string(path).unwrap_or_default();
+                if let Some(existing_pid) = parse_lock_pid(&existing) {
+                    if process_alive(existing_pid) {
+                        return Err(anyhow::anyhow!(
+                            "Another Dhi instance is already running (pid={}). Dhi supports one instance per VM and one active mode at a time. Stop it before starting a new mode.",
+                            existing_pid
+                        ));
+                    }
+                }
+                let _ = remove_file(path);
+            },
+            Err(e) => return Err(e.into()),
+        }
+    }
+
+    Err(anyhow::anyhow!(
+        "Failed to acquire Dhi instance lock at {}",
+        path.display()
+    ))
 }
 
 fn parse_ebpf_block_action(value: &str) -> EbpfBlockAction {
@@ -148,10 +217,13 @@ async fn run_monitor(config: DhiConfig, port: u16, slack_webhook: Option<String>
     // Start HTTP metrics server (bind to localhost only for security)
     let metrics_clone = Arc::clone(&metrics);
     let stats_clone = Arc::clone(&runtime.stats);
+    let fingerprinter_clone = runtime.agentic.fingerprinter();
     let addr = format!("127.0.0.1:{}", port);
     tokio::spawn(async move {
         info!("Starting metrics server on {}...", addr);
-        if let Err(e) = dhi::server::start_metrics_server(&addr, metrics_clone, stats_clone).await {
+        if let Err(e) =
+            dhi::server::start_metrics_server(&addr, metrics_clone, stats_clone, fingerprinter_clone).await
+        {
             warn!("Metrics server error: {}", e);
         }
     });
@@ -455,6 +527,7 @@ async fn main() -> Result<()> {
             block_secrets,
             block_pii,
         }) => {
+            let _instance_lock = acquire_instance_lock("proxy", port)?;
             run_proxy(
                 port,
                 protection_level,
@@ -472,13 +545,35 @@ async fn main() -> Result<()> {
             println!("Agents command not yet implemented");
             Ok(())
         },
-        Some(Commands::Monitor) | None => run_monitor(config, cli.port, cli.slack_webhook).await,
+        Some(Commands::Monitor) | None => {
+            let _instance_lock = acquire_instance_lock("monitor", cli.port)?;
+            run_monitor(config, cli.port, cli.slack_webhook).await
+        },
     }
+    .map_err(|e| {
+        if e.to_string()
+            .contains("Another Dhi instance is already running")
+        {
+            eprintln!("{e}");
+            std::process::exit(73);
+        }
+        e
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::write;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn test_lock_path(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("dhi.{name}.{}.{}.lock", std::process::id(), nanos))
+    }
 
     #[test]
     fn test_parse_ebpf_block_action_valid_values() {
@@ -491,5 +586,48 @@ mod tests {
     #[test]
     fn test_parse_ebpf_block_action_invalid_defaults_to_kill() {
         assert_eq!(parse_ebpf_block_action("unexpected"), EbpfBlockAction::Kill);
+    }
+
+    #[test]
+    fn test_parse_lock_pid_extracts_value() {
+        let lock_contents = "pid=12345\nmode=monitor\nport=9090\n";
+        assert_eq!(parse_lock_pid(lock_contents), Some(12345));
+    }
+
+    #[test]
+    fn test_acquire_instance_lock_blocks_live_pid() {
+        let path = test_lock_path("live-pid");
+        write(
+            &path,
+            format!("pid={}\nmode=monitor\nport=9090\n", std::process::id()),
+        )
+        .expect("should write lockfile fixture");
+
+        let result = acquire_instance_lock_at(&path, "proxy", 18080);
+        assert!(result.is_err(), "live lock owner should block second instance");
+        let err = result.expect_err("lock acquisition should fail for live pid");
+        assert!(
+            err.to_string()
+                .contains("Another Dhi instance is already running"),
+            "expected singleton conflict error, got: {err}"
+        );
+
+        let _ = remove_file(path);
+    }
+
+    #[test]
+    fn test_acquire_instance_lock_reclaims_stale_lock() {
+        let path = test_lock_path("stale-pid");
+        write(&path, "pid=999999\nmode=monitor\nport=9090\n")
+            .expect("should write stale lock fixture");
+
+        let lock = acquire_instance_lock_at(&path, "monitor", 9090)
+            .expect("stale lock should be reclaimed");
+        assert!(path.exists(), "new lockfile should exist while lock is held");
+        drop(lock);
+        assert!(
+            !path.exists(),
+            "lockfile should be removed when lock guard is dropped"
+        );
     }
 }

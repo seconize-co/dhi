@@ -15,7 +15,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, warn};
 
-use crate::agentic::{PiiDetector, PromptSecurityAnalyzer, SecretsDetector};
+use crate::agentic::{AgentFingerprinter, PiiDetector, PromptSecurityAnalyzer, RequestInfo, SecretsDetector};
 use crate::ProtectionLevel;
 
 /// Maximum data capture size per SSL operation (16KB - typical TLS record size)
@@ -332,6 +332,8 @@ pub struct SslMonitor {
     pii_detector: Arc<PiiDetector>,
     /// Prompt security analyzer
     prompt_analyzer: Arc<PromptSecurityAnalyzer>,
+    /// Agent session fingerprinter
+    fingerprinter: Arc<AgentFingerprinter>,
     /// Protection level
     protection_level: ProtectionLevel,
 }
@@ -354,13 +356,30 @@ const ANALYSIS_BUFFER_LIMIT: usize = 4096;
 
 impl SslMonitor {
     /// Create a new SSL monitor
-    pub fn new(event_tx: mpsc::Sender<SslEvent>, protection_level: ProtectionLevel) -> Self {
+    pub fn new(
+        event_tx: mpsc::Sender<SslEvent>,
+        protection_level: ProtectionLevel,
+    ) -> Self {
+        Self::new_with_fingerprinter(
+            event_tx,
+            protection_level,
+            Arc::new(AgentFingerprinter::new()),
+        )
+    }
+
+    /// Create a new SSL monitor with injected fingerprinter
+    pub fn new_with_fingerprinter(
+        event_tx: mpsc::Sender<SslEvent>,
+        protection_level: ProtectionLevel,
+        fingerprinter: Arc<AgentFingerprinter>,
+    ) -> Self {
         Self {
             connections: Arc::new(RwLock::new(HashMap::new())),
             event_tx,
             secrets_detector: Arc::new(SecretsDetector::new()),
             pii_detector: Arc::new(PiiDetector::new()),
             prompt_analyzer: Arc::new(PromptSecurityAnalyzer::new()),
+            fingerprinter,
             protection_level,
         }
     }
@@ -506,6 +525,22 @@ impl SslMonitor {
         result
     }
 
+    pub async fn connection_text_for_event(&self, event: &SslEvent) -> String {
+        let bytes = {
+            let connections = self.connections.read().await;
+            if let Some(conn) = connections.get(&event.ssl_ptr) {
+                match event.direction {
+                    SslDirection::Write if !conn.write_buffer.is_empty() => conn.write_buffer.clone(),
+                    SslDirection::Read if !conn.read_buffer.is_empty() => conn.read_buffer.clone(),
+                    _ => event.data.clone(),
+                }
+            } else {
+                event.data.clone()
+            }
+        };
+        String::from_utf8_lossy(&bytes).to_string()
+    }
+
     /// Get connection statistics
     pub async fn get_connection_stats(&self) -> Vec<SslConnectionInfo> {
         self.connections.read().await.values().cloned().collect()
@@ -552,9 +587,17 @@ pub struct SslTracer {
 #[cfg(target_os = "linux")]
 impl SslTracer {
     /// Create a new SSL tracer
-    pub fn new(event_tx: mpsc::Sender<SslEvent>, protection_level: ProtectionLevel) -> Self {
+    pub fn new(
+        event_tx: mpsc::Sender<SslEvent>,
+        protection_level: ProtectionLevel,
+        fingerprinter: Arc<AgentFingerprinter>,
+    ) -> Self {
         let libraries = find_ssl_libraries();
-        let monitor = Arc::new(SslMonitor::new(event_tx, protection_level));
+        let monitor = Arc::new(SslMonitor::new_with_fingerprinter(
+            event_tx,
+            protection_level,
+            fingerprinter,
+        ));
 
         Self { libraries, monitor }
     }
@@ -791,23 +834,55 @@ pub async fn process_ssl_event_with_outcome(
     monitor: &SslMonitor,
 ) -> Result<SslProcessOutcome> {
     let analysis = monitor.analyze_event(event).await;
+    let request_info = build_request_info_from_ssl_event(event);
+    let mut fingerprint = monitor.fingerprinter.analyze_request(&request_info);
     let comm_lower = event.comm.to_ascii_lowercase();
     let is_copilot_event = comm_lower.contains("copilot") || comm_lower.contains("mainthread");
 
     if is_copilot_event {
+        info!(
+            "[COPILOT FINGERPRINT] pid={} fingerprint_id={} framework={}",
+            event.pid,
+            fingerprint.id,
+            fingerprint.framework.name()
+        );
         let preview_len = event.data.len().min(64);
         let preview = String::from_utf8_lossy(&event.data[..preview_len]).replace('\n', "\\n");
         info!(
             "[COPILOT SSL EVENT] pid={} comm={} dir={:?} len={} risk={} preview=\"{}\"",
             event.pid, event.comm, event.direction, event.total_len, analysis.risk_score, preview
         );
-        let text = String::from_utf8_lossy(&event.data);
+        let text = monitor.connection_text_for_event(event).await;
         if let Some(run_pos) = text.find("RUN-") {
             let marker = text[run_pos..]
                 .split_whitespace()
                 .next()
                 .unwrap_or("RUN-unknown");
             info!("[COPILOT RUN MARKER] pid={} marker={}", event.pid, marker);
+            let clean_marker = sanitize_run_marker(marker);
+            if !clean_marker.is_empty() {
+                monitor.fingerprinter.upsert_session(
+                    &fingerprint.id,
+                    &clean_marker,
+                    crate::agentic::SessionType::Custom("RunMarker".to_string()),
+                    Some(format!("copilot-run:{}", clean_marker)),
+                    None,
+                );
+                if let Some(updated) = monitor.fingerprinter.get_agent(&fingerprint.id) {
+                    fingerprint = updated;
+                }
+            }
+        }
+        for session in fingerprint.sessions.values() {
+            if let Some(name) = &session.session_name {
+                info!(
+                    "[COPILOT SESSION] pid={} id={} type={} name={}",
+                    event.pid,
+                    session.session_id,
+                    session.session_type.name(),
+                    name
+                );
+            }
         }
     }
 
@@ -830,7 +905,39 @@ pub async fn process_ssl_event_with_outcome(
 
     // Log based on protection level
     if analysis.risk_score > 0 {
-        match monitor.protection_level {
+            if analysis.has_secrets {
+                monitor.fingerprinter.record_security_event(
+                    &fingerprint.id,
+                    "ssl_secret_detected",
+                    "critical",
+                    "Secret detected in SSL traffic",
+                );
+            }
+            if analysis.has_pii {
+                monitor.fingerprinter.record_security_event(
+                    &fingerprint.id,
+                    "ssl_pii_detected",
+                    "high",
+                    "PII detected in SSL traffic",
+                );
+            }
+            if analysis.injection_detected {
+                monitor.fingerprinter.record_security_event(
+                    &fingerprint.id,
+                    "ssl_prompt_injection_detected",
+                    "high",
+                    "Prompt injection detected in SSL traffic",
+                );
+            }
+            if analysis.jailbreak_detected {
+                monitor.fingerprinter.record_security_event(
+                    &fingerprint.id,
+                    "ssl_jailbreak_detected",
+                    "high",
+                    "Jailbreak pattern detected in SSL traffic",
+                );
+            }
+            match monitor.protection_level {
             ProtectionLevel::Log => {
                 info!(
                     "[SSL {}] PID={} ({}) LEN={} RISK={}",
@@ -896,10 +1003,82 @@ pub async fn process_ssl_event_with_outcome(
     })
 }
 
+fn sanitize_run_marker(raw: &str) -> String {
+    let mut out = String::new();
+    let mut started = false;
+    for ch in raw.chars() {
+        if !started {
+            if ch == 'R' {
+                started = true;
+                out.push(ch);
+            }
+            continue;
+        }
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+            out.push(ch);
+        } else {
+            break;
+        }
+    }
+    if out.starts_with("RUN-") { out } else { String::new() }
+}
+
 /// Process captured SSL event and return whether it should be blocked.
 pub async fn process_ssl_event(event: &SslEvent, monitor: &SslMonitor) -> Result<bool> {
     let outcome = process_ssl_event_with_outcome(event, monitor).await?;
     Ok(outcome.blocked)
+}
+
+fn build_request_info_from_ssl_event(event: &SslEvent) -> RequestInfo {
+    let text = String::from_utf8_lossy(&event.data);
+    let mut headers = HashMap::new();
+    let mut hostname = "unknown".to_string();
+    let mut path = "/".to_string();
+    let mut method = "UNKNOWN".to_string();
+
+    for line in text.lines() {
+        if line.starts_with("GET ")
+            || line.starts_with("POST ")
+            || line.starts_with("PUT ")
+            || line.starts_with("PATCH ")
+            || line.starts_with("DELETE ")
+        {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 2 {
+                method = parts[0].to_string();
+                path = parts[1].to_string();
+            }
+        }
+        if let Some((name, value)) = line.split_once(':') {
+            let key = name.trim().to_string();
+            let val = value.trim().to_string();
+            headers.insert(key.clone(), val.clone());
+            let key_lower = key.to_ascii_lowercase();
+            if key_lower == "host" || key_lower == ":authority" {
+                hostname = val;
+            }
+        }
+    }
+
+    let user_agent = headers
+        .iter()
+        .find(|(k, _)| k.to_ascii_lowercase() == "user-agent")
+        .map(|(_, v)| v.clone());
+    let exe_path = std::fs::read_link(format!("/proc/{}/exe", event.pid))
+        .ok()
+        .map(|p| p.to_string_lossy().to_string());
+
+    RequestInfo {
+        hostname,
+        path,
+        method,
+        headers,
+        user_agent,
+        body: Some(text.to_string()),
+        process_name: Some(event.comm.clone()),
+        pid: Some(event.pid),
+        exe_path,
+    }
 }
 
 #[cfg(test)]
@@ -923,7 +1102,11 @@ mod tests {
     #[tokio::test]
     async fn test_ssl_monitor_analysis() {
         let (tx, _rx) = mpsc::channel(100);
-        let monitor = SslMonitor::new(tx, ProtectionLevel::Alert);
+        let monitor = SslMonitor::new_with_fingerprinter(
+            tx,
+            ProtectionLevel::Alert,
+            Arc::new(AgentFingerprinter::new()),
+        );
 
         // Test with text containing a secret
         let event = SslEvent {
@@ -941,5 +1124,83 @@ mod tests {
         let result = monitor.analyze_event(&event).await;
         // Should detect secret pattern
         assert!(result.has_secrets || result.risk_score > 0);
+    }
+
+    #[test]
+    fn test_build_request_info_extracts_host_and_session_name() {
+        let event = SslEvent {
+            pid: 4242,
+            tid: 4242,
+            uid: 1000,
+            comm: "copilot".to_string(),
+            direction: SslDirection::Write,
+            data: b"POST /v1/chat/completions HTTP/1.1\r\nHost: api.openai.com\r\nUser-Agent: copilot-cli/1.0\r\nX-Session-Name: sprint-42\r\n\r\n{\"model\":\"gpt-4\"}".to_vec(),
+            total_len: 140,
+            timestamp_ns: 0,
+            ssl_ptr: 0x1,
+        };
+
+        let req = build_request_info_from_ssl_event(&event);
+        assert_eq!(req.hostname, "api.openai.com");
+        assert_eq!(req.path, "/v1/chat/completions");
+        assert_eq!(req.method, "POST");
+        assert_eq!(req.user_agent.as_deref(), Some("copilot-cli/1.0"));
+        assert_eq!(
+            req.headers.get("X-Session-Name").map(String::as_str),
+            Some("sprint-42")
+        );
+    }
+
+    #[test]
+    fn test_sanitize_run_marker() {
+        assert_eq!(sanitize_run_marker("RUN-DHI-001`"), "RUN-DHI-001");
+        assert_eq!(sanitize_run_marker("RUN-DHI-001\\n"), "RUN-DHI-001");
+        assert_eq!(sanitize_run_marker("foo"), "");
+    }
+
+    #[tokio::test]
+    async fn test_connection_text_for_event_uses_buffer() {
+        let (tx, _rx) = mpsc::channel(100);
+        let monitor = SslMonitor::new_with_fingerprinter(
+            tx,
+            ProtectionLevel::Alert,
+            Arc::new(AgentFingerprinter::new()),
+        );
+
+        let raw1 = RawSslEvent {
+            pid: 1,
+            tid: 1,
+            uid: 0,
+            timestamp_ns: 1,
+            ssl_ptr: 0x42,
+            direction: 0,
+            data_len: 8,
+            comm: [0; 16],
+            data: {
+                let mut d = [0u8; 16384];
+                d[..8].copy_from_slice(b"RUN-DHI-");
+                d
+            },
+        };
+        let raw2 = RawSslEvent {
+            pid: 1,
+            tid: 1,
+            uid: 0,
+            timestamp_ns: 2,
+            ssl_ptr: 0x42,
+            direction: 0,
+            data_len: 3,
+            comm: [0; 16],
+            data: {
+                let mut d = [0u8; 16384];
+                d[..3].copy_from_slice(b"001");
+                d
+            },
+        };
+
+        let _ = monitor.process_raw_event(&raw1).await.unwrap();
+        let e2 = monitor.process_raw_event(&raw2).await.unwrap().unwrap();
+        let text = monitor.connection_text_for_event(&e2).await;
+        assert!(text.contains("RUN-DHI-001"));
     }
 }

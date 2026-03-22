@@ -9,7 +9,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tracing::{error, info};
 
-use crate::agentic::DhiMetrics;
+use crate::agentic::{AgentFingerprinter, DhiMetrics};
 use crate::RuntimeStats;
 
 /// HTTP Server for Dhi metrics and API
@@ -17,6 +17,7 @@ pub struct HttpServer {
     pub addr: SocketAddr,
     pub metrics: Arc<tokio::sync::RwLock<DhiMetrics>>,
     pub runtime_stats: Arc<tokio::sync::RwLock<RuntimeStats>>,
+    pub fingerprinter: Arc<AgentFingerprinter>,
 }
 
 impl HttpServer {
@@ -25,11 +26,13 @@ impl HttpServer {
         addr: SocketAddr,
         metrics: Arc<tokio::sync::RwLock<DhiMetrics>>,
         runtime_stats: Arc<tokio::sync::RwLock<RuntimeStats>>,
+        fingerprinter: Arc<AgentFingerprinter>,
     ) -> Self {
         Self {
             addr,
             metrics,
             runtime_stats,
+            fingerprinter,
         }
     }
 
@@ -43,8 +46,11 @@ impl HttpServer {
                 Ok((stream, addr)) => {
                     let metrics = Arc::clone(&self.metrics);
                     let runtime_stats = Arc::clone(&self.runtime_stats);
+                    let fingerprinter = Arc::clone(&self.fingerprinter);
                     tokio::spawn(async move {
-                        if let Err(e) = handle_connection(stream, metrics, runtime_stats).await {
+                        if let Err(e) =
+                            handle_connection(stream, metrics, runtime_stats, fingerprinter).await
+                        {
                             error!("Connection error from {}: {}", addr, e);
                         }
                     });
@@ -62,12 +68,14 @@ async fn handle_connection(
     mut stream: TcpStream,
     metrics: Arc<tokio::sync::RwLock<DhiMetrics>>,
     runtime_stats: Arc<tokio::sync::RwLock<RuntimeStats>>,
+    fingerprinter: Arc<AgentFingerprinter>,
 ) -> Result<()> {
     let mut buffer = [0u8; 1024];
     let n = stream.read(&mut buffer).await?;
 
     let request = String::from_utf8_lossy(&buffer[..n]);
-    let (status, content_type, body) = route_request(&request, &metrics, &runtime_stats).await;
+    let (status, content_type, body) =
+        route_request(&request, &metrics, &runtime_stats, &fingerprinter).await;
 
     let response = format!(
         "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -88,6 +96,7 @@ async fn route_request(
     request: &str,
     metrics: &Arc<tokio::sync::RwLock<DhiMetrics>>,
     runtime_stats: &Arc<tokio::sync::RwLock<RuntimeStats>>,
+    fingerprinter: &Arc<AgentFingerprinter>,
 ) -> (&'static str, &'static str, String) {
     let path = request
         .lines()
@@ -132,6 +141,17 @@ async fn route_request(
                     llm_calls, tool_calls, alerts, blocked
                 ),
             )
+        },
+        "/api/agents" => {
+            let report = fingerprinter.generate_report();
+            match serde_json::to_string(&report) {
+                Ok(body) => ("200 OK", "application/json", body),
+                Err(_) => (
+                    "500 Internal Server Error",
+                    "application/json",
+                    r#"{"error":"failed to serialize agent report"}"#.to_string(),
+                ),
+            }
         },
         _ => (
             "404 Not Found",
@@ -187,6 +207,7 @@ fn get_dashboard_html() -> String {
                 <li><a href="/health">/health</a> - Health check</li>
                 <li><a href="/ready">/ready</a> - Readiness check</li>
                 <li><a href="/api/stats">/api/stats</a> - JSON stats</li>
+                <li><a href="/api/agents">/api/agents</a> - Fingerprints & sessions</li>
             </ul>
         </div>
         
@@ -225,8 +246,9 @@ pub async fn start_metrics_server(
     addr: &str,
     metrics: Arc<tokio::sync::RwLock<DhiMetrics>>,
     runtime_stats: Arc<tokio::sync::RwLock<RuntimeStats>>,
+    fingerprinter: Arc<AgentFingerprinter>,
 ) -> Result<()> {
     let addr: SocketAddr = addr.parse()?;
-    let server = HttpServer::new(addr, metrics, runtime_stats);
+    let server = HttpServer::new(addr, metrics, runtime_stats, fingerprinter);
     server.start().await
 }

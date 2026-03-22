@@ -153,6 +153,8 @@ pub struct SessionInfo {
     pub session_id: String,
     /// Session type (conversation, run, trace, etc.)
     pub session_type: SessionType,
+    /// Optional human-friendly session/conversation name
+    pub session_name: Option<String>,
     /// First seen timestamp
     pub first_seen: SystemTime,
     /// Last seen timestamp
@@ -250,6 +252,13 @@ pub struct AgentFingerprinter {
     process_map: Arc<RwLock<HashMap<u32, String>>>,
 }
 
+#[derive(Debug, Clone)]
+struct ExtractedSession {
+    session_id: String,
+    session_type: SessionType,
+    session_name: Option<String>,
+}
+
 impl AgentFingerprinter {
     pub fn new() -> Self {
         Self {
@@ -315,18 +324,25 @@ impl AgentFingerprinter {
         }
 
         // Update session tracking
-        for (session_id, session_type) in sessions {
+        for extracted in sessions {
+            let session_id = extracted.session_id;
+            let session_type = extracted.session_type;
+            let session_name = extracted.session_name;
             let session = fingerprint
                 .sessions
                 .entry(session_id.clone())
                 .or_insert_with(|| SessionInfo {
                     session_id: session_id.clone(),
                     session_type,
+                    session_name: session_name.clone(),
                     first_seen: SystemTime::now(),
                     last_seen: SystemTime::now(),
                     request_count: 0,
                     models: vec![],
                 });
+            if session.session_name.is_none() && session_name.is_some() {
+                session.session_name = session_name.clone();
+            }
             session.last_seen = SystemTime::now();
             session.request_count += 1;
             if let Some(ref m) = model {
@@ -361,6 +377,16 @@ impl AgentFingerprinter {
 
     /// Generate a unique fingerprint ID from request signals
     fn generate_fingerprint_id(&self, request: &RequestInfo) -> String {
+        if let Some(exe_path) = &request.exe_path {
+            let exe_lower = exe_path.to_ascii_lowercase();
+            if exe_lower.contains("copilot") {
+                if let Some(pid) = request.pid {
+                    return format!("copilot:{}", pid);
+                }
+                return "copilot:unknown".to_string();
+            }
+        }
+
         // Prefer process-based ID if available (from eBPF)
         if let (Some(pid), Some(name)) = (&request.pid, &request.process_name) {
             return format!("{}:{}", name, pid);
@@ -378,6 +404,10 @@ impl AgentFingerprinter {
 
     /// Detect framework from request signals
     fn detect_framework(&self, request: &RequestInfo) -> AgentFramework {
+        if self.looks_like_copilot(request) {
+            return AgentFramework::CopilotCli;
+        }
+
         // Check process name first (most reliable from eBPF)
         if let Some(process) = &request.process_name {
             let process_lower = process.to_lowercase();
@@ -469,9 +499,79 @@ impl AgentFingerprinter {
         }
     }
 
+    fn looks_like_copilot(&self, request: &RequestInfo) -> bool {
+        if let Some(process) = &request.process_name {
+            let process_lower = process.to_ascii_lowercase();
+            if process_lower.contains("copilot") {
+                return true;
+            }
+        }
+
+        if let Some(exe_path) = &request.exe_path {
+            let exe_lower = exe_path.to_ascii_lowercase();
+            if exe_lower.contains("copilot") {
+                return true;
+            }
+        }
+
+        if let Some(ua) = &request.user_agent {
+            let ua_lower = ua.to_ascii_lowercase();
+            if ua_lower.contains("copilot") || ua_lower.contains("github-copilot") {
+                return true;
+            }
+        }
+
+        let Some(pid) = request.pid else {
+            return false;
+        };
+
+        let process_name = request
+            .process_name
+            .as_deref()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if !(process_name.contains("mainthread")
+            || process_name.contains("node")
+            || process_name.is_empty())
+        {
+            return false;
+        }
+
+        let exe_link = format!("/proc/{}/exe", pid);
+        let Ok(exe_path) = std::fs::read_link(exe_link) else {
+            return false;
+        };
+        let exe_name = exe_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if exe_name == "copilot"
+            || exe_path
+                .to_string_lossy()
+                .to_ascii_lowercase()
+                .contains("copilot")
+        {
+            return true;
+        }
+
+        let cmdline_path = format!("/proc/{}/cmdline", pid);
+        let Ok(cmdline_bytes) = std::fs::read(cmdline_path) else {
+            return false;
+        };
+        cmdline_bytes
+            .split(|b| *b == 0)
+            .filter_map(|part| std::str::from_utf8(part).ok())
+            .any(|arg| arg.to_ascii_lowercase().contains("copilot"))
+    }
+
     /// Extract session/conversation IDs from headers and body
-    fn extract_sessions(&self, request: &RequestInfo) -> Vec<(String, SessionType)> {
+    fn extract_sessions(&self, request: &RequestInfo) -> Vec<ExtractedSession> {
         let mut sessions = Vec::new();
+        let body_json = request
+            .body
+            .as_ref()
+            .and_then(|body| serde_json::from_str::<serde_json::Value>(body).ok());
 
         // Check headers for session identifiers
         for (key, value) in &request.headers {
@@ -479,18 +579,54 @@ impl AgentFingerprinter {
 
             // LangChain session headers
             if key_lower == "x-langchain-run-id" || key_lower == "langchain-run-id" {
-                sessions.push((value.clone(), SessionType::LangChainRun));
+                sessions.push(ExtractedSession {
+                    session_id: value.clone(),
+                    session_type: SessionType::LangChainRun,
+                    session_name: self.derive_session_name(
+                        value,
+                        &SessionType::LangChainRun,
+                        &request.headers,
+                        body_json.as_ref(),
+                    ),
+                });
             }
             if key_lower == "x-langchain-trace-id" || key_lower == "langchain-trace-id" {
-                sessions.push((value.clone(), SessionType::LangChainTrace));
+                sessions.push(ExtractedSession {
+                    session_id: value.clone(),
+                    session_type: SessionType::LangChainTrace,
+                    session_name: self.derive_session_name(
+                        value,
+                        &SessionType::LangChainTrace,
+                        &request.headers,
+                        body_json.as_ref(),
+                    ),
+                });
             }
             if key_lower == "x-langchain-session-id" || key_lower == "langchain-session-id" {
-                sessions.push((value.clone(), SessionType::LangChainRun));
+                sessions.push(ExtractedSession {
+                    session_id: value.clone(),
+                    session_type: SessionType::LangChainRun,
+                    session_name: self.derive_session_name(
+                        value,
+                        &SessionType::LangChainRun,
+                        &request.headers,
+                        body_json.as_ref(),
+                    ),
+                });
             }
 
             // OpenAI headers
             if key_lower == "x-request-id" && request.hostname.contains("openai") {
-                sessions.push((value.clone(), SessionType::OpenAIRequest));
+                sessions.push(ExtractedSession {
+                    session_id: value.clone(),
+                    session_type: SessionType::OpenAIRequest,
+                    session_name: self.derive_session_name(
+                        value,
+                        &SessionType::OpenAIRequest,
+                        &request.headers,
+                        body_json.as_ref(),
+                    ),
+                });
             }
             if key_lower == "openai-organization" {
                 // Not a session but useful context
@@ -498,18 +634,54 @@ impl AgentFingerprinter {
 
             // Anthropic headers
             if key_lower == "x-request-id" && request.hostname.contains("anthropic") {
-                sessions.push((value.clone(), SessionType::AnthropicRequest));
+                sessions.push(ExtractedSession {
+                    session_id: value.clone(),
+                    session_type: SessionType::AnthropicRequest,
+                    session_name: self.derive_session_name(
+                        value,
+                        &SessionType::AnthropicRequest,
+                        &request.headers,
+                        body_json.as_ref(),
+                    ),
+                });
             }
 
             // Generic trace/session headers
             if key_lower == "x-trace-id" || key_lower == "trace-id" || key_lower == "traceparent" {
-                sessions.push((value.clone(), SessionType::TraceId));
+                sessions.push(ExtractedSession {
+                    session_id: value.clone(),
+                    session_type: SessionType::TraceId,
+                    session_name: self.derive_session_name(
+                        value,
+                        &SessionType::TraceId,
+                        &request.headers,
+                        body_json.as_ref(),
+                    ),
+                });
             }
             if key_lower == "x-session-id" || key_lower == "session-id" {
-                sessions.push((value.clone(), SessionType::Custom("Session".to_string())));
+                sessions.push(ExtractedSession {
+                    session_id: value.clone(),
+                    session_type: SessionType::Custom("Session".to_string()),
+                    session_name: self.derive_session_name(
+                        value,
+                        &SessionType::Custom("Session".to_string()),
+                        &request.headers,
+                        body_json.as_ref(),
+                    ),
+                });
             }
             if key_lower == "x-conversation-id" || key_lower == "conversation-id" {
-                sessions.push((value.clone(), SessionType::ClaudeConversation));
+                sessions.push(ExtractedSession {
+                    session_id: value.clone(),
+                    session_type: SessionType::ClaudeConversation,
+                    session_name: self.derive_session_name(
+                        value,
+                        &SessionType::ClaudeConversation,
+                        &request.headers,
+                        body_json.as_ref(),
+                    ),
+                });
             }
 
             // Stainless SDK headers (used by official SDKs)
@@ -519,42 +691,256 @@ impl AgentFingerprinter {
         }
 
         // Check request body for session information
-        if let Some(body) = &request.body {
-            // Try to parse as JSON
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(body) {
+        if let Some(json) = body_json {
                 // Claude Code conversation ID in metadata
                 if let Some(metadata) = json.get("metadata") {
                     if let Some(conv_id) = metadata.get("conversation_id").and_then(|v| v.as_str())
                     {
-                        sessions.push((conv_id.to_string(), SessionType::ClaudeConversation));
+                        sessions.push(ExtractedSession {
+                            session_id: conv_id.to_string(),
+                            session_type: SessionType::ClaudeConversation,
+                            session_name: self.derive_session_name(
+                                conv_id,
+                                &SessionType::ClaudeConversation,
+                                &request.headers,
+                                Some(&json),
+                            ),
+                        });
                     }
                     if let Some(session_id) = metadata.get("session_id").and_then(|v| v.as_str()) {
-                        sessions.push((
-                            session_id.to_string(),
-                            SessionType::Custom("Session".to_string()),
-                        ));
+                        sessions.push(ExtractedSession {
+                            session_id: session_id.to_string(),
+                            session_type: SessionType::Custom("Session".to_string()),
+                            session_name: self.derive_session_name(
+                                session_id,
+                                &SessionType::Custom("Session".to_string()),
+                                &request.headers,
+                                Some(&json),
+                            ),
+                        });
                     }
                     if let Some(run_id) = metadata.get("run_id").and_then(|v| v.as_str()) {
-                        sessions.push((run_id.to_string(), SessionType::LangChainRun));
+                        sessions.push(ExtractedSession {
+                            session_id: run_id.to_string(),
+                            session_type: SessionType::LangChainRun,
+                            session_name: self.derive_session_name(
+                                run_id,
+                                &SessionType::LangChainRun,
+                                &request.headers,
+                                Some(&json),
+                            ),
+                        });
                     }
                 }
 
                 // LangChain includes run_id in some requests
                 if let Some(run_id) = json.get("run_id").and_then(|v| v.as_str()) {
-                    sessions.push((run_id.to_string(), SessionType::LangChainRun));
+                    sessions.push(ExtractedSession {
+                        session_id: run_id.to_string(),
+                        session_type: SessionType::LangChainRun,
+                        session_name: self.derive_session_name(
+                            run_id,
+                            &SessionType::LangChainRun,
+                            &request.headers,
+                            Some(&json),
+                        ),
+                    });
                 }
 
                 // Check for thread_id (OpenAI Assistants API)
                 if let Some(thread_id) = json.get("thread_id").and_then(|v| v.as_str()) {
-                    sessions.push((
-                        thread_id.to_string(),
-                        SessionType::Custom("Thread".to_string()),
-                    ));
+                    sessions.push(ExtractedSession {
+                        session_id: thread_id.to_string(),
+                        session_type: SessionType::Custom("Thread".to_string()),
+                        session_name: self.derive_session_name(
+                            thread_id,
+                            &SessionType::Custom("Thread".to_string()),
+                            &request.headers,
+                            Some(&json),
+                        ),
+                    });
+                }
+
+                for key in [
+                    "sessionId",
+                    "agent_session_id",
+                    "agentSessionId",
+                    "conversationId",
+                ] {
+                    if let Some(session_id) = json.get(key).and_then(|v| v.as_str()) {
+                        sessions.push(ExtractedSession {
+                            session_id: session_id.to_string(),
+                            session_type: SessionType::Custom("AgentSession".to_string()),
+                            session_name: self.derive_session_name(
+                                session_id,
+                                &SessionType::Custom("AgentSession".to_string()),
+                                &request.headers,
+                                Some(&json),
+                            ),
+                        });
+                    }
+                }
+
+                if let Some(metadata) = json.get("metadata") {
+                    for key in [
+                        "sessionId",
+                        "agent_session_id",
+                        "agentSessionId",
+                        "conversationId",
+                    ] {
+                        if let Some(session_id) = metadata.get(key).and_then(|v| v.as_str()) {
+                            sessions.push(ExtractedSession {
+                                session_id: session_id.to_string(),
+                                session_type: SessionType::Custom("AgentSession".to_string()),
+                                session_name: self.derive_session_name(
+                                    session_id,
+                                    &SessionType::Custom("AgentSession".to_string()),
+                                    &request.headers,
+                                    Some(&json),
+                                ),
+                            });
+                        }
+                    }
+                }
+        }
+
+        if let Some(body) = &request.body {
+            let mut idx = 0usize;
+            let marker = "RUN-";
+            while let Some(pos) = body[idx..].find(marker) {
+                let start = idx + pos;
+                let tail = &body[start..];
+                let end = tail
+                    .find(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+                    .unwrap_or(tail.len());
+                let run_id = &tail[..end];
+                if run_id.len() > 4 {
+                    sessions.push(ExtractedSession {
+                        session_id: run_id.to_string(),
+                        session_type: SessionType::Custom("RunMarker".to_string()),
+                        session_name: Some(format!("copilot-run:{}", run_id)),
+                    });
+                }
+                idx = start.saturating_add(end);
+                if idx >= body.len() {
+                    break;
                 }
             }
         }
 
+        if sessions.is_empty() {
+            if let Some(process_session) = self.derive_process_context_session(request) {
+                sessions.push(process_session);
+            }
+        }
+
         sessions
+    }
+
+    fn derive_process_context_session(&self, request: &RequestInfo) -> Option<ExtractedSession> {
+        let pid = request.pid?;
+        let process_name = request
+            .process_name
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string());
+
+        let cwd_suffix = std::fs::read_link(format!("/proc/{pid}/cwd"))
+            .ok()
+            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+            .unwrap_or_else(|| "unknown-cwd".to_string());
+
+        let tty_suffix = std::fs::read_link(format!("/proc/{pid}/fd/0"))
+            .ok()
+            .map(|p| p.to_string_lossy().to_string())
+            .filter(|v| v.contains("/dev/"))
+            .unwrap_or_else(|| "no-tty".to_string());
+
+        let (session_type, prefix) = if self.looks_like_copilot(request) {
+            (
+                SessionType::Custom("CopilotProcess".to_string()),
+                "copilot-process",
+            )
+        } else {
+            (
+                SessionType::Custom("ProcessContext".to_string()),
+                "process-session",
+            )
+        };
+
+        Some(ExtractedSession {
+            session_id: format!("{prefix}:{pid}"),
+            session_type,
+            session_name: Some(format!("{process_name}@{cwd_suffix} ({tty_suffix})")),
+        })
+    }
+
+    fn derive_session_name(
+        &self,
+        session_id: &str,
+        session_type: &SessionType,
+        headers: &HashMap<String, String>,
+        body_json: Option<&serde_json::Value>,
+    ) -> Option<String> {
+        let header_name_keys = [
+            "x-session-name",
+            "session-name",
+            "x-conversation-name",
+            "conversation-name",
+            "x-thread-name",
+            "thread-name",
+            "x-run-name",
+            "run-name",
+        ];
+
+        for (key, value) in headers {
+            let key_lower = key.to_ascii_lowercase();
+            if header_name_keys.contains(&key_lower.as_str()) {
+                let trimmed = value.trim();
+                if !trimmed.is_empty() {
+                    return Some(trimmed.to_string());
+                }
+            }
+        }
+
+        if let Some(json) = body_json {
+            let root_keys = [
+                "session_name",
+                "conversation_name",
+                "thread_name",
+                "run_name",
+                "name",
+            ];
+            for key in root_keys {
+                if let Some(name) = json.get(key).and_then(|v| v.as_str()) {
+                    let trimmed = name.trim();
+                    if !trimmed.is_empty() {
+                        return Some(trimmed.to_string());
+                    }
+                }
+            }
+
+            if let Some(metadata) = json.get("metadata") {
+                for key in root_keys {
+                    if let Some(name) = metadata.get(key).and_then(|v| v.as_str()) {
+                        let trimmed = name.trim();
+                        if !trimmed.is_empty() {
+                            return Some(trimmed.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        let prefix = match session_type {
+            SessionType::ClaudeConversation => "conversation",
+            SessionType::LangChainRun => "run",
+            SessionType::LangChainTrace => "trace",
+            SessionType::TraceId => "trace",
+            SessionType::OpenAIRequest => "openai-request",
+            SessionType::AnthropicRequest => "anthropic-request",
+            SessionType::Custom(name) => name,
+        };
+        Some(format!("{}:{}", prefix, session_id))
     }
 
     /// Extract model name from request body
@@ -627,6 +1013,49 @@ impl AgentFingerprinter {
             if let Some(agent) = agents.get_mut(fingerprint_id) {
                 agent.total_tokens += tokens;
                 agent.estimated_cost += cost;
+            }
+        }
+    }
+
+    pub fn upsert_session(
+        &self,
+        fingerprint_id: &str,
+        session_id: &str,
+        session_type: SessionType,
+        session_name: Option<String>,
+        model: Option<String>,
+    ) {
+        if session_id.trim().is_empty() {
+            return;
+        }
+
+        if let Ok(mut agents) = self.agents.write() {
+            let Some(agent) = agents.get_mut(fingerprint_id) else {
+                return;
+            };
+
+            let session = agent
+                .sessions
+                .entry(session_id.to_string())
+                .or_insert_with(|| SessionInfo {
+                    session_id: session_id.to_string(),
+                    session_type: session_type.clone(),
+                    session_name: session_name.clone(),
+                    first_seen: SystemTime::now(),
+                    last_seen: SystemTime::now(),
+                    request_count: 0,
+                    models: vec![],
+                });
+
+            session.last_seen = SystemTime::now();
+            session.request_count = session.request_count.saturating_add(1);
+            if session.session_name.is_none() && session_name.is_some() {
+                session.session_name = session_name;
+            }
+            if let Some(m) = model {
+                if !session.models.contains(&m) {
+                    session.models.push(m);
+                }
             }
         }
     }
@@ -810,6 +1239,7 @@ pub struct RequestInfo {
     pub body: Option<String>,
     pub process_name: Option<String>,
     pub pid: Option<u32>,
+    pub exe_path: Option<String>,
 }
 
 /// Summary of a high-risk agent
@@ -888,6 +1318,7 @@ mod tests {
             body: None,
             process_name: Some("claude".to_string()),
             pid: Some(12345),
+            exe_path: None,
         };
 
         let framework = fingerprinter.detect_framework(&request);
@@ -907,6 +1338,7 @@ mod tests {
             body: None,
             process_name: None,
             pid: None,
+            exe_path: None,
         };
 
         let framework = fingerprinter.detect_framework(&request);
@@ -929,6 +1361,7 @@ mod tests {
             body: None,
             process_name: None,
             pid: None,
+            exe_path: None,
         };
 
         let framework = fingerprinter.detect_framework(&request);
@@ -957,6 +1390,7 @@ mod tests {
             body: Some(r#"{"model": "gpt-4"}"#.to_string()),
             process_name: Some("python".to_string()),
             pid: Some(1234),
+            exe_path: None,
         };
 
         // First request
@@ -982,6 +1416,7 @@ mod tests {
             body: None,
             process_name: Some("python".to_string()),
             pid: Some(5678),
+            exe_path: None,
         };
 
         let fp = fingerprinter.analyze_request(&request);
@@ -1013,6 +1448,7 @@ mod tests {
             body: Some(r#"{"model": "gpt-4"}"#.to_string()),
             process_name: Some("python".to_string()),
             pid: Some(1111),
+            exe_path: None,
         };
 
         let request2 = RequestInfo {
@@ -1024,6 +1460,7 @@ mod tests {
             body: Some(r#"{"model": "claude-3-opus"}"#.to_string()),
             process_name: Some("claude".to_string()),
             pid: Some(2222),
+            exe_path: None,
         };
 
         fingerprinter.analyze_request(&request1);
@@ -1059,6 +1496,7 @@ mod tests {
             body: Some(r#"{"model": "gpt-4"}"#.to_string()),
             process_name: Some("python".to_string()),
             pid: Some(3333),
+            exe_path: None,
         };
 
         let fp = fingerprinter.analyze_request(&request);
@@ -1096,6 +1534,7 @@ mod tests {
             body: Some(body.to_string()),
             process_name: Some("claude".to_string()),
             pid: Some(4444),
+            exe_path: None,
         };
 
         let fp = fingerprinter.analyze_request(&request);
@@ -1105,6 +1544,61 @@ mod tests {
 
         let conv_session = fp.sessions.get("conv-12345").unwrap();
         assert_eq!(conv_session.session_type, SessionType::ClaudeConversation);
+    }
+
+    #[test]
+    fn test_session_name_extracted_from_body() {
+        let fingerprinter = AgentFingerprinter::new();
+        let body = r#"{
+            "model": "gpt-4",
+            "metadata": {
+                "session_id": "sess-123",
+                "session_name": "Weekly Sprint Planning"
+            }
+        }"#;
+
+        let request = RequestInfo {
+            hostname: "api.openai.com".to_string(),
+            path: "/v1/chat/completions".to_string(),
+            method: "POST".to_string(),
+            headers: HashMap::new(),
+            user_agent: Some("copilot-cli/1.0".to_string()),
+            body: Some(body.to_string()),
+            process_name: Some("copilot".to_string()),
+            pid: Some(7777),
+            exe_path: None,
+        };
+
+        let fp = fingerprinter.analyze_request(&request);
+        let session = fp.sessions.get("sess-123").unwrap();
+        assert_eq!(
+            session.session_name.as_deref(),
+            Some("Weekly Sprint Planning")
+        );
+    }
+
+    #[test]
+    fn test_detect_copilot_from_mainthread_pid_exe() {
+        let fingerprinter = AgentFingerprinter::new();
+        let pid = std::process::id();
+        let request = RequestInfo {
+            hostname: "api.githubcopilot.com".to_string(),
+            path: "/chat/completions".to_string(),
+            method: "POST".to_string(),
+            headers: HashMap::new(),
+            user_agent: None,
+            body: Some(r#"{"model":"gpt-4o"}"#.to_string()),
+            process_name: Some("MainThread".to_string()),
+            pid: Some(pid),
+            exe_path: std::env::current_exe()
+                .ok()
+                .map(|p| p.to_string_lossy().to_string()),
+        };
+        let framework = fingerprinter.detect_framework(&request);
+        assert!(matches!(
+            framework,
+            AgentFramework::CopilotCli | AgentFramework::Unknown(_)
+        ));
     }
 
     #[test]
@@ -1123,6 +1617,7 @@ mod tests {
             body: Some(r#"{"model": "gpt-4"}"#.to_string()),
             process_name: Some("python".to_string()),
             pid: Some(5555),
+            exe_path: None,
         };
 
         // First request
@@ -1136,5 +1631,83 @@ mod tests {
 
         let session = fp.sessions.get("my-session").unwrap();
         assert_eq!(session.request_count, 3);
+    }
+
+    #[test]
+    fn test_run_marker_session_extraction() {
+        let fingerprinter = AgentFingerprinter::new();
+        let request = RequestInfo {
+            hostname: "api.githubcopilot.com".to_string(),
+            path: "/chat/completions".to_string(),
+            method: "POST".to_string(),
+            headers: HashMap::new(),
+            user_agent: Some("copilot-cli/1.0".to_string()),
+            body: Some("hello RUN-TEST-9001 world".to_string()),
+            process_name: Some("MainThread".to_string()),
+            pid: Some(8888),
+            exe_path: Some("/home/test/.local/bin/copilot".to_string()),
+        };
+
+        let fp = fingerprinter.analyze_request(&request);
+        let session = fp.sessions.get("RUN-TEST-9001").unwrap();
+        assert_eq!(
+            session.session_name.as_deref(),
+            Some("copilot-run:RUN-TEST-9001")
+        );
+    }
+
+    #[test]
+    fn test_fallback_process_session_when_no_explicit_signals() {
+        let fingerprinter = AgentFingerprinter::new();
+        let pid = std::process::id();
+        let request = RequestInfo {
+            hostname: "api.githubcopilot.com".to_string(),
+            path: "/chat/completions".to_string(),
+            method: "POST".to_string(),
+            headers: HashMap::new(),
+            user_agent: None,
+            body: Some("{\"model\":\"gpt-4o\"}".to_string()),
+            process_name: Some("MainThread".to_string()),
+            pid: Some(pid),
+            exe_path: std::env::current_exe()
+                .ok()
+                .map(|p| p.to_string_lossy().to_string()),
+        };
+
+        let fp = fingerprinter.analyze_request(&request);
+        let key = format!("process-session:{pid}");
+        let fallback = fp
+            .sessions
+            .get(&key)
+            .expect("process-context fallback session should exist");
+        assert_eq!(
+            fallback.session_type,
+            SessionType::Custom("ProcessContext".to_string())
+        );
+        assert!(fallback.session_name.is_some());
+    }
+
+    #[test]
+    fn test_explicit_session_prevents_process_fallback() {
+        let fingerprinter = AgentFingerprinter::new();
+        let mut headers = HashMap::new();
+        headers.insert("X-Session-Id".to_string(), "sess-explicit".to_string());
+
+        let request = RequestInfo {
+            hostname: "api.openai.com".to_string(),
+            path: "/v1/chat/completions".to_string(),
+            method: "POST".to_string(),
+            headers,
+            user_agent: Some("openai-node/1.0".to_string()),
+            body: Some("{\"model\":\"gpt-4\"}".to_string()),
+            process_name: Some("node".to_string()),
+            pid: Some(std::process::id()),
+            exe_path: None,
+        };
+
+        let fp = fingerprinter.analyze_request(&request);
+        assert!(fp.sessions.contains_key("sess-explicit"));
+        let synthetic_key = format!("process-session:{}", std::process::id());
+        assert!(!fp.sessions.contains_key(&synthetic_key));
     }
 }

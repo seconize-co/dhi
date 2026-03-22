@@ -93,11 +93,11 @@ sudo ./target/release/dhi --level alert --slack-webhook "https://hooks.slack.com
 
 ```bash
 # Start proxy (hostname-level monitoring only)
-./target/release/dhi proxy --port 8080
+./target/release/dhi proxy --port 18080
 
 # Configure your tools
-export HTTP_PROXY=http://127.0.0.1:8080
-export HTTPS_PROXY=http://127.0.0.1:8080
+export HTTP_PROXY=http://127.0.0.1:18080
+export HTTPS_PROXY=http://127.0.0.1:18080
 ```
 
 ## Architecture
@@ -154,7 +154,7 @@ export HTTPS_PROXY=http://127.0.0.1:8080
 ```
 
 **How it works:**
-1. **AI Agents** configure `HTTP_PROXY=http://127.0.0.1:8080` (or Dhi uses eBPF hooks)
+1. **AI Agents** configure `HTTP_PROXY=http://127.0.0.1:18080` (or Dhi uses eBPF hooks)
 2. **Dhi intercepts** all traffic to LLM APIs as a security proxy
 3. **Security checks** scan for secrets, PII, injections, risky tools
 4. **Action taken**: Block (stop request), Alert (notify + allow), or Log (record only)

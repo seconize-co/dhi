@@ -183,6 +183,7 @@ pub struct AgenticRuntime {
     tool_monitor: Arc<ToolMonitor>,
     _mcp_monitor: Arc<McpMonitor>,
     prompt_security: Arc<PromptSecurityAnalyzer>,
+    fingerprinter: Arc<AgentFingerprinter>,
     memory_protection: Arc<RwLock<MemoryProtection>>,
     events: Arc<RwLock<CircularEventBuffer>>,
     total_events: Arc<RwLock<u64>>,
@@ -236,10 +237,15 @@ impl AgenticRuntime {
             tool_monitor: Arc::new(ToolMonitor::new()),
             _mcp_monitor: Arc::new(McpMonitor::new()),
             prompt_security: Arc::new(PromptSecurityAnalyzer::new()),
+            fingerprinter: Arc::new(AgentFingerprinter::new()),
             memory_protection: Arc::new(RwLock::new(MemoryProtection::new())),
             events: Arc::new(RwLock::new(CircularEventBuffer::new(MAX_EVENTS))),
             total_events: Arc::new(RwLock::new(0)),
         }
+    }
+
+    pub fn fingerprinter(&self) -> Arc<AgentFingerprinter> {
+        Arc::clone(&self.fingerprinter)
     }
 
     /// Register a new agent for monitoring

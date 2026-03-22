@@ -53,9 +53,9 @@ sudo ./target/release/dhi --level block --ebpf-block-action term
 ### Proxy mode (fallback)
 
 ```bash
-./target/release/dhi proxy --port 8080 --block-secrets --block-pii
-export HTTP_PROXY=http://127.0.0.1:8080
-export HTTPS_PROXY=http://127.0.0.1:8080
+./target/release/dhi proxy --port 18080 --block-secrets --block-pii
+export HTTP_PROXY=http://127.0.0.1:18080
+export HTTPS_PROXY=http://127.0.0.1:18080
 ```
 
 ---

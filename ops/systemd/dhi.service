@@ -9,6 +9,7 @@ StartLimitBurst=5
 Type=simple
 ExecStart=/usr/local/bin/dhi --level alert --ebpf-ssl-only --port 9090
 Restart=always
+RestartPreventExitStatus=73
 RestartSec=5
 WorkingDirectory=/var/log/dhi
 AmbientCapabilities=CAP_BPF CAP_PERFMON CAP_SYS_ADMIN CAP_SYS_PTRACE CAP_NET_ADMIN
