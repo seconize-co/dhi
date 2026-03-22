@@ -64,6 +64,8 @@ For complete matrices, benchmarks, and tool-by-tool comparisons, see [docs/COMPA
 
 **No code changes required!** Dhi uses eBPF to intercept SSL/TLS at the kernel level.
 
+**Production policy**: On Linux, run **eBPF mode as the primary mode**. Proxy mode is a fallback/compatibility mode and is typically used only on platforms where eBPF is unavailable.
+
 ### Build & Run (Linux)
 
 ```bash
@@ -86,6 +88,8 @@ sudo ./target/release/dhi --level alert --slack-webhook "https://hooks.slack.com
 ### Proxy Mode (macOS/Windows - Limited)
 
 > ⚠️ Proxy mode only sees **hostnames**, not content. HTTPS is encrypted end-to-end. Use eBPF mode on Linux for full inspection.
+>
+> ⚠️ In production, run **one mode at a time**. Do not run both eBPF and proxy mode together unless you have a specific, documented operational reason.
 
 ```bash
 # Start proxy (hostname-level monitoring only)
@@ -164,6 +168,7 @@ export HTTPS_PROXY=http://127.0.0.1:8080
 | [Agentic Features](docs/AGENTIC_FEATURES.md) | Complete feature documentation |
 | [Integration Guide](docs/INTEGRATION.md) | Setup for Claude Code, Copilot CLI, etc. |
 | [CTO Guide](docs/CTO_GUIDE.md) | Executive security guide |
+| [Testing Guide](docs/TESTING.md) | Manual acceptance test cases for alert/block release validation |
 | [Comparison](docs/COMPARISON.md) | How Dhi compares to other tools |
 
 ## Crash Resistance
@@ -173,7 +178,7 @@ export HTTPS_PROXY=http://127.0.0.1:8080
 | **eBPF Mode** | Traffic flows normally | **Fail-open** (recommended) |
 | **Proxy Mode** | Apps lose connectivity | **Fail-closed** |
 
-**Recommendation**: Use eBPF mode on Linux. The systemd service auto-restarts Dhi within 5 seconds if it crashes. See [Operations Guide](docs/OPERATIONS.md) for details.
+**Recommendation**: Use eBPF mode on Linux as the primary production mode; use proxy mode only as fallback/compatibility. The systemd service auto-restarts Dhi within 5 seconds if it crashes. See [Operations Guide](docs/OPERATIONS.md) for details.
 
 ## Endpoints
 

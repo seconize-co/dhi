@@ -65,6 +65,14 @@ uname -r
 
 **eBPF mode is the primary mode** - it intercepts SSL/TLS traffic at the kernel level, providing full visibility into HTTPS content.
 
+### Production Mode Policy
+
+For Linux production deployments:
+
+- Run eBPF mode as the primary mode.
+- Use proxy mode only as fallback/compatibility (for non-Linux or constrained environments).
+- Run one mode at a time in production; avoid running both simultaneously unless explicitly required and documented.
+
 ### Start Dhi
 
 ```bash

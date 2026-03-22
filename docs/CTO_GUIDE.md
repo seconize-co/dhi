@@ -2,6 +2,8 @@
 
 > Addressing executive concerns about AI agent security
 
+See [README](../README.md) for project overview, quick links, and installation entry points.
+
 ---
 
 ## Executive Summary
