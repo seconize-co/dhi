@@ -33,7 +33,31 @@ This plan validates these major Dhi capabilities:
 - prompt injection detection
 - trusted vs untrusted auth-header handling
 - SSRF protection for CONNECT
-5. Basic release sanity checks using `demo` mode.
+5. Cost and tool-risk behavior checks using `demo` mode.
+6. Quality gate checks for core runtime behavior (`cargo test`, `cargo clippy`).
+
+### CTO Main Use Cases (Explicitly Identified)
+
+From `docs/CTO_GUIDE.md`, the 6 primary use cases are:
+1. Credential leakage prevention.
+2. Customer PII exfiltration prevention.
+3. Cost explosion control (budget/cost visibility).
+4. Dangerous tool invocation control.
+5. Prompt injection detection/blocking.
+6. Shadow AI visibility/observability.
+
+### Coverage Matrix (Manual Guide <-> E2E Harness)
+
+| CTO use case | Manual tests in this guide | Automated checks in `scripts/security-e2e.sh` |
+|---|---|---|
+| 1. Credential leakage | TC-02, TC-05, TC-06, TC-07, TC-09 | `proxy-http-secret-block`, `proxy-http-query-secret-block`, `proxy-http-auth-trusted-allow`, `proxy-http-auth-untrusted-block` in both alert/block suites |
+| 2. PII exfiltration | TC-03, TC-09 | `proxy-http-pii-block` in both alert/block suites |
+| 3. Cost explosion control | TC-11 (demo cost signal), TC-12 (quality gate) | `cargo test --all-features` (budget tests), demo check |
+| 4. Dangerous tools | TC-11 (demo tool allow/deny signal) | demo check (`allowed: false` markers) |
+| 5. Prompt injection | TC-04, TC-10 | `proxy-http-injection-block` in both alert/block suites |
+| 6. Shadow AI visibility | TC-01, TC-13 | monitor endpoint checks (`/health`, `/ready`, `/metrics`, `/api/stats`) |
+
+This matrix is the parity contract. If a row changes, update both this guide and the e2e harness in the same PR.
 
 ---
 
@@ -401,13 +425,46 @@ Command:
 Expected:
 1. Output includes risk/alert style markers.
 2. Includes lines like tool allow/deny or context injection detection.
+3. Includes at least one LLM cost/token line (cost visibility signal).
 
 Pass criteria:
 - demo command executes successfully and prints security signal outputs.
 
 ---
 
-## 9. Acceptance Checklist (Release Gate)
+## 9. Alert-Mode and Block-Mode Automation Parity Run
+
+Run the full harness:
+```bash
+scripts/security-e2e.sh
+```
+
+Expected:
+1. Proxy vectors run in `--level alert` and `--level block`.
+2. Alert mode validates detection-without-block for HTTP content vectors (`501` expected where applicable).
+3. Block mode validates enforcement (`403` expected where applicable).
+4. Trusted auth-header vector remains allowed (`501`) in both modes.
+5. Monitor endpoints all return 200 (`/health`, `/ready`, `/metrics`, `/api/stats`).
+6. Harness summary reports `Failed: 0`.
+
+---
+
+## 10. Quality Gate for Main Runtime Use Cases
+
+The harness runs these by default:
+```bash
+cargo test --all-features
+cargo clippy --all-targets --all-features -- -D warnings -D clippy::unwrap_used -D clippy::expect_used
+```
+
+Why it matters for CTO use cases:
+1. Exercises core detection/protection modules (including budget and tool monitoring logic).
+2. Prevents regressions before release packaging.
+3. Enforces lint-level code hygiene for production readiness.
+
+---
+
+## 11. Acceptance Checklist (Release Gate)
 
 Mark PASS/FAIL for each item:
 1. Startup and endpoints (`/health`, `/ready`, `/metrics`, `/api/stats`) pass.
@@ -420,13 +477,16 @@ Mark PASS/FAIL for each item:
 8. eBPF alert logs visible for synthetic risky prompts.
 9. eBPF block action (`none`, `term`, `kill`) behaves as configured.
 10. Metrics/stats counters move after test activity.
+11. Demo shows tool-risk and LLM cost signals.
+12. Automated harness passes with `Failed: 0`.
+13. Quality gate (`cargo test`, `cargo clippy`) passes.
 
 Release recommendation:
-- Announce only if all 10 are PASS in the target release environment.
+- Announce only if all 13 are PASS in the target release environment.
 
 ---
 
-## 10. Troubleshooting Quick Notes
+## 12. Troubleshooting Quick Notes
 
 1. `cargo: command not found`
 - Install Rust toolchain and ensure cargo is on PATH.
@@ -445,11 +505,15 @@ Release recommendation:
 
 ---
 
-## 11. Optional: One-command Regression Harness
+## 13. Optional: One-command Regression Harness
 
 If you want an automated sanity pass after manual verification, run:
 ```bash
 scripts/security-e2e.sh
 ```
 
-It uses synthetic vectors in `scripts/security-test-vectors.json` and validates key proxy and endpoint checks.
+It uses synthetic vectors in `scripts/security-test-vectors.json` and validates:
+1. Proxy vectors in both alert and block mode.
+2. Demo security signals.
+3. Monitor endpoint readiness/health/metrics/stats.
+4. Build + test + lint quality gate (unless skipped via flags).

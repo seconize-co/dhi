@@ -24,7 +24,7 @@ Options:
 
 Notes:
   - Uses synthetic-only attack payloads (no real PII/secrets).
-  - Proxy checks validate blocking decisions by HTTP status code.
+  - Proxy checks validate both alert-mode and block-mode decisions by HTTP status code.
 EOF
 }
 
@@ -122,54 +122,87 @@ else
 fi
 
 echo "== Proxy security checks =="
-./target/release/dhi --level block proxy --port "$PROXY_PORT" --block-secrets --block-pii > /tmp/dhi-proxy-e2e.log 2>&1 &
-PROXY_PID=$!
-sleep 2
-if ! kill -0 "$PROXY_PID" >/dev/null 2>&1; then
-  echo "Proxy failed to start. Last logs:"
-  tail -n 40 /tmp/dhi-proxy-e2e.log || true
-  exit 1
-fi
 
-mapfile -t TEST_LINES < <(python3 - "$VECTORS_FILE" <<'PY'
-import json, sys
+run_proxy_suite() {
+  local mode="$1"
+  local log_file="/tmp/dhi-proxy-e2e-${mode}.log"
+
+  echo "-- Proxy suite: ${mode} mode --"
+  ./target/release/dhi --level "$mode" proxy --port "$PROXY_PORT" --block-secrets --block-pii > "$log_file" 2>&1 &
+  PROXY_PID=$!
+  sleep 2
+  if ! kill -0 "$PROXY_PID" >/dev/null 2>&1; then
+    echo "Proxy failed to start in ${mode} mode. Last logs:"
+    tail -n 40 "$log_file" || true
+    exit 1
+  fi
+
+  mapfile -t TEST_LINES < <(python3 - "$VECTORS_FILE" "$mode" <<'PY'
+import json
+import sys
+
 path = sys.argv[1]
+mode = sys.argv[2]
 with open(path, "r", encoding="utf-8") as f:
     data = json.load(f)
+
 for t in data.get("proxy_tests", []):
+    expected = t.get(f"expected_status_{mode}")
+    if expected is None:
+        continue
+
     kind = t.get("kind", "")
     if kind == "proxy_http":
         print(
             "\t".join([
-                t["id"], kind, t["method"], t["path"], t["host"],
-                str(t["expected_status"]), t["body"]
+                t["id"],
+                kind,
+                t["method"],
+                t["path"],
+                t["host"],
+                str(expected),
+                t.get("body", ""),
+                t.get("authorization", ""),
             ])
         )
     elif kind == "proxy_connect":
-        print("\t".join([t["id"], kind, t["target"], str(t["expected_status"])]))
+        print("\t".join([t["id"], kind, t["target"], str(expected)]))
 PY
-)
+  )
 
-for line in "${TEST_LINES[@]}"; do
-  IFS=$'\t' read -r id kind a b c d e <<< "$line"
-  if [[ "$kind" == "proxy_http" ]]; then
-    method="$a"
-    path="$b"
-    host="$c"
-    expected="$d"
-    body="$e"
-    status="$(curl -sS -o /tmp/dhi-e2e-body.out -w '%{http_code}' \
-      -x "http://127.0.0.1:${PROXY_PORT}" \
-      -X "$method" \
-      "http://${host}${path}" \
-      -H "Host: ${host}" \
-      -H "Content-Type: application/json" \
-      --data "$body" || true)"
-    assert_eq "$status" "$expected" "$id"
-  else
-    target="$a"
-    expected="$b"
-    status="$(python3 - "$PROXY_PORT" "$target" <<'PY'
+  for line in "${TEST_LINES[@]}"; do
+    IFS=$'\t' read -r id kind a b c d e f <<< "$line"
+    if [[ "$kind" == "proxy_http" ]]; then
+      method="$a"
+      path="$b"
+      host="$c"
+      expected="$d"
+      body="$e"
+      authorization="$f"
+
+      curl_args=(
+        -sS
+        -o /tmp/dhi-e2e-body.out
+        -w '%{http_code}'
+        -x "http://127.0.0.1:${PROXY_PORT}"
+        -X "$method"
+        "http://${host}${path}"
+        -H "Host: ${host}"
+      )
+
+      if [[ -n "$authorization" ]]; then
+        curl_args+=( -H "Authorization: ${authorization}" )
+      fi
+      if [[ -n "$body" ]]; then
+        curl_args+=( -H "Content-Type: application/json" --data "$body" )
+      fi
+
+      status="$(curl "${curl_args[@]}" || true)"
+      assert_eq "$status" "$expected" "${id}-${mode}"
+    else
+      target="$a"
+      expected="$b"
+      status="$(python3 - "$PROXY_PORT" "$target" <<'PY'
 import socket
 import sys
 
@@ -185,13 +218,17 @@ parts = first.split()
 print(parts[1] if len(parts) >= 2 else "000")
 PY
 )"
-    assert_eq "$status" "$expected" "$id"
-  fi
-done
+      assert_eq "$status" "$expected" "${id}-${mode}"
+    fi
+  done
 
-kill "$PROXY_PID" >/dev/null 2>&1 || true
-wait "$PROXY_PID" 2>/dev/null || true
-PROXY_PID=""
+  kill "$PROXY_PID" >/dev/null 2>&1 || true
+  wait "$PROXY_PID" 2>/dev/null || true
+  PROXY_PID=""
+}
+
+run_proxy_suite "alert"
+run_proxy_suite "block"
 
 echo "== Demo sanity check =="
 if ./target/release/dhi demo > /tmp/dhi-demo-e2e.log 2>&1; then
@@ -215,9 +252,13 @@ fi
 sleep 2
 if kill -0 "$MONITOR_PID" >/dev/null 2>&1; then
   health_status="$(curl -sS -o /tmp/dhi-health.out -w '%{http_code}' "http://127.0.0.1:${MONITOR_PORT}/health" || true)"
+  ready_status="$(curl -sS -o /tmp/dhi-ready.out -w '%{http_code}' "http://127.0.0.1:${MONITOR_PORT}/ready" || true)"
   metrics_status="$(curl -sS -o /tmp/dhi-metrics.out -w '%{http_code}' "http://127.0.0.1:${MONITOR_PORT}/metrics" || true)"
+  stats_status="$(curl -sS -o /tmp/dhi-stats.out -w '%{http_code}' "http://127.0.0.1:${MONITOR_PORT}/api/stats" || true)"
   assert_eq "$health_status" "200" "monitor-health-endpoint"
+  assert_eq "$ready_status" "200" "monitor-ready-endpoint"
   assert_eq "$metrics_status" "200" "monitor-metrics-endpoint"
+  assert_eq "$stats_status" "200" "monitor-stats-endpoint"
 else
   fail "monitor-startup"
 fi
