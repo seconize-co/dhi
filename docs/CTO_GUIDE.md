@@ -27,6 +27,9 @@
 cargo build --release
 sudo ./target/release/dhi --level alert
 
+# Block mode with explicit enforcement action
+sudo ./target/release/dhi --level block --ebpf-block-action term
+
 # That's it - all AI agents are now protected
 ```
 
@@ -156,6 +159,30 @@ block_sensitive_paths = true
 - 20-50: Suspicious (log)
 - 50-80: Likely attack (alert)
 - 80+: Confirmed attack (block)
+
+### Block Enforcement Policy (eBPF)
+
+In `--level block`, Dhi can enforce SSL block decisions with a configurable process action:
+
+| Action | Behavior | Typical Use |
+|--------|----------|-------------|
+| `none` | Log-only decision (no signal) | Baseline rollout / observation |
+| `term` | Send `SIGTERM` to offending process | Graceful production enforcement |
+| `kill` | Send `SIGKILL` to offending process | Maximum containment |
+
+Configure in `dhi.toml`:
+
+```toml
+[protection]
+level = "block"
+ebpf_block_action = "term"  # none | term | kill
+```
+
+Equivalent CLI control:
+
+```bash
+sudo ./target/release/dhi --level block --ebpf-block-action term
+```
 
 ---
 

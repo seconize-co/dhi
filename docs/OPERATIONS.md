@@ -77,8 +77,30 @@ sudo dhi --level alert --slack-webhook "https://hooks.slack.com/..."
 # Block mode (actively block threats)
 sudo dhi --level block
 
+# Block mode with graceful termination first
+sudo dhi --level block --ebpf-block-action term
+
+# Block mode with log-only decisioning (no process signal)
+sudo dhi --level block --ebpf-block-action none
+
 # Verbose logging
 sudo dhi --level alert -v
+```
+
+### eBPF Block Action
+
+When SSL analysis returns a block decision in block mode, you can choose how Dhi enforces it:
+
+- none: log the block decision only
+- term: send SIGTERM to the process ID that produced the event
+- kill: send SIGKILL to the process ID that produced the event (default)
+
+Set this via CLI with --ebpf-block-action or in configuration:
+
+```toml
+[protection]
+level = "block"
+ebpf_block_action = "kill"
 ```
 
 ### What Happens
@@ -87,7 +109,7 @@ sudo dhi --level alert -v
 2. Hooks SSL library functions (SSL_read, SSL_write, etc.)
 3. Captures plaintext **before encryption / after decryption**
 4. Scans for secrets, PII, injection attempts
-5. Alerts or blocks based on configuration
+5. Alerts or blocks based on configuration (including configurable process signal action in block mode)
 
 **No proxy configuration needed!** All applications using OpenSSL, BoringSSL, or GnuTLS are automatically monitored.
 

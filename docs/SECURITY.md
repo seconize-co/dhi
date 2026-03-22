@@ -13,7 +13,7 @@ If you discover a security vulnerability in Dhi, please report it responsibly.
 ### How to Report
 
 1. **Do NOT** open a public GitHub issue for security vulnerabilities
-2. Email security concerns to: **security@seconize.co**
+2. Email security concerns to: **sashank@seconize.co**
 3. Include:
    - Description of the vulnerability
    - Steps to reproduce

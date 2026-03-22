@@ -1,6 +1,6 @@
-# 🛡️ Dhi - Runtime Security for AI Agents
+# धी Dhi - Runtime Security for AI Agents
 
-**धी** (Sanskrit: *Intellect* | *Perception* | *Clear Vision*)
+**धी** (Sanskrit: *Intellect* | *Perception*)
 
 Dhi is a **security-first runtime protection system** for AI agents. It detects and blocks credential leaks, PII exposure, prompt injection, and runaway costs—before damage is done.
 
@@ -22,6 +22,18 @@ AI agents are powerful but introduce **serious security risks**:
 | 🔓 **Jailbreaks** | Safety bypasses via social engineering | Jailbreak signature matching |
 
 **Dhi watches everything your agents do and stops threats in real-time.**
+
+## Comparison Highlights
+
+Dhi is positioned as a runtime security layer for AI agents, complementing (not replacing) guardrails and sandboxing tools.
+
+- **Unique HTTPS visibility**: Dhi can inspect HTTPS traffic with eBPF SSL hooks on Linux, without installing a MITM CA certificate.
+- **Broader runtime coverage**: Detects secrets, PII, prompt injection/jailbreak attempts, risky tool calls, and budget abuse in one system.
+- **Kernel + application context**: Combines syscall-level telemetry and SSL/TLS interception for deeper visibility than app-layer-only tools.
+- **Low-overhead protection**: Designed for fast, deterministic checks suitable for always-on production enforcement.
+- **Defense-in-depth friendly**: Pairs well with conversational guardrails and code sandboxes in layered security architectures.
+
+For complete matrices, benchmarks, and tool-by-tool comparisons, see [docs/COMPARISON.md](docs/COMPARISON.md).
 
 ## Security Features
 
@@ -180,6 +192,7 @@ All settings in `dhi.toml` (see `dhi.toml.example` for full template):
 ```toml
 [protection]
 level = "alert"  # log, alert, block
+ebpf_block_action = "kill"  # none, term, kill
 
 [budget]
 daily_limit = 500.0
@@ -189,6 +202,12 @@ monthly_limit = 5000.0
 slack_webhook = "https://hooks.slack.com/..."
 min_severity = "high"
 ```
+
+In block mode, eBPF SSL enforcement can be configured:
+
+- none: log only, do not send process signals
+- term: send SIGTERM to the offending process
+- kill: send SIGKILL to the offending process (default)
 
 ## Requirements
 

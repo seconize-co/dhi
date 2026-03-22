@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 use aya::maps::RingBuf;
 use aya::programs::TracePoint;
 use aya::Bpf;
+use std::process::Command;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
@@ -65,10 +66,11 @@ pub async fn start_monitor(runtime: &crate::DhiRuntime) -> Result<()> {
     let config = runtime.config.read().await;
     let protection_level = config.protection_level;
     let ssl_only_mode = config.ebpf_ssl_only;
+    let block_action = config.ebpf_block_action;
     drop(config);
 
     // Start SSL/TLS interception
-    tokio::spawn(start_ssl_monitor(protection_level));
+    tokio::spawn(start_ssl_monitor(protection_level, block_action));
 
     // Check if BPF program exists for syscall monitoring
     let bpf_path = std::path::Path::new(BPF_PROGRAM_PATH);
@@ -129,7 +131,10 @@ pub async fn start_monitor(runtime: &crate::DhiRuntime) -> Result<()> {
 }
 
 /// Start SSL/TLS traffic monitoring
-async fn start_ssl_monitor(protection_level: crate::ProtectionLevel) {
+async fn start_ssl_monitor(
+    protection_level: crate::ProtectionLevel,
+    block_action: crate::EbpfBlockAction,
+) {
     use super::ssl_hook::{process_ssl_event, RawSslEvent, SslEvent, SslTracer};
     use tokio::sync::mpsc;
 
@@ -166,8 +171,58 @@ async fn start_ssl_monitor(protection_level: crate::ProtectionLevel) {
     // Process analyzed SSL events.
     tokio::spawn(async move {
         while let Some(event) = rx.recv().await {
-            if let Err(e) = process_ssl_event(&event, &monitor).await {
-                error!("Error processing SSL event: {}", e);
+            match process_ssl_event(&event, &monitor).await {
+                Ok(true) => {
+                    warn!(
+                        "SSL block decision triggered for pid={} comm={}; attempting to terminate process",
+                        event.pid, event.comm
+                    );
+
+                    if let Err(e) = terminate_process(event.pid) {
+                        error!("Failed to enforce SSL block for pid={}: {}", event.pid, e);
+                    }
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    error!("Error processing SSL event: {}", e);
+                }
+            }
+        }
+    });
+
+    // Consume raw events from the ssl_events ring buffer.
+    let Some(ssl_events_map) = bpf.take_map("ssl_events") else {
+        warn!("No ssl_events map found in BPF object; SSL event ingestion disabled");
+        return;
+    };
+    let mut ssl_ring_buf: RingBuf<_> = match ssl_events_map.try_into() {
+        Ok(rb) => rb,
+        Err(e) => {
+            warn!("Failed to convert ssl_events map to RingBuf: {}", e);
+            return;
+        }
+    };
+
+    info!("SSL/TLS interception active - monitoring encrypted traffic");
+
+    loop {
+        if let Some(event_data) = ssl_ring_buf.next() {
+            let data: &[u8] = event_data.as_ref();
+            let header_size = std::mem::size_of::<RawSslEventHeader>();
+            if data.len() < header_size {
+                continue;
+                        "SSL block decision triggered for pid={} comm={}; enforcement action={:?}",
+                        event.pid, event.comm, block_action
+                    );
+
+                    if let Err(e) = enforce_block_action(event.pid, block_action) {
+                        error!("Failed to enforce SSL block for pid={}: {}", event.pid, e);
+                    }
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    error!("Error processing SSL event: {}", e);
+                }
             }
         }
     });
@@ -233,40 +288,42 @@ async fn start_ssl_monitor(protection_level: crate::ProtectionLevel) {
     }
 }
 
-/// Attach tracepoints
-fn attach_tracepoints(bpf: &mut Bpf, ssl_only_mode: bool) -> Result<usize> {
-    if ssl_only_mode {
-        info!("SSL-only mode enabled: skipping syscall tracepoint attachment");
-        return Ok(0);
+fn enforce_block_action(pid: u32, action: crate::EbpfBlockAction) -> Result<()> {
+    match action {
+        crate::EbpfBlockAction::None => {
+            warn!(
+                "SSL block decision for pid={} configured as log-only (no process signal sent)",
+                pid
+            );
+            Ok(())
+        }
+        crate::EbpfBlockAction::Term => {
+            terminate_process_with_signal(pid, "TERM")
+        }
+        crate::EbpfBlockAction::Kill => {
+            terminate_process_with_signal(pid, "KILL")
+        }
     }
+}
 
-    // File operations
-    let tracepoints = [
-        ("syscalls", "sys_enter_openat", "trace_openat"),
-        ("syscalls", "sys_enter_write", "trace_write"),
-        ("syscalls", "sys_enter_sendto", "trace_sendto"),
-        ("syscalls", "sys_enter_unlinkat", "trace_unlinkat"),
-        ("syscalls", "sys_enter_renameat2", "trace_renameat2"),
-        ("syscalls", "sys_enter_fchmodat", "trace_fchmodat"),
-    ];
+fn terminate_process_with_signal(pid: u32, signal: &str) -> Result<()> {
+    // Use Unix kill signals for deterministic enforcement on Linux.
+    let status = Command::new("kill")
+        .arg(format!("-{}", signal))
+        .arg(pid.to_string())
+        .status()
+        .context("failed to execute kill command")?;
 
-    let mut attached = 0usize;
-    for (category, name, prog_name) in tracepoints {
-        match bpf.program_mut(prog_name) {
-            Some(prog) => {
-                let tracepoint: &mut TracePoint = prog.try_into()?;
-                if let Err(e) = tracepoint.load() {
-                    warn!("Failed to load {}: {}", prog_name, e);
-                    continue;
-                }
-                if let Err(e) = tracepoint.attach(category, name) {
-                    warn!("Failed to attach {} to {}/{}: {}", prog_name, category, name, e);
-                } else {
-                    info!("Attached {} to {}/{}", prog_name, category, name);
-                    attached += 1;
-                }
-            }
-            None => {
+    if status.success() {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!(
+            "kill -{} exited with status {:?}",
+            signal,
+            status.code()
+        ))
+    }
+}
                 debug!("Program {} not found in BPF object", prog_name);
             }
         }

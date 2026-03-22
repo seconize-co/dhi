@@ -19,6 +19,12 @@
 # - block: Record + alert + actively block dangerous operations
 level = "alert"
 
+# eBPF SSL block action when a high-risk event is detected in block mode:
+# - "none": log only, no process signal
+# - "term": send SIGTERM to process
+# - "kill": send SIGKILL to process
+ebpf_block_action = "kill"
+
 # Enable/disable specific modules
 enable_ebpf = true      # Kernel-level monitoring (Linux only)
 enable_agentic = true   # AI agent runtime monitoring

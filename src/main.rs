@@ -5,7 +5,7 @@
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use dhi::{DhiConfig, DhiRuntime, ProtectionLevel};
+use dhi::{DhiConfig, DhiRuntime, EbpfBlockAction, ProtectionLevel};
 use dhi::agentic::DhiMetrics;
 use dhi::proxy::ProxyConfig;
 use std::sync::Arc;
@@ -61,6 +61,10 @@ struct Cli {
     /// Enable SSL-only eBPF mode (skip syscall tracepoint monitoring)
     #[arg(long)]
     ebpf_ssl_only: bool,
+
+    /// eBPF SSL block enforcement action: none, term, kill
+    #[arg(long, default_value = "kill")]
+    ebpf_block_action: String,
 
     /// Disable agentic runtime monitoring (eBPF only)
     #[arg(long)]
@@ -220,6 +224,14 @@ async fn run_proxy(
         block_secrets_in_responses: block_secrets,
         block_pii_in_prompts: block_pii,
         block_pii_in_responses: block_pii,
+        allow_auth_secrets_to_trusted_hosts: true,
+        trusted_auth_hosts: vec![
+            "api.openai.com".to_string(),
+            "api.anthropic.com".to_string(),
+            "generativelanguage.googleapis.com".to_string(),
+            "api.mistral.ai".to_string(),
+            "api.cohere.ai".to_string(),
+        ],
         slack_webhook,
     };
 
@@ -361,6 +373,19 @@ async fn main() -> Result<()> {
         }
     };
 
+    let ebpf_block_action = match cli.ebpf_block_action.to_lowercase().as_str() {
+        "none" => EbpfBlockAction::None,
+        "term" => EbpfBlockAction::Term,
+        "kill" => EbpfBlockAction::Kill,
+        _ => {
+            warn!(
+                "Unknown eBPF block action '{}', using 'kill'",
+                cli.ebpf_block_action
+            );
+            EbpfBlockAction::Kill
+        }
+    };
+
     // Build configuration
     let mut config = if let Some(config_path) = cli.config {
         // Load from file
@@ -383,6 +408,7 @@ async fn main() -> Result<()> {
     }
     config.enable_ebpf = !cli.no_ebpf;
     config.ebpf_ssl_only = cli.ebpf_ssl_only;
+    config.ebpf_block_action = ebpf_block_action;
     config.enable_agentic = !cli.no_agentic;
 
     // Run command
