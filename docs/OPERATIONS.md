@@ -431,6 +431,13 @@ Session naming uses best-effort enrichment with deterministic IDs:
 4. tmux session name from tty
 5. Fallback `process@cwd(tty)`
 
+Runtime extraction behavior notes:
+
+- `RUN-*` markers are extracted with boundary-aware parsing over connection buffers (more reliable under fragmented/noisy payloads than simple whitespace tokenization).
+- Token extraction supports common OpenAI and Anthropic usage schemas from both full JSON payloads and SSE `data:` lines.
+- Tool-call extraction supports `tool_calls`, `function_call`, `tools`, and Anthropic `type:"tool_use"` patterns.
+- Session usage attribution is request-scoped: token/tool increments are applied to session IDs extracted from that specific request, not broadcast to all sessions on the agent.
+
 ### Monitoring Script
 
 Create `/usr/local/bin/dhi-health`:

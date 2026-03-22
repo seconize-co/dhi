@@ -1216,6 +1216,18 @@ impl AgentFingerprinter {
         }
     }
 
+    pub fn request_session_ids(&self, request: &RequestInfo) -> Vec<String> {
+        let mut ids: Vec<String> = self
+            .extract_sessions(request)
+            .into_iter()
+            .map(|s| s.session_id)
+            .filter(|s| !s.trim().is_empty())
+            .collect();
+        ids.sort();
+        ids.dedup();
+        ids
+    }
+
     /// Get all sessions across all agents
     pub fn get_all_sessions(&self) -> Vec<(String, SessionInfo)> {
         self.agents
@@ -1940,5 +1952,26 @@ mod tests {
             .expect("session should exist");
         assert_eq!(sess.total_tokens, 21);
         assert_eq!(sess.total_tool_calls, 3);
+    }
+
+    #[test]
+    fn test_request_session_ids_dedup() {
+        let fingerprinter = AgentFingerprinter::new();
+        let mut headers = HashMap::new();
+        headers.insert("X-Session-Id".to_string(), "dup-session".to_string());
+        headers.insert("Session-Id".to_string(), "dup-session".to_string());
+        let request = RequestInfo {
+            hostname: "api.openai.com".to_string(),
+            path: "/v1/chat/completions".to_string(),
+            method: "POST".to_string(),
+            headers,
+            user_agent: None,
+            body: Some("{\"model\":\"gpt-4\"}".to_string()),
+            process_name: Some("python".to_string()),
+            pid: Some(12),
+            exe_path: None,
+        };
+        let ids = fingerprinter.request_session_ids(&request);
+        assert_eq!(ids, vec!["dup-session".to_string()]);
     }
 }

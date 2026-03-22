@@ -113,6 +113,13 @@ The agents report now includes runtime usage counters at multiple levels:
 
 For multi-terminal Copilot runs, sessions are separated by deterministic process-session IDs (e.g. `copilot-process:<pid>`), with `session_name` populated via best-effort enrichment.
 
+Runtime extraction details:
+
+- `RUN-*` marker extraction is boundary-aware and resilient to fragmented buffer capture.
+- Token extraction works with full JSON payloads and SSE `data:` JSON lines.
+- Tool extraction covers `tool_calls`, `function_call`, `tools`, and `type:"tool_use"` patterns.
+- Session token/tool usage is attributed only to sessions detected on that request.
+
 ### Reporting output
 - Reporting directory is configurable in `dhi.toml` under `[reporting].output_dir`.
 - Typical paths:

@@ -840,6 +840,12 @@ pub async fn process_ssl_event_with_outcome(
     let comm_lower = event.comm.to_ascii_lowercase();
     let is_copilot_event = comm_lower.contains("copilot") || comm_lower.contains("mainthread");
 
+    let request_session_ids = monitor
+        .fingerprinter
+        .request_session_ids(&request_info)
+        .into_iter()
+        .collect::<Vec<_>>();
+
     if is_copilot_event {
         info!(
             "[COPILOT FINGERPRINT] pid={} fingerprint_id={} framework={}",
@@ -853,24 +859,17 @@ pub async fn process_ssl_event_with_outcome(
             "[COPILOT SSL EVENT] pid={} comm={} dir={:?} len={} risk={} preview=\"{}\"",
             event.pid, event.comm, event.direction, event.total_len, analysis.risk_score, preview
         );
-        if let Some(run_pos) = text.find("RUN-") {
-            let marker = text[run_pos..]
-                .split_whitespace()
-                .next()
-                .unwrap_or("RUN-unknown");
-            info!("[COPILOT RUN MARKER] pid={} marker={}", event.pid, marker);
-            let clean_marker = sanitize_run_marker(marker);
-            if !clean_marker.is_empty() {
-                monitor.fingerprinter.upsert_session(
-                    &fingerprint.id,
-                    &clean_marker,
-                    crate::agentic::SessionType::Custom("RunMarker".to_string()),
-                    Some(format!("copilot-run:{}", clean_marker)),
-                    None,
-                );
-                if let Some(updated) = monitor.fingerprinter.get_agent(&fingerprint.id) {
-                    fingerprint = updated;
-                }
+        for clean_marker in extract_run_markers(&text) {
+            info!("[COPILOT RUN MARKER] pid={} marker={}", event.pid, clean_marker);
+            monitor.fingerprinter.upsert_session(
+                &fingerprint.id,
+                &clean_marker,
+                crate::agentic::SessionType::Custom("RunMarker".to_string()),
+                Some(format!("copilot-run:{}", clean_marker)),
+                None,
+            );
+            if let Some(updated) = monitor.fingerprinter.get_agent(&fingerprint.id) {
+                fingerprint = updated;
             }
         }
         for session in fingerprint.sessions.values() {
@@ -897,8 +896,8 @@ pub async fn process_ssl_event_with_outcome(
             .fingerprinter
             .record_tool_calls(&fingerprint.id, tool_calls);
     }
-    if (token_count > 0 || tool_calls > 0) && !fingerprint.sessions.is_empty() {
-        for session_id in fingerprint.sessions.keys() {
+    if token_count > 0 || tool_calls > 0 {
+        for session_id in request_session_ids.iter() {
             monitor.fingerprinter.record_session_runtime_usage(
                 &fingerprint.id,
                 session_id,
@@ -1045,46 +1044,42 @@ fn sanitize_run_marker(raw: &str) -> String {
     if out.starts_with("RUN-") { out } else { String::new() }
 }
 
-fn extract_runtime_usage(text: &str) -> (u64, u64) {
-    let Ok(json) = serde_json::from_str::<serde_json::Value>(text) else {
-        return (0, 0);
-    };
-
-    let mut tokens = 0u64;
-    if let Some(usage) = json.get("usage") {
-        let total_tokens = usage
-            .get("total_tokens")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
-        if total_tokens > 0 {
-            tokens = total_tokens;
+fn extract_run_markers(text: &str) -> Vec<String> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i + 4 <= bytes.len() {
+        if &bytes[i..i + 4] == b"RUN-" {
+            let prev_ok = i == 0
+                || !char::from(bytes[i - 1]).is_ascii_alphanumeric() && bytes[i - 1] != b'_';
+            if !prev_ok {
+                i += 1;
+                continue;
+            }
+            let mut j = i + 4;
+            while j < bytes.len() {
+                let ch = char::from(bytes[j]);
+                if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                    j += 1;
+                } else {
+                    break;
+                }
+            }
+            let marker = sanitize_run_marker(&text[i..j]);
+            if marker.len() > 4 && !out.contains(&marker) {
+                out.push(marker);
+            }
+            i = j;
         } else {
-            tokens = tokens.saturating_add(
-                usage
-                    .get("prompt_tokens")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0),
-            );
-            tokens = tokens.saturating_add(
-                usage
-                    .get("completion_tokens")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0),
-            );
-            tokens = tokens.saturating_add(
-                usage
-                    .get("input_tokens")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0),
-            );
-            tokens = tokens.saturating_add(
-                usage
-                    .get("output_tokens")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0),
-            );
+            i += 1;
         }
     }
+    out
+}
+
+fn extract_runtime_usage(text: &str) -> (u64, u64) {
+    let mut tokens = 0u64;
+    let mut tools = 0u64;
 
     fn count_tool_calls(value: &serde_json::Value) -> u64 {
         let mut count = 0u64;
@@ -1114,8 +1109,117 @@ fn extract_runtime_usage(text: &str) -> (u64, u64) {
         count
     }
 
-    let tool_calls = count_tool_calls(&json);
-    (tokens, tool_calls)
+    fn count_tokens(value: &serde_json::Value) -> u64 {
+        let Some(usage) = value.get("usage") else {
+            return 0;
+        };
+        let total_tokens = usage
+            .get("total_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        if total_tokens > 0 {
+            return total_tokens;
+        }
+        usage
+            .get("prompt_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0)
+            .saturating_add(
+                usage
+                    .get("completion_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+            )
+            .saturating_add(
+                usage
+                    .get("input_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+            )
+            .saturating_add(
+                usage
+                    .get("output_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+            )
+    }
+
+    let mut candidates: Vec<String> = Vec::new();
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(text) {
+        candidates.push(json.to_string());
+    }
+
+    for line in text.lines() {
+        let trimmed = line.trim();
+        let payload = trimmed.strip_prefix("data:").map(str::trim).unwrap_or(trimmed);
+        if payload.is_empty() || payload == "[DONE]" {
+            continue;
+        }
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(payload) {
+            candidates.push(json.to_string());
+        }
+    }
+
+    for chunk in extract_json_object_chunks(text) {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&chunk) {
+            candidates.push(json.to_string());
+        }
+    }
+
+    candidates.sort();
+    candidates.dedup();
+
+    for candidate in &candidates {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(candidate) {
+            tokens = tokens.max(count_tokens(&json));
+            tools = tools.saturating_add(count_tool_calls(&json));
+        }
+    }
+
+    (tokens, tools)
+}
+
+fn extract_json_object_chunks(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let chars: Vec<char> = text.chars().collect();
+    let mut depth = 0usize;
+    let mut start = None;
+    let mut in_string = false;
+    let mut escape = false;
+
+    for (idx, ch) in chars.iter().enumerate() {
+        if in_string {
+            if escape {
+                escape = false;
+            } else if *ch == '\\' {
+                escape = true;
+            } else if *ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        if *ch == '"' {
+            in_string = true;
+            continue;
+        }
+
+        if *ch == '{' {
+            if depth == 0 {
+                start = Some(idx);
+            }
+            depth += 1;
+        } else if *ch == '}' && depth > 0 {
+            depth -= 1;
+            if depth == 0 {
+                if let Some(s) = start.take() {
+                    let chunk: String = chars[s..=idx].iter().collect();
+                    out.push(chunk);
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Process captured SSL event and return whether it should be blocked.
@@ -1254,6 +1358,15 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_run_markers_handles_boundaries_and_noise() {
+        let text = "abcRUN-BAD xx RUN-DHI-001` and\nRUN-DHI-002\\n and data:RUN_IGN";
+        let markers = extract_run_markers(text);
+        assert!(markers.contains(&"RUN-DHI-001".to_string()));
+        assert!(markers.contains(&"RUN-DHI-002".to_string()));
+        assert!(!markers.iter().any(|m| m == "RUN-BAD"));
+    }
+
+    #[test]
     fn test_extract_runtime_usage_openai_tokens_and_tools() {
         let payload = r#"{
             "usage":{"prompt_tokens":11,"completion_tokens":7},
@@ -1272,6 +1385,22 @@ mod tests {
         }"#;
         let (tokens, tool_calls) = extract_runtime_usage(payload);
         assert_eq!(tokens, 24);
+        assert_eq!(tool_calls, 1);
+    }
+
+    #[test]
+    fn test_extract_runtime_usage_prefers_total_tokens() {
+        let payload = r#"{"usage":{"total_tokens":30,"prompt_tokens":11,"completion_tokens":7}}"#;
+        let (tokens, tool_calls) = extract_runtime_usage(payload);
+        assert_eq!(tokens, 30);
+        assert_eq!(tool_calls, 0);
+    }
+
+    #[test]
+    fn test_extract_runtime_usage_from_sse_lines() {
+        let payload = "event: message\ndata: {\"usage\":{\"input_tokens\":9,\"output_tokens\":5},\"content\":[{\"type\":\"tool_use\",\"id\":\"t1\"}]}\n\ndata: [DONE]\n";
+        let (tokens, tool_calls) = extract_runtime_usage(payload);
+        assert_eq!(tokens, 14);
         assert_eq!(tool_calls, 1);
     }
 
