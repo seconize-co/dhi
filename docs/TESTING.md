@@ -432,6 +432,97 @@ Pass criteria:
 
 ---
 
+## 8A. Dangerous Tools Validation (CTO Concern #4)
+
+These cases provide explicit validation for tool-risk controls using the current `demo` execution path.
+
+### TC-11A: High-risk tool is flagged (critical signal)
+
+Command:
+```bash
+./target/release/dhi demo
+```
+
+Expected evidence in output:
+1. A line similar to:
+```text
+Tool: shell_execute - allowed: true, risk: critical
+```
+2. Flags include high-risk and sensitive path indicators, such as:
+```text
+high_risk_tool:shell
+high_risk_tool:execute
+sensitive_path:/etc/
+```
+
+Pass criteria:
+- `shell_execute` appears with `risk: critical` and high-risk/sensitive flags.
+
+---
+
+### TC-11B: Explicit denylisted destructive command is blocked
+
+Command:
+```bash
+./target/release/dhi demo
+```
+
+Expected evidence in output:
+1. A line similar to:
+```text
+Tool: sudo rm -rf - allowed: false
+```
+2. Agent stats include denied tool entry:
+```text
+"denied_tools": [
+  "sudo rm -rf"
+]
+```
+
+Pass criteria:
+- `sudo rm -rf` is denied (`allowed: false`) and recorded in `denied_tools`.
+
+---
+
+### TC-11C: Benign tool remains allowed (false-positive guard)
+
+Command:
+```bash
+./target/release/dhi demo
+```
+
+Expected evidence in output:
+```text
+Tool: web_search - allowed: true
+```
+
+Pass criteria:
+- benign tool invocation (`web_search`) remains allowed.
+
+---
+
+### TC-11D: Tool invocation accounting is consistent
+
+Command:
+```bash
+./target/release/dhi demo
+```
+
+Expected evidence in output:
+1. Agent stats:
+```text
+"tool_invocations": 3
+```
+2. Overall stats:
+```text
+"total_tool_invocations": 3
+```
+
+Pass criteria:
+- both counters are present and equal to expected demo flow count.
+
+---
+
 ## 9. Alert-Mode and Block-Mode Automation Parity Run
 
 Run the full harness:
@@ -478,6 +569,11 @@ Mark PASS/FAIL for each item:
 9. eBPF block action (`none`, `term`, `kill`) behaves as configured.
 10. Metrics/stats counters move after test activity.
 11. Demo shows tool-risk and LLM cost signals.
+11a. Dangerous-tool cases pass:
+- high-risk tool flagged as critical with risk flags.
+- denylisted destructive command denied and listed in `denied_tools`.
+- benign tool remains allowed.
+- tool invocation counters are consistent in agent + overall stats.
 12. Automated harness passes with `Failed: 0`.
 13. Quality gate (`cargo test`, `cargo clippy`) passes.
 14. Reporting harness validates sample schemas and runtime report artifacts (`scripts/reporting-e2e.sh`).
