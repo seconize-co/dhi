@@ -171,7 +171,7 @@ impl TokenBucket {
     fn try_consume(&mut self) -> bool {
         let now = chrono::Utc::now().timestamp();
         let elapsed = (now - self.last_update) as f64;
-        
+
         // Refill tokens
         self.tokens = (self.tokens + elapsed * self.refill_rate).min(self.max_tokens);
         self.last_update = now;
@@ -217,14 +217,14 @@ impl RateLimiter {
                 Ok(b) => b,
                 Err(_) => return false,
             };
-            
+
             let bucket = buckets.entry(agent.to_string()).or_insert_with(|| {
                 TokenBucket::new(
                     self.agent_limit as f64,
                     self.agent_limit as f64 / 3600.0, // refill per second (hourly rate)
                 )
             });
-            
+
             if !bucket.try_consume() {
                 return false;
             }
@@ -269,8 +269,7 @@ impl Alerter {
         if !self.rate_limiter.check(alert.agent_id.as_deref()) {
             warn!(
                 "Alert rate limited: {} (agent: {:?})",
-                alert.title,
-                alert.agent_id
+                alert.title, alert.agent_id
             );
             return Ok(());
         }
@@ -309,7 +308,7 @@ impl Alerter {
             ),
             AlertSeverity::Error => {
                 matches!(severity, AlertSeverity::Error | AlertSeverity::Critical)
-            }
+            },
             AlertSeverity::Critical => matches!(severity, AlertSeverity::Critical),
         }
     }
@@ -374,12 +373,7 @@ impl Alerter {
             }],
         };
 
-        let response = self
-            .client
-            .post(webhook_url)
-            .json(&message)
-            .send()
-            .await?;
+        let response = self.client.post(webhook_url).json(&message).send().await?;
 
         if !response.status().is_success() {
             anyhow::bail!("Slack API returned {}", response.status());
@@ -391,12 +385,7 @@ impl Alerter {
 
     /// Send alert to generic webhook
     async fn send_webhook(&self, webhook_url: &str, alert: &Alert) -> Result<()> {
-        let response = self
-            .client
-            .post(webhook_url)
-            .json(alert)
-            .send()
-            .await?;
+        let response = self.client.post(webhook_url).json(alert).send().await?;
 
         if !response.status().is_success() {
             anyhow::bail!("Webhook returned {}", response.status());
@@ -407,12 +396,7 @@ impl Alerter {
     }
 
     /// Create and send a quick alert
-    pub async fn alert(
-        &self,
-        severity: AlertSeverity,
-        title: &str,
-        message: &str,
-    ) -> Result<()> {
+    pub async fn alert(&self, severity: AlertSeverity, title: &str, message: &str) -> Result<()> {
         let alert = Alert::new(severity, title, message);
         self.send(&alert).await
     }
@@ -487,11 +471,7 @@ impl Alerter {
     }
 
     /// Alert for prompt injection
-    pub async fn alert_prompt_injection(
-        &self,
-        agent_id: &str,
-        pattern: &str,
-    ) -> Result<()> {
+    pub async fn alert_prompt_injection(&self, agent_id: &str, pattern: &str) -> Result<()> {
         let alert = Alert::new(
             AlertSeverity::Critical,
             "Prompt Injection Attempt Detected",
@@ -508,12 +488,7 @@ impl Alerter {
     }
 
     /// Alert for tool loop
-    pub async fn alert_tool_loop(
-        &self,
-        agent_id: &str,
-        tool_name: &str,
-        count: u32,
-    ) -> Result<()> {
+    pub async fn alert_tool_loop(&self, agent_id: &str, tool_name: &str, count: u32) -> Result<()> {
         let alert = Alert::new(
             AlertSeverity::Warning,
             "Tool Call Loop Detected",

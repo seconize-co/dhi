@@ -55,7 +55,10 @@ impl McpMonitor {
         method_categories.insert("resources/read".to_string(), McpMethodCategory::Access);
         method_categories.insert("prompts/list".to_string(), McpMethodCategory::Discovery);
         method_categories.insert("prompts/get".to_string(), McpMethodCategory::Access);
-        method_categories.insert("sampling/createMessage".to_string(), McpMethodCategory::LlmCall);
+        method_categories.insert(
+            "sampling/createMessage".to_string(),
+            McpMethodCategory::LlmCall,
+        );
 
         Self {
             method_categories,
@@ -88,7 +91,10 @@ impl McpMonitor {
 
     /// Extract tool name from MCP tool call
     pub fn extract_tool_name(&self, params: &serde_json::Value) -> Option<String> {
-        params.get("name").and_then(|n| n.as_str()).map(|s| s.to_string())
+        params
+            .get("name")
+            .and_then(|n| n.as_str())
+            .map(|s| s.to_string())
     }
 
     /// Extract tool arguments from MCP tool call
@@ -114,7 +120,8 @@ mod tests {
     fn test_parse_mcp_message() {
         let monitor = McpMonitor::new();
 
-        let data = br#"{"jsonrpc":"2.0","method":"tools/call","params":{"name":"search","arguments":{}}}"#;
+        let data =
+            br#"{"jsonrpc":"2.0","method":"tools/call","params":{"name":"search","arguments":{}}}"#;
         let msg = monitor.parse_message(data);
 
         assert!(msg.is_some());
@@ -131,6 +138,9 @@ mod tests {
             "arguments": {"query": "test"}
         });
 
-        assert_eq!(monitor.extract_tool_name(&params), Some("web_search".to_string()));
+        assert_eq!(
+            monitor.extract_tool_name(&params),
+            Some("web_search".to_string())
+        );
     }
 }

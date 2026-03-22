@@ -16,8 +16,7 @@ use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
 use crate::agentic::{
-    AlertConfig, Alerter, DhiMetrics, PiiDetector, PromptSecurityAnalyzer,
-    SecretsDetector,
+    AlertConfig, Alerter, DhiMetrics, PiiDetector, PromptSecurityAnalyzer, SecretsDetector,
 };
 use crate::ProtectionLevel;
 
@@ -44,7 +43,7 @@ fn is_private_ip(ip: IpAddr) -> bool {
             || (octets[0] == 192 && octets[1] == 0 && octets[2] == 2) // 192.0.2.0/24
             || (octets[0] == 198 && octets[1] == 51 && octets[2] == 100) // 198.51.100.0/24
             || (octets[0] == 203 && octets[1] == 0 && octets[2] == 113) // 203.0.113.0/24
-        }
+        },
         IpAddr::V6(ipv6) => {
             ipv6.is_loopback()
             || ipv6.is_unspecified()
@@ -52,34 +51,34 @@ fn is_private_ip(ip: IpAddr) -> bool {
             || (ipv6.segments()[0] & 0xfe00) == 0xfc00
             // Link-local (fe80::/10)
             || (ipv6.segments()[0] & 0xffc0) == 0xfe80
-        }
+        },
     }
 }
 
 /// Check if hostname is suspicious (cloud metadata endpoints, etc.)
 fn is_suspicious_hostname(host: &str) -> bool {
     let host_lower = host.to_lowercase();
-    
+
     // Cloud metadata endpoints
     host_lower == "169.254.169.254"
-    || host_lower == "metadata.google.internal"
-    || host_lower.ends_with(".internal")
-    || host_lower == "metadata"
-    || host_lower.contains("metadata.azure")
-    || host_lower == "fd00:ec2::254"
-    
+        || host_lower == "metadata.google.internal"
+        || host_lower.ends_with(".internal")
+        || host_lower == "metadata"
+        || host_lower.contains("metadata.azure")
+        || host_lower == "fd00:ec2::254"
+
     // Localhost variations
-    || host_lower == "localhost"
-    || host_lower == "localhost.localdomain"
-    || host_lower.ends_with(".localhost")
-    
+        || host_lower == "localhost"
+        || host_lower == "localhost.localdomain"
+        || host_lower.ends_with(".localhost")
+
     // Kubernetes internal
-    || host_lower.ends_with(".cluster.local")
-    || host_lower.ends_with(".svc")
-    
+        || host_lower.ends_with(".cluster.local")
+        || host_lower.ends_with(".svc")
+
     // Docker internal
-    || host_lower == "host.docker.internal"
-    || host_lower == "gateway.docker.internal"
+        || host_lower == "host.docker.internal"
+        || host_lower == "gateway.docker.internal"
 }
 
 /// Validate that a host is safe to connect to (SSRF protection)
@@ -88,7 +87,7 @@ fn validate_host(host: &str, port: u16) -> Result<(), String> {
     if is_suspicious_hostname(host) {
         return Err(format!("SSRF: Suspicious hostname blocked: {}", host));
     }
-    
+
     // Try to resolve the hostname
     let addr_str = format!("{}:{}", host, port);
     match addr_str.to_socket_addrs() {
@@ -97,18 +96,19 @@ fn validate_host(host: &str, port: u16) -> Result<(), String> {
                 if is_private_ip(addr.ip()) {
                     return Err(format!(
                         "SSRF: Private IP address blocked: {} resolved to {}",
-                        host, addr.ip()
+                        host,
+                        addr.ip()
                     ));
                 }
             }
             Ok(())
-        }
+        },
         Err(e) => {
             // DNS resolution failed - could be legitimate or could be attack
             // Allow it but log (the connection will fail naturally)
             warn!("DNS resolution failed for {}: {}", host, e);
             Ok(())
-        }
+        },
     }
 }
 
@@ -202,10 +202,10 @@ impl DhiProxy {
                             error!("Connection error from {}: {}", client_addr, e);
                         }
                     });
-                }
+                },
                 Err(e) => {
                     error!("Accept error: {}", e);
-                }
+                },
             }
         }
     }
@@ -290,10 +290,7 @@ async fn handle_connect(
     // SSRF protection: validate the target host
     if let Err(ssrf_err) = validate_host(&host, port) {
         warn!("[BLOCKED] {}", ssrf_err);
-        let response = format!(
-            "HTTP/1.1 403 Forbidden\r\n\r\n{}\n",
-            ssrf_err
-        );
+        let response = format!("HTTP/1.1 403 Forbidden\r\n\r\n{}\n", ssrf_err);
         client.write_all(response.as_bytes()).await?;
         return Ok(());
     }
@@ -303,10 +300,13 @@ async fn handle_connect(
     let upstream = match TcpStream::connect(&upstream_addr).await {
         Ok(s) => s,
         Err(e) => {
-            let response = format!("HTTP/1.1 502 Bad Gateway\r\n\r\nCannot connect to {}: {}", target, e);
+            let response = format!(
+                "HTTP/1.1 502 Bad Gateway\r\n\r\nCannot connect to {}: {}",
+                target, e
+            );
             client.write_all(response.as_bytes()).await?;
             return Ok(());
-        }
+        },
     };
 
     // Send 200 Connection Established
@@ -319,13 +319,9 @@ async fn handle_connect(
     let (mut client_read, mut client_write) = client.into_split();
     let (mut upstream_read, mut upstream_write) = upstream.into_split();
 
-    let client_to_upstream = async {
-        tokio::io::copy(&mut client_read, &mut upstream_write).await
-    };
+    let client_to_upstream = async { tokio::io::copy(&mut client_read, &mut upstream_write).await };
 
-    let upstream_to_client = async {
-        tokio::io::copy(&mut upstream_read, &mut client_write).await
-    };
+    let upstream_to_client = async { tokio::io::copy(&mut upstream_read, &mut client_write).await };
 
     tokio::select! {
         _ = client_to_upstream => {},

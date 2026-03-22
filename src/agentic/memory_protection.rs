@@ -63,10 +63,7 @@ impl MemoryProtection {
         };
 
         for (i, message) in messages.iter().enumerate() {
-            let role = message
-                .get("role")
-                .and_then(|r| r.as_str())
-                .unwrap_or("");
+            let role = message.get("role").and_then(|r| r.as_str()).unwrap_or("");
             let content = message
                 .get("content")
                 .and_then(|c| c.as_str())

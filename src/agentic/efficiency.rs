@@ -44,13 +44,13 @@ pub struct ToolCallPattern {
 pub struct EfficiencyAnalyzer {
     /// Prompt hashes for duplicate detection
     prompt_hashes: RwLock<HashMap<PromptHash, PromptOccurrence>>,
-    
+
     /// Tool call patterns for loop detection
     tool_patterns: RwLock<HashMap<String, Vec<ToolCallRecord>>>,
-    
+
     /// Token usage by agent
     token_usage: RwLock<HashMap<String, TokenUsage>>,
-    
+
     /// Configuration
     config: EfficiencyConfig,
 }
@@ -128,20 +128,21 @@ impl EfficiencyAnalyzer {
         };
         let now = chrono::Utc::now().timestamp();
 
-        let occurrence = hashes
-            .entry(prompt_hash.to_string())
-            .or_insert_with(|| PromptOccurrence {
-                count: 0,
-                agent_ids: Vec::new(),
-                estimated_cost: 0.0,
-                _first_seen: now,
-                last_seen: now,
-            });
+        let occurrence =
+            hashes
+                .entry(prompt_hash.to_string())
+                .or_insert_with(|| PromptOccurrence {
+                    count: 0,
+                    agent_ids: Vec::new(),
+                    estimated_cost: 0.0,
+                    _first_seen: now,
+                    last_seen: now,
+                });
 
         occurrence.count += 1;
         occurrence.estimated_cost += estimated_cost;
         occurrence.last_seen = now;
-        
+
         if !occurrence.agent_ids.contains(&agent_id.to_string()) {
             occurrence.agent_ids.push(agent_id.to_string());
         }
@@ -150,14 +151,12 @@ impl EfficiencyAnalyzer {
         if occurrence.count >= self.config.duplicate_prompt_threshold {
             Some(EfficiencyIssue {
                 issue_type: "duplicate_prompt".to_string(),
-                description: format!(
-                    "Same prompt sent {} times",
-                    occurrence.count
-                ),
+                description: format!("Same prompt sent {} times", occurrence.count),
                 occurrences: occurrence.count,
                 agent_id: agent_id.to_string(),
                 potential_savings_usd: occurrence.estimated_cost * 0.8, // 80% could be cached
-                recommendation: "Implement prompt caching or check for existing results".to_string(),
+                recommendation: "Implement prompt caching or check for existing results"
+                    .to_string(),
             })
         } else {
             None
@@ -229,7 +228,7 @@ impl EfficiencyAnalyzer {
             Ok(u) => u,
             Err(_) => return None, // Lock poisoned, skip tracking
         };
-        
+
         let agent_usage = usage
             .entry(agent_id.to_string())
             .or_insert_with(TokenUsage::default);
@@ -245,10 +244,7 @@ impl EfficiencyAnalyzer {
             if efficiency < self.config.context_efficiency_threshold {
                 return Some(EfficiencyIssue {
                     issue_type: "context_waste".to_string(),
-                    description: format!(
-                        "Only {:.1}% of context window used",
-                        efficiency * 100.0
-                    ),
+                    description: format!("Only {:.1}% of context window used", efficiency * 100.0),
                     occurrences: 1,
                     agent_id: agent_id.to_string(),
                     potential_savings_usd: 0.0,
@@ -268,11 +264,13 @@ impl EfficiencyAnalyzer {
         // Check for duplicate prompts
         let hashes = match self.prompt_hashes.read() {
             Ok(h) => h,
-            Err(_) => return EfficiencyReport {
-                total_cost_usd: 0.0,
-                potential_savings_usd: 0.0,
-                savings_percentage: 0.0,
-                issues: vec![],
+            Err(_) => {
+                return EfficiencyReport {
+                    total_cost_usd: 0.0,
+                    potential_savings_usd: 0.0,
+                    savings_percentage: 0.0,
+                    issues: vec![],
+                }
             },
         };
         for (_, occurrence) in hashes.iter() {
@@ -360,8 +358,12 @@ mod tests {
         });
 
         // First two calls - no issue
-        assert!(analyzer.record_tool_call("agent-1", "search", "params123", true).is_none());
-        assert!(analyzer.record_tool_call("agent-1", "search", "params123", true).is_none());
+        assert!(analyzer
+            .record_tool_call("agent-1", "search", "params123", true)
+            .is_none());
+        assert!(analyzer
+            .record_tool_call("agent-1", "search", "params123", true)
+            .is_none());
 
         // Third call - triggers loop detection
         let issue = analyzer.record_tool_call("agent-1", "search", "params123", true);

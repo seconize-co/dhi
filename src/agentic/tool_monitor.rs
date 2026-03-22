@@ -73,7 +73,11 @@ impl ToolMonitor {
     }
 
     /// Analyze a tool call for risk
-    pub fn analyze_tool_call(&self, tool_name: &str, parameters: &serde_json::Value) -> ToolRiskAnalysis {
+    pub fn analyze_tool_call(
+        &self,
+        tool_name: &str,
+        parameters: &serde_json::Value,
+    ) -> ToolRiskAnalysis {
         let mut result = ToolRiskAnalysis {
             tool_name: tool_name.to_string(),
             risk_level: "low".to_string(),
@@ -103,7 +107,10 @@ impl ToolMonitor {
         }
 
         // Check for external network access
-        if params_str.contains("http://") || params_str.contains("https://") || params_str.contains("ftp://") {
+        if params_str.contains("http://")
+            || params_str.contains("https://")
+            || params_str.contains("ftp://")
+        {
             result.risk_score += 15;
             result.flags.push("external_network".to_string());
         }
@@ -134,7 +141,9 @@ impl ToolMonitor {
     /// Check if tool is denied
     pub fn is_denied(&self, tool_name: &str) -> bool {
         let tool_lower = tool_name.to_lowercase();
-        self.denylist.iter().any(|d| tool_lower.contains(&d.to_lowercase()))
+        self.denylist
+            .iter()
+            .any(|d| tool_lower.contains(&d.to_lowercase()))
     }
 
     /// Check if tool is allowed (when allowlist is active)
@@ -169,10 +178,8 @@ mod tests {
     #[test]
     fn test_high_risk_tool() {
         let monitor = ToolMonitor::new();
-        let result = monitor.analyze_tool_call(
-            "shell_execute",
-            &serde_json::json!({"command": "ls"}),
-        );
+        let result =
+            monitor.analyze_tool_call("shell_execute", &serde_json::json!({"command": "ls"}));
         assert!(result.risk_score >= 30);
         assert!(result.flags.iter().any(|f| f.contains("high_risk_tool")));
     }
@@ -180,10 +187,8 @@ mod tests {
     #[test]
     fn test_sensitive_path() {
         let monitor = ToolMonitor::new();
-        let result = monitor.analyze_tool_call(
-            "read_file",
-            &serde_json::json!({"path": "/etc/passwd"}),
-        );
+        let result =
+            monitor.analyze_tool_call("read_file", &serde_json::json!({"path": "/etc/passwd"}));
         assert!(result.risk_score >= 25);
         assert!(result.flags.iter().any(|f| f.contains("sensitive_path")));
     }

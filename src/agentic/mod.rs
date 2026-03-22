@@ -217,7 +217,6 @@ impl CircularEventBuffer {
             self.head = (self.head + 1) % self.capacity;
         }
     }
-
 }
 
 /// Agent event
@@ -244,19 +243,22 @@ impl AgenticRuntime {
     }
 
     /// Register a new agent for monitoring
-    pub async fn register_agent(
-        &self,
-        agent_id: &str,
-        framework: &str,
-        parent_id: Option<&str>,
-    ) {
+    pub async fn register_agent(&self, agent_id: &str, framework: &str, parent_id: Option<&str>) {
         let context = AgentContext::new(agent_id, framework, parent_id);
-        self.agents.write().await.insert(agent_id.to_string(), context);
+        self.agents
+            .write()
+            .await
+            .insert(agent_id.to_string(), context);
 
-        self.emit_event(AgentEventType::AgentSpawn, agent_id, serde_json::json!({
-            "framework": framework,
-            "parent_id": parent_id,
-        })).await;
+        self.emit_event(
+            AgentEventType::AgentSpawn,
+            agent_id,
+            serde_json::json!({
+                "framework": framework,
+                "parent_id": parent_id,
+            }),
+        )
+        .await;
 
         info!("Agent registered: {} (framework: {})", agent_id, framework);
     }
@@ -275,7 +277,9 @@ impl AgenticRuntime {
     ) -> LlmCallResult {
         let call_id = format!("{}-{}", agent_id, chrono::Utc::now().timestamp_millis());
         let total_tokens = input_tokens + output_tokens;
-        let cost_usd = self.llm_monitor.estimate_cost(model, input_tokens, output_tokens);
+        let cost_usd = self
+            .llm_monitor
+            .estimate_cost(model, input_tokens, output_tokens);
 
         let mut risk_score = 0u32;
         let mut alerts = Vec::new();
@@ -287,29 +291,44 @@ impl AgenticRuntime {
             if security.injection_detected {
                 risk_score += 40;
                 alerts.push("prompt_injection_detected".to_string());
-                self.emit_event(AgentEventType::PromptInjectionAttempt, agent_id, serde_json::json!({
-                    "call_id": call_id,
-                    "findings": security.findings,
-                })).await;
+                self.emit_event(
+                    AgentEventType::PromptInjectionAttempt,
+                    agent_id,
+                    serde_json::json!({
+                        "call_id": call_id,
+                        "findings": security.findings,
+                    }),
+                )
+                .await;
                 warn!("Prompt injection detected for agent {}", agent_id);
             }
 
             if security.jailbreak_detected {
                 risk_score += 30;
                 alerts.push("jailbreak_attempt_detected".to_string());
-                self.emit_event(AgentEventType::JailbreakAttempt, agent_id, serde_json::json!({
-                    "call_id": call_id,
-                    "findings": security.findings,
-                })).await;
+                self.emit_event(
+                    AgentEventType::JailbreakAttempt,
+                    agent_id,
+                    serde_json::json!({
+                        "call_id": call_id,
+                        "findings": security.findings,
+                    }),
+                )
+                .await;
                 warn!("Jailbreak attempt detected for agent {}", agent_id);
             }
 
             if security.sensitive_data_detected {
                 risk_score += 25;
                 alerts.push("sensitive_data_in_prompt".to_string());
-                self.emit_event(AgentEventType::SensitiveDataExposure, agent_id, serde_json::json!({
-                    "call_id": call_id,
-                })).await;
+                self.emit_event(
+                    AgentEventType::SensitiveDataExposure,
+                    agent_id,
+                    serde_json::json!({
+                        "call_id": call_id,
+                    }),
+                )
+                .await;
             }
         }
 
@@ -321,16 +340,21 @@ impl AgenticRuntime {
             ctx.risk_score = ctx.risk_score.max(risk_score);
         }
 
-        self.emit_event(AgentEventType::LlmRequest, agent_id, serde_json::json!({
-            "call_id": call_id,
-            "provider": provider,
-            "model": model,
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "cost_usd": cost_usd,
-            "has_tools": has_tools,
-            "tool_names": tool_names,
-        })).await;
+        self.emit_event(
+            AgentEventType::LlmRequest,
+            agent_id,
+            serde_json::json!({
+                "call_id": call_id,
+                "provider": provider,
+                "model": model,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "cost_usd": cost_usd,
+                "has_tools": has_tools,
+                "tool_names": tool_names,
+            }),
+        )
+        .await;
 
         info!(
             "LLM Call: {} -> {}/{} ({}+{} tokens, ${:.4})",
@@ -354,7 +378,11 @@ impl AgenticRuntime {
         tool_type: &str,
         parameters: serde_json::Value,
     ) -> ToolCallResult {
-        let invocation_id = format!("{}-tool-{}", agent_id, chrono::Utc::now().timestamp_millis());
+        let invocation_id = format!(
+            "{}-tool-{}",
+            agent_id,
+            chrono::Utc::now().timestamp_millis()
+        );
 
         // Analyze risk
         let risk = self.tool_monitor.analyze_tool_call(tool_name, &parameters);
@@ -384,14 +412,19 @@ impl AgenticRuntime {
             ctx.risk_score = ctx.risk_score.max(risk.risk_score);
         }
 
-        self.emit_event(AgentEventType::ToolCall, agent_id, serde_json::json!({
-            "invocation_id": invocation_id,
-            "tool_name": tool_name,
-            "tool_type": tool_type,
-            "parameters": parameters,
-            "risk": risk,
-            "allowed": result.allowed,
-        })).await;
+        self.emit_event(
+            AgentEventType::ToolCall,
+            agent_id,
+            serde_json::json!({
+                "invocation_id": invocation_id,
+                "tool_name": tool_name,
+                "tool_type": tool_type,
+                "parameters": parameters,
+                "risk": risk,
+                "allowed": result.allowed,
+            }),
+        )
+        .await;
 
         let log_level = if risk.risk_level == "high" || risk.risk_level == "critical" {
             tracing::Level::WARN
@@ -418,22 +451,37 @@ impl AgenticRuntime {
         let mut protection = self.memory_protection.write().await;
         protection.protect(agent_id, key, value);
 
-        self.emit_event(AgentEventType::MemoryWrite, agent_id, serde_json::json!({
-            "key": key,
-            "protected": true,
-        })).await;
+        self.emit_event(
+            AgentEventType::MemoryWrite,
+            agent_id,
+            serde_json::json!({
+                "key": key,
+                "protected": true,
+            }),
+        )
+        .await;
     }
 
     /// Verify memory integrity
-    pub async fn verify_memory(&self, agent_id: &str, key: &str, value: &str) -> MemoryVerifyResult {
+    pub async fn verify_memory(
+        &self,
+        agent_id: &str,
+        key: &str,
+        value: &str,
+    ) -> MemoryVerifyResult {
         let protection = self.memory_protection.read().await;
         let result = protection.verify(agent_id, key, value);
 
         if result.tampered {
-            self.emit_event(AgentEventType::ContextInjection, agent_id, serde_json::json!({
-                "key": key,
-                "tampered": true,
-            })).await;
+            self.emit_event(
+                AgentEventType::ContextInjection,
+                agent_id,
+                serde_json::json!({
+                    "key": key,
+                    "tampered": true,
+                }),
+            )
+            .await;
             warn!("Memory tampering detected: {}/{}", agent_id, key);
         }
 
@@ -441,14 +489,23 @@ impl AgenticRuntime {
     }
 
     /// Verify context integrity
-    pub async fn verify_context(&self, agent_id: &str, messages: &[serde_json::Value]) -> ContextVerifyResult {
+    pub async fn verify_context(
+        &self,
+        agent_id: &str,
+        messages: &[serde_json::Value],
+    ) -> ContextVerifyResult {
         let protection = self.memory_protection.read().await;
         let result = protection.detect_context_injection(messages);
 
         if result.injection_detected {
-            self.emit_event(AgentEventType::ContextInjection, agent_id, serde_json::json!({
-                "suspicious_messages": result.suspicious_messages,
-            })).await;
+            self.emit_event(
+                AgentEventType::ContextInjection,
+                agent_id,
+                serde_json::json!({
+                    "suspicious_messages": result.suspicious_messages,
+                }),
+            )
+            .await;
             warn!("Context injection detected for agent {}", agent_id);
         }
 
@@ -511,7 +568,12 @@ impl AgenticRuntime {
     }
 
     /// Emit an event
-    async fn emit_event(&self, event_type: AgentEventType, agent_id: &str, data: serde_json::Value) {
+    async fn emit_event(
+        &self,
+        event_type: AgentEventType,
+        agent_id: &str,
+        data: serde_json::Value,
+    ) {
         let event = AgentEvent {
             timestamp: chrono::Utc::now().timestamp(),
             event_type,

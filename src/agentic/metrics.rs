@@ -54,7 +54,7 @@ pub struct DhiMetrics {
 
 impl DhiMetrics {
     /// Create new metrics registry
-    /// 
+    ///
     /// Note: Metric creation uses expect() rather than unwrap() to provide clear
     /// error messages if metric initialization fails. These should never fail
     /// with valid static configuration.
@@ -177,76 +177,86 @@ impl DhiMetrics {
         .expect("dhi_tool_loops metric creation failed");
 
         // Agent metrics
-        let active_agents = IntGauge::new(
-            "dhi_active_agents",
-            "Number of active agents",
-        )
-        .expect("dhi_active_agents metric creation failed");
+        let active_agents = IntGauge::new("dhi_active_agents", "Number of active agents")
+            .expect("dhi_active_agents metric creation failed");
 
-        let high_risk_agents = IntGauge::new(
-            "dhi_high_risk_agents",
-            "Number of high-risk agents",
-        )
-        .expect("dhi_high_risk_agents metric creation failed");
+        let high_risk_agents = IntGauge::new("dhi_high_risk_agents", "Number of high-risk agents")
+            .expect("dhi_high_risk_agents metric creation failed");
 
         // System metrics
-        let uptime_seconds = IntGauge::new(
-            "dhi_uptime_seconds",
-            "Dhi runtime uptime in seconds",
-        )
-        .expect("dhi_uptime_seconds metric creation failed");
+        let uptime_seconds = IntGauge::new("dhi_uptime_seconds", "Dhi runtime uptime in seconds")
+            .expect("dhi_uptime_seconds metric creation failed");
 
-        let events_per_second = Gauge::new(
-            "dhi_events_per_second",
-            "Events processed per second",
-        )
-        .expect("dhi_events_per_second metric creation failed");
+        let events_per_second = Gauge::new("dhi_events_per_second", "Events processed per second")
+            .expect("dhi_events_per_second metric creation failed");
 
         // Register all metrics - using expect for clear error messages
         // These should never fail unless there's a bug in metric names
-        registry.register(Box::new(events_total.clone()))
+        registry
+            .register(Box::new(events_total.clone()))
             .expect("Failed to register events_total");
-        registry.register(Box::new(alerts_total.clone()))
+        registry
+            .register(Box::new(alerts_total.clone()))
             .expect("Failed to register alerts_total");
-        registry.register(Box::new(blocks_total.clone()))
+        registry
+            .register(Box::new(blocks_total.clone()))
             .expect("Failed to register blocks_total");
-        registry.register(Box::new(llm_calls_total.clone()))
+        registry
+            .register(Box::new(llm_calls_total.clone()))
             .expect("Failed to register llm_calls_total");
-        registry.register(Box::new(llm_tokens_total.clone()))
+        registry
+            .register(Box::new(llm_tokens_total.clone()))
             .expect("Failed to register llm_tokens_total");
-        registry.register(Box::new(llm_cost_total.clone()))
+        registry
+            .register(Box::new(llm_cost_total.clone()))
             .expect("Failed to register llm_cost_total");
-        registry.register(Box::new(llm_latency.clone()))
+        registry
+            .register(Box::new(llm_latency.clone()))
             .expect("Failed to register llm_latency");
-        registry.register(Box::new(tool_calls_total.clone()))
+        registry
+            .register(Box::new(tool_calls_total.clone()))
             .expect("Failed to register tool_calls_total");
-        registry.register(Box::new(tool_calls_blocked.clone()))
+        registry
+            .register(Box::new(tool_calls_blocked.clone()))
             .expect("Failed to register tool_calls_blocked");
-        registry.register(Box::new(tool_risk_score.clone()))
+        registry
+            .register(Box::new(tool_risk_score.clone()))
             .expect("Failed to register tool_risk_score");
-        registry.register(Box::new(secrets_detected.clone()))
+        registry
+            .register(Box::new(secrets_detected.clone()))
             .expect("Failed to register secrets_detected");
-        registry.register(Box::new(pii_detected.clone()))
+        registry
+            .register(Box::new(pii_detected.clone()))
             .expect("Failed to register pii_detected");
-        registry.register(Box::new(injections_detected.clone()))
+        registry
+            .register(Box::new(injections_detected.clone()))
             .expect("Failed to register injections_detected");
-        registry.register(Box::new(budget_spent.clone()))
+        registry
+            .register(Box::new(budget_spent.clone()))
             .expect("Failed to register budget_spent");
-        registry.register(Box::new(budget_remaining.clone()))
+        registry
+            .register(Box::new(budget_remaining.clone()))
             .expect("Failed to register budget_remaining");
-        registry.register(Box::new(budget_exceeded.clone()))
+        registry
+            .register(Box::new(budget_exceeded.clone()))
             .expect("Failed to register budget_exceeded");
-        registry.register(Box::new(duplicate_prompts.clone()))
+        registry
+            .register(Box::new(duplicate_prompts.clone()))
             .expect("Failed to register duplicate_prompts");
-        registry.register(Box::new(tool_loops.clone()))
+        registry
+            .register(Box::new(tool_loops.clone()))
             .expect("Failed to register tool_loops");
-        registry.register(Box::new(active_agents.clone()))
+        registry
+            .register(Box::new(active_agents.clone()))
             .expect("Failed to register active_agents");
-        registry.register(Box::new(high_risk_agents.clone()))
+        registry
+            .register(Box::new(high_risk_agents.clone()))
             .expect("Failed to register high_risk_agents");
-        registry.register(Box::new(uptime_seconds.clone()))
+        registry
+            .register(Box::new(uptime_seconds.clone()))
             .expect("Failed to register uptime_seconds");
-        registry.register(Box::new(events_per_second.clone()))
+        registry
+            .register(Box::new(events_per_second.clone()))
             .expect("Failed to register events_per_second");
 
         Self {
@@ -357,16 +367,12 @@ impl DhiMetrics {
 
     /// Record budget exceeded
     pub fn record_budget_exceeded(&self, agent_id: &str) {
-        self.budget_exceeded
-            .with_label_values(&[agent_id])
-            .inc();
+        self.budget_exceeded.with_label_values(&[agent_id]).inc();
     }
 
     /// Record duplicate prompt
     pub fn record_duplicate_prompt(&self, agent_id: &str) {
-        self.duplicate_prompts
-            .with_label_values(&[agent_id])
-            .inc();
+        self.duplicate_prompts.with_label_values(&[agent_id]).inc();
     }
 
     /// Record tool loop
@@ -414,7 +420,7 @@ mod tests {
     #[test]
     fn test_metrics_creation() {
         let metrics = DhiMetrics::new();
-        
+
         // Record some metrics
         metrics.record_llm_call("openai", "gpt-4", "agent-1", 100, 50, 0.05, 1.5);
         metrics.record_tool_call("web_search", "mcp", "agent-1", false, None);

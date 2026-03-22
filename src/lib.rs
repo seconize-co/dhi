@@ -84,14 +84,8 @@ impl Default for DhiConfig {
             protection_level: ProtectionLevel::Alert,
             max_budget_usd: None,
             max_tokens_per_call: Some(100_000),
-            whitelist_ips: vec![
-                "127.0.0.1".to_string(),
-                "169.254.169.254".to_string(),
-            ],
-            whitelist_files: vec![
-                "/var/log/".to_string(),
-                "/tmp/".to_string(),
-            ],
+            whitelist_ips: vec!["127.0.0.1".to_string(), "169.254.169.254".to_string()],
+            whitelist_files: vec!["/var/log/".to_string(), "/tmp/".to_string()],
             tool_denylist: vec![
                 "sudo".to_string(),
                 "rm -rf".to_string(),
