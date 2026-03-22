@@ -360,7 +360,7 @@ fi
 Add to cron for periodic checks:
 ```bash
 # Check every minute
-* * * * * /usr/local/bin/dhi-health >> /var/log/dhi/health.log 2>&1
+* * * * * /usr/local/bin/dhi-health >> /tmp/log/dhi/health.log 2>&1
 ```
 
 ---
@@ -387,7 +387,7 @@ rate_limit_per_minute = 30
 
 [reporting]
 enabled = true
-output_dir = "/var/log/dhi/reports"
+output_dir = "/tmp/log/dhi/reports"
 daily_report = true
 
 [metrics]
@@ -396,8 +396,12 @@ port = 9090
 
 [logging]
 level = "info"
-file = "/var/log/dhi/dhi.log"
+file = "/tmp/log/dhi/dhi.log"
 ```
+
+Notes:
+- Log/report paths are deployment-specific and fully configurable.
+- Common choices are `/tmp/log/dhi/*` (dev/test) and `/var/log/dhi/*` (hardened production hosts).
 
 ### Environment Variables
 
@@ -415,9 +419,9 @@ export DHI_LOG_LEVEL=info
 
 | File | Content |
 |------|---------|
-| `/var/log/dhi/dhi.log` | Main application log |
-| `/var/log/dhi/reports/daily-*.json` | Daily security reports |
-| `/var/log/dhi/alerts.log` | Alert history |
+| `/tmp/log/dhi/dhi.log` (or `/var/log/dhi/dhi.log`) | Main application log |
+| `/tmp/log/dhi/reports/daily-*.json` (or `/var/log/dhi/reports/daily-*.json`) | Daily security reports |
+| `/tmp/log/dhi/alerts.log` (or `/var/log/dhi/alerts.log`) | Alert history |
 | `journalctl -u dhi` | systemd logs |
 
 ### View Logs
@@ -433,20 +437,20 @@ sudo journalctl -u dhi --since today
 sudo journalctl -u dhi -p warning
 
 # Application log
-tail -f /var/log/dhi/dhi.log
+tail -f /tmp/log/dhi/dhi.log
 ```
 
 ### View Reports
 
 ```bash
 # List reports
-ls -la /var/log/dhi/reports/
+ls -la /tmp/log/dhi/reports/
 
 # View latest daily report
-cat /var/log/dhi/reports/daily-$(date +%Y-%m-%d).json | jq .
+cat /tmp/log/dhi/reports/daily-$(date +%Y-%m-%d).json | jq .
 
 # Summary of today's events
-cat /var/log/dhi/reports/daily-$(date +%Y-%m-%d).json | jq '.summary'
+cat /tmp/log/dhi/reports/daily-$(date +%Y-%m-%d).json | jq '.summary'
 ```
 
 ---

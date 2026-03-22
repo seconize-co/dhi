@@ -220,7 +220,7 @@ detect_extraction = true
 level = "info"
 
 # Log file path (stdout if not set)
-# file = "/var/log/dhi/dhi.log"
+# file = "/tmp/log/dhi/dhi.log"  # or /var/log/dhi/dhi.log
 
 # Log format: "json" or "text"
 format = "text"

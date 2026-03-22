@@ -48,14 +48,14 @@ From `docs/CTO_GUIDE.md`, the 6 primary use cases are:
 
 ### Coverage Matrix (Manual Guide <-> E2E Harness)
 
-| CTO use case | Manual tests in this guide | Automated checks in `scripts/security-e2e.sh` |
+| CTO use case | Manual tests in this guide | Automated checks |
 |---|---|---|
-| 1. Credential leakage | TC-02, TC-05, TC-06, TC-07, TC-09 | `proxy-http-secret-block`, `proxy-http-query-secret-block`, `proxy-http-auth-trusted-allow`, `proxy-http-auth-untrusted-block` in both alert/block suites |
-| 2. PII exfiltration | TC-03, TC-09 | `proxy-http-pii-block` in both alert/block suites |
-| 3. Cost explosion control | TC-11 (demo cost signal), TC-12 (quality gate) | `cargo test --all-features` (budget tests), demo check |
-| 4. Dangerous tools | TC-11 (demo tool allow/deny signal) | demo check (`allowed: false` markers) |
-| 5. Prompt injection | TC-04, TC-10 | `proxy-http-injection-block` in both alert/block suites |
-| 6. Shadow AI visibility | TC-01, TC-13 | monitor endpoint checks (`/health`, `/ready`, `/metrics`, `/api/stats`) |
+| 1. Credential leakage | TC-02, TC-05, TC-06, TC-07, TC-09 | `scripts/security-e2e.sh` proxy vectors + `scripts/copilot-cli-e2e.sh` (`copilot-secret-detection`) |
+| 2. PII exfiltration | TC-03, TC-09 | `scripts/security-e2e.sh` proxy vectors + `scripts/copilot-cli-e2e.sh` (`copilot-pii-detection`) |
+| 3. Cost explosion control | TC-11 (demo cost signal), TC-12 (quality gate) | `scripts/security-e2e.sh` quality gate + demo check |
+| 4. Dangerous tools | TC-11 (demo tool allow/deny signal) | `scripts/security-e2e.sh` demo check |
+| 5. Prompt injection | TC-04, TC-10 | `scripts/security-e2e.sh` proxy vectors + `scripts/copilot-cli-e2e.sh` (`copilot-injection-detection`) |
+| 6. Shadow AI visibility | TC-01, TC-13 | `scripts/security-e2e.sh` monitor endpoint checks + `scripts/copilot-cli-e2e.sh` stats delta checks + `scripts/reporting-e2e.sh` report artifact/schema checks |
 
 This matrix is the parity contract. If a row changes, update both this guide and the e2e harness in the same PR.
 
@@ -480,9 +480,10 @@ Mark PASS/FAIL for each item:
 11. Demo shows tool-risk and LLM cost signals.
 12. Automated harness passes with `Failed: 0`.
 13. Quality gate (`cargo test`, `cargo clippy`) passes.
+14. Reporting harness validates sample schemas and runtime report artifacts (`scripts/reporting-e2e.sh`).
 
 Release recommendation:
-- Announce only if all 13 are PASS in the target release environment.
+- Announce only if all 14 are PASS in the target release environment.
 
 ---
 
@@ -517,3 +518,82 @@ It uses synthetic vectors in `scripts/security-test-vectors.json` and validates:
 2. Demo security signals.
 3. Monitor endpoint readiness/health/metrics/stats.
 4. Build + test + lint quality gate (unless skipped via flags).
+
+For report-focused validation, also run:
+```bash
+scripts/reporting-e2e.sh --reports-dir /tmp/log/dhi/reports
+```
+
+---
+
+## 14. Copilot CLI E2E Automation (Primary eBPF Path)
+
+Use a dedicated script for Copilot CLI/eBPF path coverage:
+```bash
+scripts/copilot-cli-e2e.sh --mode alert \
+  --copilot-run-template 'copilot chat --prompt-file "{prompt_file}"'
+```
+
+Block mode example:
+```bash
+scripts/copilot-cli-e2e.sh --mode block \
+  --dhi-log-file /tmp/log/dhi/dhi.log \
+  --tmp-dir /tmp/log/dhi/tmp \
+  --copilot-run-template 'copilot chat --prompt-file "{prompt_file}"'
+```
+
+What it validates:
+1. Prompt-driven risky traffic through a real Copilot CLI path.
+2. `/api/stats` counter deltas (`alerts`, `blocked`) per testcase.
+3. Optional regex validation against Dhi logs.
+4. Correlation via injected run-id marker (`RUN-<id>`).
+
+Test vectors source:
+- `scripts/copilot-test-vectors.json`
+
+Important:
+1. Start Dhi before running this harness.
+2. Keep using `scripts/security-e2e.sh` for deterministic proxy regression.
+3. Use `scripts/copilot-cli-e2e.sh` for higher-fidelity eBPF/Copilot scenarios.
+
+---
+
+## 15. Test Classification (What This Testing Is Called)
+
+This release strategy combines:
+1. Integration testing: proxy behavior, monitor endpoints, stats/metrics.
+2. End-to-end testing: Dhi + Copilot CLI + eBPF runtime path.
+3. Security/adversarial testing: secret, PII, injection, SSRF vectors.
+4. Policy enforcement testing: alert vs block, and eBPF action semantics.
+5. Release-gate/acceptance testing: consolidated PASS/FAIL criteria before announcement.
+6. Reporting contract testing: report schema and artifact validation (excluding Slack integration).
+
+---
+
+## 16. Reporting E2E Automation (No Slack)
+
+Run:
+```bash
+scripts/reporting-e2e.sh --reports-dir /tmp/log/dhi/reports
+```
+
+Strict mode (fail if runtime reports missing):
+```bash
+scripts/reporting-e2e.sh --reports-dir /tmp/log/dhi/reports --require-runtime-reports
+```
+
+What it validates:
+1. Sample report schema contracts:
+- `examples/sample-report-daily.json`
+- `examples/sample-report-agents.json`
+2. Runtime report artifacts in configured output directory (if present, or required in strict mode).
+3. Reporting endpoints and schema:
+- `/api/stats` status and required counters
+- `/metrics` status and expected Dhi metric keys
+
+Config inputs:
+1. Schema vectors: `scripts/report-test-vectors.json`
+2. Runtime reports dir: `--reports-dir` (default `/tmp/log/dhi/reports`)
+
+Scope note:
+- Slack/webhook payload integration is intentionally excluded from this harness.

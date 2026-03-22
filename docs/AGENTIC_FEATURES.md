@@ -304,7 +304,7 @@ min_severity = "medium"
 
 [reporting]
 enabled = true
-output_dir = "/var/log/dhi/reports"
+output_dir = "/tmp/log/dhi/reports"  # or /var/log/dhi/reports
 daily_report = true
 
 [proxy]  # Only for proxy mode (macOS/Windows)

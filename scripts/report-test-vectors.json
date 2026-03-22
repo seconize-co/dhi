@@ -1,0 +1,52 @@
+{
+  "version": "1.0",
+  "notes": "Schema contract checks for report artifacts (excluding Slack integration).",
+  "schema_tests": [
+    {
+      "id": "sample-daily-report-schema",
+      "file": "examples/sample-report-daily.json",
+      "report_type": "security_summary",
+      "required_top_level": [
+        "report_type",
+        "generated_at",
+        "summary",
+        "alerts_by_severity",
+        "alerts_by_type",
+        "cost_breakdown",
+        "recommendations"
+      ],
+      "required_summary_keys": [
+        "total_agents",
+        "total_llm_calls",
+        "total_tool_calls",
+        "total_cost_usd",
+        "total_alerts",
+        "total_blocks"
+      ]
+    },
+    {
+      "id": "sample-agent-report-schema",
+      "file": "examples/sample-report-agents.json",
+      "report_type": "agent_analysis",
+      "required_top_level": [
+        "report_type",
+        "generated_at",
+        "summary",
+        "framework_distribution",
+        "provider_distribution",
+        "model_usage",
+        "agents",
+        "recommendations"
+      ],
+      "required_summary_keys": [
+        "total_agents_detected",
+        "active_agents_last_hour",
+        "total_sessions",
+        "active_sessions_last_hour",
+        "total_requests",
+        "total_tokens",
+        "estimated_cost_usd"
+      ]
+    }
+  ]
+}
