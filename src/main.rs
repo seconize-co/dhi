@@ -5,9 +5,9 @@
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use dhi::{DhiConfig, DhiRuntime, EbpfBlockAction, ProtectionLevel};
 use dhi::agentic::DhiMetrics;
 use dhi::proxy::ProxyConfig;
+use dhi::{DhiConfig, DhiRuntime, EbpfBlockAction, ProtectionLevel};
 use std::sync::Arc;
 use tracing::{info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
@@ -99,6 +99,18 @@ enum Commands {
 
     /// Show detected agents
     Agents,
+}
+
+fn parse_ebpf_block_action(value: &str) -> EbpfBlockAction {
+    match value.to_lowercase().as_str() {
+        "none" => EbpfBlockAction::None,
+        "term" => EbpfBlockAction::Term,
+        "kill" => EbpfBlockAction::Kill,
+        _ => {
+            warn!("Unknown eBPF block action '{}', using 'kill'", value);
+            EbpfBlockAction::Kill
+        },
+    }
 }
 
 fn print_banner(level: &ProtectionLevel) {
@@ -407,18 +419,7 @@ async fn main() -> Result<()> {
         },
     };
 
-    let ebpf_block_action = match cli.ebpf_block_action.to_lowercase().as_str() {
-        "none" => EbpfBlockAction::None,
-        "term" => EbpfBlockAction::Term,
-        "kill" => EbpfBlockAction::Kill,
-        _ => {
-            warn!(
-                "Unknown eBPF block action '{}', using 'kill'",
-                cli.ebpf_block_action
-            );
-            EbpfBlockAction::Kill
-        }
-    };
+    let ebpf_block_action = parse_ebpf_block_action(&cli.ebpf_block_action);
 
     // Build configuration
     let mut config = if let Some(config_path) = cli.config {
@@ -471,5 +472,23 @@ async fn main() -> Result<()> {
             Ok(())
         },
         Some(Commands::Monitor) | None => run_monitor(config, cli.port, cli.slack_webhook).await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_ebpf_block_action_valid_values() {
+        assert_eq!(parse_ebpf_block_action("none"), EbpfBlockAction::None);
+        assert_eq!(parse_ebpf_block_action("term"), EbpfBlockAction::Term);
+        assert_eq!(parse_ebpf_block_action("kill"), EbpfBlockAction::Kill);
+        assert_eq!(parse_ebpf_block_action("KiLl"), EbpfBlockAction::Kill);
+    }
+
+    #[test]
+    fn test_parse_ebpf_block_action_invalid_defaults_to_kill() {
+        assert_eq!(parse_ebpf_block_action("unexpected"), EbpfBlockAction::Kill);
     }
 }

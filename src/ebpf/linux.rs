@@ -176,43 +176,6 @@ async fn start_ssl_monitor(
             match process_ssl_event(&event, &monitor).await {
                 Ok(true) => {
                     warn!(
-                        "SSL block decision triggered for pid={} comm={}; attempting to terminate process",
-                        event.pid, event.comm
-                    );
-
-                    if let Err(e) = terminate_process(event.pid) {
-                        error!("Failed to enforce SSL block for pid={}: {}", event.pid, e);
-                    }
-                }
-                Ok(false) => {}
-                Err(e) => {
-                    error!("Error processing SSL event: {}", e);
-                }
-            }
-        }
-    });
-
-    // Consume raw events from the ssl_events ring buffer.
-    let Some(ssl_events_map) = bpf.take_map("ssl_events") else {
-        warn!("No ssl_events map found in BPF object; SSL event ingestion disabled");
-        return;
-    };
-    let mut ssl_ring_buf: RingBuf<_> = match ssl_events_map.try_into() {
-        Ok(rb) => rb,
-        Err(e) => {
-            warn!("Failed to convert ssl_events map to RingBuf: {}", e);
-            return;
-        }
-    };
-
-    info!("SSL/TLS interception active - monitoring encrypted traffic");
-
-    loop {
-        if let Some(event_data) = ssl_ring_buf.next() {
-            let data: &[u8] = event_data.as_ref();
-            let header_size = std::mem::size_of::<RawSslEventHeader>();
-            if data.len() < header_size {
-                continue;
                         "SSL block decision triggered for pid={} comm={}; enforcement action={:?}",
                         event.pid, event.comm, block_action
                     );
@@ -220,11 +183,11 @@ async fn start_ssl_monitor(
                     if let Err(e) = enforce_block_action(event.pid, block_action) {
                         error!("Failed to enforce SSL block for pid={}: {}", event.pid, e);
                     }
-                }
-                Ok(false) => {}
+                },
+                Ok(false) => {},
                 Err(e) => {
                     error!("Error processing SSL event: {}", e);
-                }
+                },
             }
         }
     });
@@ -298,13 +261,9 @@ fn enforce_block_action(pid: u32, action: crate::EbpfBlockAction) -> Result<()> 
                 pid
             );
             Ok(())
-        }
-        crate::EbpfBlockAction::Term => {
-            terminate_process_with_signal(pid, "TERM")
-        }
-        crate::EbpfBlockAction::Kill => {
-            terminate_process_with_signal(pid, "KILL")
-        }
+        },
+        crate::EbpfBlockAction::Term => terminate_process_with_signal(pid, "TERM"),
+        crate::EbpfBlockAction::Kill => terminate_process_with_signal(pid, "KILL"),
     }
 }
 
@@ -362,10 +321,10 @@ fn attach_tracepoints(bpf: &mut Bpf, ssl_only_mode: bool) -> Result<usize> {
                     info!("Attached {} to {}/{}", prog_name, category, name);
                     attached += 1;
                 }
-            }
+            },
             None => {
                 debug!("Program {} not found in BPF object", prog_name);
-            }
+            },
         }
     }
 
@@ -633,5 +592,16 @@ async fn start_simulation_mode(runtime: &crate::DhiRuntime) -> Result<()> {
             "Simulation mode active. Events: {}, Alerts: {}",
             stats.total_events, stats.total_alerts
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_enforce_block_action_none_is_non_fatal() {
+        let result = enforce_block_action(std::process::id(), crate::EbpfBlockAction::None);
+        assert!(result.is_ok(), "none action should not attempt signaling");
     }
 }
