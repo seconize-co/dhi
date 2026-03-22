@@ -44,7 +44,7 @@ hex = "0.4"
 reqwest = { version = "0.12", features = ["json"] }
 
 # Metrics
-prometheus = "0.13"
+prometheus = "0.14"
 
 # Configuration
 config = "0.14"
