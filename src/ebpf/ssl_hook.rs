@@ -486,17 +486,16 @@ impl SslMonitor {
             result.risk_score = result.risk_score.max(70);
         }
 
-        // Check for prompt injection (only on writes/requests)
-        if event.direction == SslDirection::Write {
-            let prompt_result = self.prompt_analyzer.analyze(&text);
-            if prompt_result.injection_detected {
-                result.injection_detected = true;
-                result.risk_score = result.risk_score.max(90);
-            }
-            if prompt_result.jailbreak_detected {
-                result.jailbreak_detected = true;
-                result.risk_score = result.risk_score.max(85);
-            }
+        // Copilot traffic is often fragmented across request/response frames.
+        // Analyze both directions so policy decisions don't miss echoed or replayed prompts.
+        let prompt_result = self.prompt_analyzer.analyze(&text);
+        if prompt_result.injection_detected {
+            result.injection_detected = true;
+            result.risk_score = result.risk_score.max(90);
+        }
+        if prompt_result.jailbreak_detected {
+            result.jailbreak_detected = true;
+            result.risk_score = result.risk_score.max(85);
         }
 
         // Check for LLM API patterns
@@ -862,13 +861,20 @@ pub async fn process_ssl_event_with_outcome(
                 }
             },
             ProtectionLevel::Block => {
-                if analysis.risk_score >= 80 {
+                let should_block = analysis.has_secrets
+                    || analysis.injection_detected
+                    || analysis.jailbreak_detected
+                    || analysis.has_pii;
+                if should_block {
                     error!(
                         "[SSL BLOCKED {}] PID={} ({}) LEN={} RISK={}",
                         direction_str, event.pid, event.comm, event.total_len, analysis.risk_score
                     );
                     if analysis.has_secrets {
                         error!("  🔐 BLOCKED - Secrets: {:?}", analysis.secrets_detected);
+                    }
+                    if analysis.has_pii {
+                        error!("  👤 BLOCKED - PII: {:?}", analysis.pii_detected);
                     }
                     if analysis.injection_detected {
                         error!("  💉 BLOCKED - Injection attempt!");
