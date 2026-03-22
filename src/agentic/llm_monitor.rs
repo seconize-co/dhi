@@ -38,29 +38,131 @@ impl LlmMonitor {
         let mut pricing = HashMap::new();
 
         // OpenAI pricing
-        pricing.insert("gpt-4".to_string(), ModelPricing { input: 0.03, output: 0.06 });
-        pricing.insert("gpt-4-turbo".to_string(), ModelPricing { input: 0.01, output: 0.03 });
-        pricing.insert("gpt-4o".to_string(), ModelPricing { input: 0.005, output: 0.015 });
-        pricing.insert("gpt-4o-mini".to_string(), ModelPricing { input: 0.00015, output: 0.0006 });
-        pricing.insert("gpt-3.5-turbo".to_string(), ModelPricing { input: 0.0005, output: 0.0015 });
-        pricing.insert("o1".to_string(), ModelPricing { input: 0.015, output: 0.06 });
-        pricing.insert("o1-mini".to_string(), ModelPricing { input: 0.003, output: 0.012 });
+        pricing.insert(
+            "gpt-4".to_string(),
+            ModelPricing {
+                input: 0.03,
+                output: 0.06,
+            },
+        );
+        pricing.insert(
+            "gpt-4-turbo".to_string(),
+            ModelPricing {
+                input: 0.01,
+                output: 0.03,
+            },
+        );
+        pricing.insert(
+            "gpt-4o".to_string(),
+            ModelPricing {
+                input: 0.005,
+                output: 0.015,
+            },
+        );
+        pricing.insert(
+            "gpt-4o-mini".to_string(),
+            ModelPricing {
+                input: 0.00015,
+                output: 0.0006,
+            },
+        );
+        pricing.insert(
+            "gpt-3.5-turbo".to_string(),
+            ModelPricing {
+                input: 0.0005,
+                output: 0.0015,
+            },
+        );
+        pricing.insert(
+            "o1".to_string(),
+            ModelPricing {
+                input: 0.015,
+                output: 0.06,
+            },
+        );
+        pricing.insert(
+            "o1-mini".to_string(),
+            ModelPricing {
+                input: 0.003,
+                output: 0.012,
+            },
+        );
 
         // Anthropic pricing
-        pricing.insert("claude-3-opus".to_string(), ModelPricing { input: 0.015, output: 0.075 });
-        pricing.insert("claude-3-sonnet".to_string(), ModelPricing { input: 0.003, output: 0.015 });
-        pricing.insert("claude-3-haiku".to_string(), ModelPricing { input: 0.00025, output: 0.00125 });
-        pricing.insert("claude-sonnet-4".to_string(), ModelPricing { input: 0.003, output: 0.015 });
-        pricing.insert("claude-opus-4".to_string(), ModelPricing { input: 0.015, output: 0.075 });
+        pricing.insert(
+            "claude-3-opus".to_string(),
+            ModelPricing {
+                input: 0.015,
+                output: 0.075,
+            },
+        );
+        pricing.insert(
+            "claude-3-sonnet".to_string(),
+            ModelPricing {
+                input: 0.003,
+                output: 0.015,
+            },
+        );
+        pricing.insert(
+            "claude-3-haiku".to_string(),
+            ModelPricing {
+                input: 0.00025,
+                output: 0.00125,
+            },
+        );
+        pricing.insert(
+            "claude-sonnet-4".to_string(),
+            ModelPricing {
+                input: 0.003,
+                output: 0.015,
+            },
+        );
+        pricing.insert(
+            "claude-opus-4".to_string(),
+            ModelPricing {
+                input: 0.015,
+                output: 0.075,
+            },
+        );
 
         // Google pricing
-        pricing.insert("gemini-pro".to_string(), ModelPricing { input: 0.00025, output: 0.0005 });
-        pricing.insert("gemini-1.5-pro".to_string(), ModelPricing { input: 0.0025, output: 0.0075 });
-        pricing.insert("gemini-1.5-flash".to_string(), ModelPricing { input: 0.000075, output: 0.0003 });
+        pricing.insert(
+            "gemini-pro".to_string(),
+            ModelPricing {
+                input: 0.00025,
+                output: 0.0005,
+            },
+        );
+        pricing.insert(
+            "gemini-1.5-pro".to_string(),
+            ModelPricing {
+                input: 0.0025,
+                output: 0.0075,
+            },
+        );
+        pricing.insert(
+            "gemini-1.5-flash".to_string(),
+            ModelPricing {
+                input: 0.000075,
+                output: 0.0003,
+            },
+        );
 
         // Mistral pricing
-        pricing.insert("mistral-large".to_string(), ModelPricing { input: 0.004, output: 0.012 });
-        pricing.insert("mistral-small".to_string(), ModelPricing { input: 0.001, output: 0.003 });
+        pricing.insert(
+            "mistral-large".to_string(),
+            ModelPricing {
+                input: 0.004,
+                output: 0.012,
+            },
+        );
+        pricing.insert(
+            "mistral-small".to_string(),
+            ModelPricing {
+                input: 0.001,
+                output: 0.003,
+            },
+        );
 
         Self {
             pricing,

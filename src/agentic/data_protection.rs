@@ -2,7 +2,7 @@
 //!
 //! Combines secrets detection, PII detection, and auto-redaction.
 
-use super::{PiiDetector, PiiDetectionResult, SecretsDetector, SecretsDetectionResult};
+use super::{PiiDetectionResult, PiiDetector, SecretsDetectionResult, SecretsDetector};
 use serde::{Deserialize, Serialize};
 
 /// Combined data protection result

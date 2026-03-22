@@ -37,10 +37,10 @@ impl HttpServer {
                             error!("Connection error from {}: {}", addr, e);
                         }
                     });
-                }
+                },
                 Err(e) => {
                     error!("Accept error: {}", e);
-                }
+                },
             }
         }
     }
@@ -86,9 +86,17 @@ async fn route_request(
         "/metrics" => {
             let m = metrics.read().await;
             ("200 OK", "text/plain; charset=utf-8", m.gather())
-        }
-        "/health" => ("200 OK", "application/json", r#"{"status":"healthy"}"#.to_string()),
-        "/ready" => ("200 OK", "application/json", r#"{"status":"ready"}"#.to_string()),
+        },
+        "/health" => (
+            "200 OK",
+            "application/json",
+            r#"{"status":"healthy"}"#.to_string(),
+        ),
+        "/ready" => (
+            "200 OK",
+            "application/json",
+            r#"{"status":"ready"}"#.to_string(),
+        ),
         "/" => ("200 OK", "text/html", get_dashboard_html()),
         "/api/stats" => {
             let m = metrics.read().await;
@@ -104,22 +112,16 @@ async fn route_request(
                 .alerts_total
                 .with_label_values(&["warning", "unknown"])
                 .get();
-            let blocked = m
-                .blocks_total
-                .with_label_values(&["unknown"])
-                .get();
+            let blocked = m.blocks_total.with_label_values(&["unknown"]).get();
             (
                 "200 OK",
                 "application/json",
                 format!(
                     r#"{{"llm_calls":{},"tool_calls":{},"alerts":{},"blocked":{}}}"#,
-                    llm_calls,
-                    tool_calls,
-                    alerts,
-                    blocked
+                    llm_calls, tool_calls, alerts, blocked
                 ),
             )
-        }
+        },
         _ => (
             "404 Not Found",
             "application/json",
@@ -208,7 +210,10 @@ curl http://localhost:9090/health
 }
 
 /// Start metrics server
-pub async fn start_metrics_server(addr: &str, metrics: Arc<tokio::sync::RwLock<DhiMetrics>>) -> Result<()> {
+pub async fn start_metrics_server(
+    addr: &str,
+    metrics: Arc<tokio::sync::RwLock<DhiMetrics>>,
+) -> Result<()> {
     let addr: SocketAddr = addr.parse()?;
     let server = HttpServer::new(addr, metrics);
     server.start().await

@@ -198,9 +198,11 @@ impl PiiDetector {
 
             let matches: Vec<_> = pattern.pattern.find_iter(scan_text).collect();
             if !matches.is_empty() {
-                let entry = type_counts
-                    .entry(pattern.pii_type)
-                    .or_insert((0, pattern.severity, Vec::new()));
+                let entry = type_counts.entry(pattern.pii_type).or_insert((
+                    0,
+                    pattern.severity,
+                    Vec::new(),
+                ));
                 entry.0 += matches.len();
                 entry.2.push(location.to_string());
             }
@@ -214,16 +216,16 @@ impl PiiDetector {
                 "critical" => {
                     result.critical_count += count;
                     result.risk_score += count as u32 * 40;
-                }
+                },
                 "high" => {
                     result.risk_score += count as u32 * 25;
-                }
+                },
                 "medium" => {
                     result.risk_score += count as u32 * 15;
-                }
+                },
                 _ => {
                     result.risk_score += count as u32 * 5;
-                }
+                },
             }
 
             result.pii_types.push(DetectedPii {
@@ -329,7 +331,8 @@ mod tests {
     #[test]
     fn test_multiple_pii() {
         let detector = PiiDetector::new();
-        let text = "John Doe, john@example.com, 555-123-4567, SSN: 123-45-6789, Card: 4532015112830366";
+        let text =
+            "John Doe, john@example.com, 555-123-4567, SSN: 123-45-6789, Card: 4532015112830366";
         let result = detector.scan(text, "customer_record");
 
         assert!(result.pii_found);

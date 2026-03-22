@@ -203,7 +203,7 @@ impl SecretsDetector {
     }
 
     /// Scan text for secrets
-    /// 
+    ///
     /// Input is limited to MAX_SCAN_SIZE (1MB) to prevent ReDoS attacks.
     pub fn scan(&self, text: &str, location: &str) -> SecretsDetectionResult {
         let mut result = SecretsDetectionResult {
@@ -269,11 +269,7 @@ impl SecretsDetector {
         if len <= 8 {
             "*".repeat(len)
         } else {
-            format!(
-                "{}...{}",
-                &secret[..4],
-                &secret[len - 4..]
-            )
+            format!("{}...{}", &secret[..4], &secret[len - 4..])
         }
     }
 
@@ -308,9 +304,12 @@ mod tests {
         let detector = SecretsDetector::new();
         let text = "My API key is sk-proj-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let result = detector.scan(text, "prompt");
-        
+
         assert!(result.secrets_found);
-        assert!(result.secrets.iter().any(|s| s.secret_type.contains("OpenAI")));
+        assert!(result
+            .secrets
+            .iter()
+            .any(|s| s.secret_type.contains("OpenAI")));
     }
 
     #[test]
@@ -318,7 +317,7 @@ mod tests {
         let detector = SecretsDetector::new();
         let text = "AWS key: AKIAIOSFODNN7EXAMPLE";
         let result = detector.scan(text, "config");
-        
+
         assert!(result.secrets_found);
         assert!(result.secrets.iter().any(|s| s.secret_type.contains("AWS")));
     }
@@ -328,7 +327,7 @@ mod tests {
         let detector = SecretsDetector::new();
         let text = "Connect to postgres://user:password123@localhost:5432/mydb";
         let result = detector.scan(text, "env");
-        
+
         assert!(result.secrets_found);
         assert!(result.critical_count > 0);
     }
@@ -337,7 +336,7 @@ mod tests {
     fn test_redaction() {
         let detector = SecretsDetector::new();
         let (sanitized, _) = detector.scan_and_redact("Use AKIAIOSFODNN7EXAMPLE for AWS");
-        
+
         assert!(sanitized.contains("[REDACTED]"));
         assert!(!sanitized.contains("AKIAIOSFODNN7EXAMPLE"));
     }
@@ -346,11 +345,14 @@ mod tests {
     fn test_allowlist() {
         let mut detector = SecretsDetector::new();
         detector.add_allowlist(r"sk_test_.*").unwrap();
-        
+
         let text = "Stripe test key: sk_test_1234567890abcdefghij";
         let result = detector.scan(text, "config");
-        
+
         // Test keys should be allowlisted
-        assert!(!result.secrets.iter().any(|s| s.secret_type == "Stripe Test Key"));
+        assert!(!result
+            .secrets
+            .iter()
+            .any(|s| s.secret_type == "Stripe Test Key"));
     }
 }

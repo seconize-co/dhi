@@ -41,10 +41,10 @@ mod tests {
     fn test_find_ssl_libraries() {
         // This test runs on any platform - may find libraries or not
         let libs = find_ssl_libraries();
-        
+
         // Just verify it doesn't panic
         println!("Found {} SSL libraries on this system", libs.len());
-        
+
         for lib in &libs {
             println!("  {:?} at {}", lib.library, lib.path.display());
         }
@@ -53,9 +53,9 @@ mod tests {
     #[test]
     fn test_library_probe_openssl() {
         use std::path::PathBuf;
-        
+
         let probe = LibraryProbe::openssl(PathBuf::from("/usr/lib/libssl.so"));
-        
+
         assert_eq!(probe.library, SslLibrary::OpenSSL);
         assert_eq!(probe.read_symbol, "SSL_read");
         assert_eq!(probe.write_symbol, "SSL_write");
@@ -66,9 +66,9 @@ mod tests {
     #[test]
     fn test_library_probe_boringssl() {
         use std::path::PathBuf;
-        
+
         let probe = LibraryProbe::boringssl(PathBuf::from("/opt/chrome/libssl.so"));
-        
+
         assert_eq!(probe.library, SslLibrary::BoringSSL);
         assert_eq!(probe.read_symbol, "SSL_read");
         assert_eq!(probe.write_symbol, "SSL_write");
@@ -80,9 +80,9 @@ mod tests {
     #[test]
     fn test_library_probe_gnutls() {
         use std::path::PathBuf;
-        
+
         let probe = LibraryProbe::gnutls(PathBuf::from("/usr/lib/libgnutls.so"));
-        
+
         assert_eq!(probe.library, SslLibrary::GnuTLS);
         assert_eq!(probe.read_symbol, "gnutls_record_recv");
         assert_eq!(probe.write_symbol, "gnutls_record_send");
@@ -94,7 +94,7 @@ mod tests {
     async fn test_ssl_monitor_creation() {
         let (tx, _rx) = mpsc::channel(100);
         let monitor = SslMonitor::new(tx, crate::ProtectionLevel::Alert);
-        
+
         // Verify monitor is created and can get stats
         let stats = monitor.get_connection_stats().await;
         assert!(stats.is_empty(), "New monitor should have no connections");
@@ -104,7 +104,7 @@ mod tests {
     async fn test_ssl_monitor_analyze_clean_event() {
         let (tx, _rx) = mpsc::channel(100);
         let monitor = SslMonitor::new(tx, crate::ProtectionLevel::Alert);
-        
+
         let event = SslEvent {
             pid: 1234,
             tid: 1234,
@@ -116,18 +116,24 @@ mod tests {
             timestamp_ns: 0,
             ssl_ptr: 0x12345678,
         };
-        
+
         let result = monitor.analyze_event(&event).await;
-        
-        assert!(!result.has_secrets, "Clean HTTP request should have no secrets");
-        assert!(!result.injection_detected, "Clean request should have no injection");
+
+        assert!(
+            !result.has_secrets,
+            "Clean HTTP request should have no secrets"
+        );
+        assert!(
+            !result.injection_detected,
+            "Clean request should have no injection"
+        );
     }
 
     #[tokio::test]
     async fn test_ssl_monitor_detect_secret_in_request() {
         let (tx, _rx) = mpsc::channel(100);
         let monitor = SslMonitor::new(tx, crate::ProtectionLevel::Alert);
-        
+
         // Simulate a request containing a generic API key pattern
         let event = SslEvent {
             pid: 1234,
@@ -140,18 +146,21 @@ mod tests {
             timestamp_ns: 0,
             ssl_ptr: 0x12345678,
         };
-        
+
         let result = monitor.analyze_event(&event).await;
-        
+
         // Should detect the API key pattern
-        assert!(result.risk_score > 0, "Request with API key should have risk score");
+        assert!(
+            result.risk_score > 0,
+            "Request with API key should have risk score"
+        );
     }
 
     #[tokio::test]
     async fn test_ssl_monitor_detect_pii_in_response() {
         let (tx, _rx) = mpsc::channel(100);
         let monitor = SslMonitor::new(tx, crate::ProtectionLevel::Alert);
-        
+
         // Simulate a response containing PII
         let event = SslEvent {
             pid: 1234,
@@ -164,18 +173,21 @@ mod tests {
             timestamp_ns: 0,
             ssl_ptr: 0x12345678,
         };
-        
+
         let result = monitor.analyze_event(&event).await;
-        
+
         // Should detect PII
-        assert!(result.has_pii || result.risk_score > 0, "Response with PII should be flagged");
+        assert!(
+            result.has_pii || result.risk_score > 0,
+            "Response with PII should be flagged"
+        );
     }
 
     #[tokio::test]
     async fn test_ssl_monitor_detect_injection_in_prompt() {
         let (tx, _rx) = mpsc::channel(100);
         let monitor = SslMonitor::new(tx, crate::ProtectionLevel::Alert);
-        
+
         // Simulate a prompt injection attempt
         let event = SslEvent {
             pid: 1234,
@@ -188,19 +200,21 @@ mod tests {
             timestamp_ns: 0,
             ssl_ptr: 0x12345678,
         };
-        
+
         let result = monitor.analyze_event(&event).await;
-        
+
         // Should detect injection attempt
-        assert!(result.injection_detected || result.risk_score > 50, 
-            "Injection attempt should be detected");
+        assert!(
+            result.injection_detected || result.risk_score > 50,
+            "Injection attempt should be detected"
+        );
     }
 
     #[tokio::test]
     async fn test_ssl_monitor_detect_llm_traffic() {
         let (tx, _rx) = mpsc::channel(100);
         let monitor = SslMonitor::new(tx, crate::ProtectionLevel::Alert);
-        
+
         // Simulate OpenAI API request
         let event = SslEvent {
             pid: 1234,
@@ -208,22 +222,26 @@ mod tests {
             uid: 1000,
             comm: "python".to_string(),
             direction: SslDirection::Write,
-            data: br#"{"model": "gpt-4", "messages": [{"role": "user", "content": "Hello"}]}"#.to_vec(),
+            data: br#"{"model": "gpt-4", "messages": [{"role": "user", "content": "Hello"}]}"#
+                .to_vec(),
             total_len: 70,
             timestamp_ns: 0,
             ssl_ptr: 0x12345678,
         };
-        
+
         let result = monitor.analyze_event(&event).await;
-        
-        assert!(result.is_llm_traffic, "OpenAI API request should be detected as LLM traffic");
+
+        assert!(
+            result.is_llm_traffic,
+            "OpenAI API request should be detected as LLM traffic"
+        );
     }
 
     #[tokio::test]
     async fn test_ssl_monitor_binary_data() {
         let (tx, _rx) = mpsc::channel(100);
         let monitor = SslMonitor::new(tx, crate::ProtectionLevel::Alert);
-        
+
         // Simulate binary data (not UTF-8)
         let event = SslEvent {
             pid: 1234,
@@ -236,9 +254,9 @@ mod tests {
             timestamp_ns: 0,
             ssl_ptr: 0x12345678,
         };
-        
+
         let result = monitor.analyze_event(&event).await;
-        
+
         // Binary data should return default (no analysis)
         assert!(!result.has_secrets);
         assert!(!result.has_pii);
@@ -249,9 +267,9 @@ mod tests {
     async fn test_ssl_monitor_connection_tracking() {
         let (tx, _rx) = mpsc::channel(100);
         let monitor = SslMonitor::new(tx, crate::ProtectionLevel::Alert);
-        
+
         let ssl_ptr = 0xABCD1234u64;
-        
+
         // Simulate multiple operations on same connection
         for i in 0..5 {
             let raw = RawSslEvent {
@@ -265,13 +283,13 @@ mod tests {
                 comm: [0; 16],
                 data: [0; 16384],
             };
-            
+
             let _ = monitor.process_raw_event(&raw).await;
         }
-        
+
         let stats = monitor.get_connection_stats().await;
         assert_eq!(stats.len(), 1, "Should track one connection");
-        
+
         let conn = &stats[0];
         assert!(conn.write_count > 0 || conn.read_count > 0);
     }
@@ -280,7 +298,7 @@ mod tests {
     async fn test_ssl_monitor_multiple_connections() {
         let (tx, _rx) = mpsc::channel(100);
         let monitor = SslMonitor::new(tx, crate::ProtectionLevel::Alert);
-        
+
         // Simulate 3 different SSL connections
         for conn_id in 0..3 {
             let raw = RawSslEvent {
@@ -294,10 +312,10 @@ mod tests {
                 comm: [0; 16],
                 data: [0; 16384],
             };
-            
+
             let _ = monitor.process_raw_event(&raw).await;
         }
-        
+
         let stats = monitor.get_connection_stats().await;
         assert_eq!(stats.len(), 3, "Should track three connections");
     }
@@ -307,7 +325,7 @@ mod tests {
     #[test]
     fn test_ssl_analysis_result_default() {
         let result = SslAnalysisResult::default();
-        
+
         assert!(!result.has_secrets);
         assert!(!result.has_pii);
         assert!(!result.injection_detected);
@@ -324,7 +342,7 @@ mod tests {
     fn test_raw_ssl_event_size() {
         // Verify struct size is as expected
         let size = std::mem::size_of::<RawSslEvent>();
-        
+
         // Should be: 4 + 4 + 4 + 8 + 8 + 1 + 4 + 16 + 16384 = 16433 bytes
         // (with alignment, may be slightly more)
         assert!(size >= 16433, "RawSslEvent should be at least 16KB");
@@ -337,7 +355,7 @@ mod tests {
     async fn test_process_ssl_event_log_level() {
         let (tx, _rx) = mpsc::channel(100);
         let monitor = SslMonitor::new(tx, crate::ProtectionLevel::Log);
-        
+
         let event = SslEvent {
             pid: 1234,
             tid: 1234,
@@ -349,9 +367,9 @@ mod tests {
             timestamp_ns: 0,
             ssl_ptr: 0x1234,
         };
-        
+
         let blocked = process_ssl_event(&event, &monitor).await;
-        
+
         assert!(blocked.is_ok());
         assert!(!blocked.unwrap(), "Log level should not block");
     }
@@ -360,7 +378,7 @@ mod tests {
     async fn test_process_ssl_event_block_level() {
         let (tx, _rx) = mpsc::channel(100);
         let monitor = SslMonitor::new(tx, crate::ProtectionLevel::Block);
-        
+
         // Event with high-risk content
         let event = SslEvent {
             pid: 1234,
@@ -373,9 +391,9 @@ mod tests {
             timestamp_ns: 0,
             ssl_ptr: 0x1234,
         };
-        
+
         let blocked = process_ssl_event(&event, &monitor).await;
-        
+
         assert!(blocked.is_ok());
         // May or may not block depending on detection
     }
@@ -386,7 +404,7 @@ mod tests {
     async fn test_ssl_monitor_empty_data() {
         let (tx, _rx) = mpsc::channel(100);
         let monitor = SslMonitor::new(tx, crate::ProtectionLevel::Alert);
-        
+
         let event = SslEvent {
             pid: 1234,
             tid: 1234,
@@ -398,9 +416,9 @@ mod tests {
             timestamp_ns: 0,
             ssl_ptr: 0x1234,
         };
-        
+
         let result = monitor.analyze_event(&event).await;
-        
+
         // Empty data should return default
         assert_eq!(result.risk_score, 0);
     }
@@ -409,10 +427,10 @@ mod tests {
     async fn test_ssl_monitor_large_data() {
         let (tx, _rx) = mpsc::channel(100);
         let monitor = SslMonitor::new(tx, crate::ProtectionLevel::Alert);
-        
+
         // Create max size data (16KB)
         let large_data = "x".repeat(16384);
-        
+
         let event = SslEvent {
             pid: 1234,
             tid: 1234,
@@ -424,7 +442,7 @@ mod tests {
             timestamp_ns: 0,
             ssl_ptr: 0x1234,
         };
-        
+
         // Should handle without panic
         let result = monitor.analyze_event(&event).await;
         assert!(!result.has_secrets);
@@ -434,7 +452,7 @@ mod tests {
     async fn test_ssl_monitor_cleanup() {
         let (tx, _rx) = mpsc::channel(100);
         let monitor = SslMonitor::new(tx, crate::ProtectionLevel::Alert);
-        
+
         // Add a connection with old timestamp
         let old_raw = RawSslEvent {
             pid: 1234,
@@ -448,10 +466,10 @@ mod tests {
             data: [0; 16384],
         };
         let _ = monitor.process_raw_event(&old_raw).await;
-        
+
         // Cleanup with max age of 1 second (in nanoseconds)
         monitor.cleanup_old_connections(1_000_000_000).await;
-        
+
         let stats = monitor.get_connection_stats().await;
         // Old connection should be cleaned up
         assert!(stats.is_empty() || stats.iter().all(|c| c.first_seen > 1000));

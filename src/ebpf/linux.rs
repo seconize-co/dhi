@@ -73,13 +73,15 @@ pub async fn start_monitor(runtime: &crate::DhiRuntime) -> Result<()> {
     // Check if BPF program exists for syscall monitoring
     let bpf_path = std::path::Path::new(BPF_PROGRAM_PATH);
     if !bpf_path.exists() {
-        warn!("BPF program not found at {}. Running in simulation mode.", BPF_PROGRAM_PATH);
+        warn!(
+            "BPF program not found at {}. Running in simulation mode.",
+            BPF_PROGRAM_PATH
+        );
         return start_simulation_mode(runtime).await;
     }
 
     // Load BPF program
-    let mut bpf = Bpf::load_file(bpf_path)
-        .context("Failed to load BPF program")?;
+    let mut bpf = Bpf::load_file(bpf_path).context("Failed to load BPF program")?;
 
     // Attach syscall tracepoints if present.
     // Some deployments ship SSL-only BPF objects (no syscall programs/maps).
@@ -118,10 +120,10 @@ pub async fn start_monitor(runtime: &crate::DhiRuntime) -> Result<()> {
         match event {
             EbpfEvent::File(file_event) => {
                 process_file_event(&file_event, runtime, protection_level).await;
-            }
+            },
             EbpfEvent::Network(network_event) => {
                 process_network_event(&network_event, runtime, protection_level).await;
-            }
+            },
         }
     }
 
@@ -147,7 +149,7 @@ async fn start_ssl_monitor(protection_level: crate::ProtectionLevel) {
                 BPF_PROGRAM_PATH, e
             );
             return;
-        }
+        },
     };
 
     // Start the tracer and attach SSL probes.
@@ -156,7 +158,7 @@ async fn start_ssl_monitor(protection_level: crate::ProtectionLevel) {
         Err(e) => {
             warn!("Failed to start SSL tracer: {}", e);
             return;
-        }
+        },
     };
     if attached == 0 {
         warn!("No SSL uprobes were attached. SSL tracing disabled.");
@@ -182,7 +184,7 @@ async fn start_ssl_monitor(protection_level: crate::ProtectionLevel) {
         Err(e) => {
             warn!("Failed to convert ssl_events map to RingBuf: {}", e);
             return;
-        }
+        },
     };
 
     info!("SSL/TLS interception active - monitoring encrypted traffic");
@@ -260,15 +262,18 @@ fn attach_tracepoints(bpf: &mut Bpf, ssl_only_mode: bool) -> Result<usize> {
                     continue;
                 }
                 if let Err(e) = tracepoint.attach(category, name) {
-                    warn!("Failed to attach {} to {}/{}: {}", prog_name, category, name, e);
+                    warn!(
+                        "Failed to attach {} to {}/{}: {}",
+                        prog_name, category, name, e
+                    );
                 } else {
                     info!("Attached {} to {}/{}", prog_name, category, name);
                     attached += 1;
                 }
-            }
+            },
             None => {
                 debug!("Program {} not found in BPF object", prog_name);
-            }
+            },
         }
     }
 
@@ -287,7 +292,7 @@ async fn read_events(mut ring_buf: RingBuf<aya::maps::MapData>, tx: mpsc::Sender
         if let Some(event_data) = ring_buf.next() {
             // Parse event based on size
             let data = event_data.as_ref();
-            
+
             if data.len() >= std::mem::size_of::<RawFileEvent>() {
                 // Try to parse as file event
                 if let Some(file_event) = parse_file_event(data) {
@@ -296,7 +301,7 @@ async fn read_events(mut ring_buf: RingBuf<aya::maps::MapData>, tx: mpsc::Sender
                     }
                 }
             }
-            
+
             if data.len() >= std::mem::size_of::<RawNetworkEvent>() {
                 // Try to parse as network event
                 if let Some(network_event) = parse_network_event(data) {
@@ -306,7 +311,7 @@ async fn read_events(mut ring_buf: RingBuf<aya::maps::MapData>, tx: mpsc::Sender
                 }
             }
         }
-        
+
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
     }
 }
@@ -403,13 +408,13 @@ async fn process_file_event(
                     "[FILE] PID={} ({}) UID={} FILE={} FLAGS={}",
                     event.pid, event.comm, event.uid, event.filename, event.flags
                 );
-            }
+            },
             crate::ProtectionLevel::Alert => {
                 warn!(
                     "[SUSPICIOUS FILE] PID={} ({}) UID={} FILE={} FLAGS={}",
                     event.pid, event.comm, event.uid, event.filename, event.flags
                 );
-            }
+            },
             crate::ProtectionLevel::Block => {
                 error!(
                     "[BLOCKED FILE] PID={} ({}) UID={} FILE={} FLAGS={}",
@@ -417,7 +422,7 @@ async fn process_file_event(
                 );
                 stats.total_blocks += 1;
                 // In production, would use eBPF return codes to block
-            }
+            },
         }
     }
 }
@@ -461,28 +466,35 @@ async fn process_network_event(
                     "[NETWORK] PID={} ({}) DEST={}:{} BYTES={}",
                     event.pid, event.comm, daddr_str, event.dport, event.bytes_sent
                 );
-            }
+            },
             crate::ProtectionLevel::Alert => {
                 warn!(
                     "[EXFILTRATION RISK] PID={} ({}) DEST={}:{} BYTES={}",
                     event.pid, event.comm, daddr_str, event.dport, event.bytes_sent
                 );
-            }
+            },
             crate::ProtectionLevel::Block => {
                 error!(
                     "[BLOCKED EXFILTRATION] PID={} ({}) DEST={}:{} BYTES={}",
                     event.pid, event.comm, daddr_str, event.dport, event.bytes_sent
                 );
                 stats.total_blocks += 1;
-            }
+            },
         }
     }
 }
 
 /// Check if file operation is suspicious
 fn is_suspicious_file_operation(event: &FileEvent) -> bool {
-    let sensitive_paths = ["/etc/", "/.ssh/", "/root/", "/home/", ".bashrc", ".bash_history"];
-    
+    let sensitive_paths = [
+        "/etc/",
+        "/.ssh/",
+        "/root/",
+        "/home/",
+        ".bashrc",
+        ".bash_history",
+    ];
+
     for path in sensitive_paths {
         if event.filename.contains(path) {
             return true;
@@ -501,7 +513,7 @@ fn is_suspicious_file_operation(event: &FileEvent) -> bool {
 fn is_suspicious_network_activity(event: &NetworkEvent) -> bool {
     // Suspicious ports
     let suspicious_ports = [4444, 5555, 6666, 6667, 8888, 9999];
-    
+
     if suspicious_ports.contains(&event.dport) {
         return true;
     }
@@ -523,7 +535,7 @@ async fn start_simulation_mode(runtime: &crate::DhiRuntime) -> Result<()> {
     // Just keep the task alive
     loop {
         tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
-        
+
         let stats = runtime.stats.read().await;
         info!(
             "Simulation mode active. Events: {}, Alerts: {}",

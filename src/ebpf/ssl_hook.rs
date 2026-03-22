@@ -14,7 +14,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, warn};
 
-use crate::agentic::{PiiDetector, SecretsDetector, PromptSecurityAnalyzer};
+use crate::agentic::{PiiDetector, PromptSecurityAnalyzer, SecretsDetector};
 use crate::ProtectionLevel;
 
 /// Maximum data capture size per SSL operation (16KB - typical TLS record size)
@@ -216,10 +216,7 @@ pub struct SslConnectionInfo {
 
 impl SslMonitor {
     /// Create a new SSL monitor
-    pub fn new(
-        event_tx: mpsc::Sender<SslEvent>,
-        protection_level: ProtectionLevel,
-    ) -> Self {
+    pub fn new(event_tx: mpsc::Sender<SslEvent>, protection_level: ProtectionLevel) -> Self {
         Self {
             connections: Arc::new(RwLock::new(HashMap::new())),
             event_tx,
@@ -253,8 +250,9 @@ impl SslMonitor {
         // Update connection tracking
         {
             let mut connections = self.connections.write().await;
-            let conn = connections.entry(raw.ssl_ptr).or_insert_with(|| {
-                SslConnectionInfo {
+            let conn = connections
+                .entry(raw.ssl_ptr)
+                .or_insert_with(|| SslConnectionInfo {
                     pid: raw.pid,
                     comm: comm.clone(),
                     first_seen: raw.timestamp_ns,
@@ -262,18 +260,17 @@ impl SslMonitor {
                     bytes_read: 0,
                     write_count: 0,
                     read_count: 0,
-                }
-            });
+                });
 
             match direction {
                 SslDirection::Write => {
                     conn.bytes_written += data_len as u64;
                     conn.write_count += 1;
-                }
+                },
                 SslDirection::Read => {
                     conn.bytes_read += data_len as u64;
                     conn.read_count += 1;
-                }
+                },
             }
         }
 
@@ -304,7 +301,7 @@ impl SslMonitor {
             Err(_) => {
                 // Binary data - could be encrypted or non-text protocol
                 return SslAnalysisResult::default();
-            }
+            },
         };
 
         let mut result = SslAnalysisResult::default();
@@ -324,11 +321,7 @@ impl SslMonitor {
         // Detect PII
         let pii = self.pii_detector.scan(&text, "ssl");
         if pii.pii_found {
-            result.pii_detected = pii
-                .pii_types
-                .iter()
-                .map(|p| p.pii_type.clone())
-                .collect();
+            result.pii_detected = pii.pii_types.iter().map(|p| p.pii_type.clone()).collect();
             result.has_pii = true;
             result.risk_score = result.risk_score.max(70);
         }
@@ -394,10 +387,7 @@ pub struct SslTracer {
 #[cfg(target_os = "linux")]
 impl SslTracer {
     /// Create a new SSL tracer
-    pub fn new(
-        event_tx: mpsc::Sender<SslEvent>,
-        protection_level: ProtectionLevel,
-    ) -> Self {
+    pub fn new(event_tx: mpsc::Sender<SslEvent>, protection_level: ProtectionLevel) -> Self {
         let libraries = find_ssl_libraries();
         let monitor = Arc::new(SslMonitor::new(event_tx, protection_level));
 
@@ -433,18 +423,54 @@ impl SslTracer {
 
         match lib.library {
             SslLibrary::OpenSSL | SslLibrary::BoringSSL | SslLibrary::LibreSSL => {
-                attached += attach_uprobe_program(bpf, "uprobe_ssl_write", Some(lib.write_symbol), 0, lib_path)?;
-                attached += attach_uprobe_program(bpf, "uprobe_ssl_read_entry", Some(lib.read_symbol), 0, lib_path)?;
-                attached += attach_uprobe_program(bpf, "uretprobe_ssl_read", Some(lib.read_symbol), 0, lib_path)?;
+                attached += attach_uprobe_program(
+                    bpf,
+                    "uprobe_ssl_write",
+                    Some(lib.write_symbol),
+                    0,
+                    lib_path,
+                )?;
+                attached += attach_uprobe_program(
+                    bpf,
+                    "uprobe_ssl_read_entry",
+                    Some(lib.read_symbol),
+                    0,
+                    lib_path,
+                )?;
+                attached += attach_uprobe_program(
+                    bpf,
+                    "uretprobe_ssl_read",
+                    Some(lib.read_symbol),
+                    0,
+                    lib_path,
+                )?;
 
                 if let Some(write_ex) = lib.write_ex_symbol {
-                    attached += attach_uprobe_program(bpf, "uprobe_ssl_write_ex", Some(write_ex), 0, lib_path)?;
+                    attached += attach_uprobe_program(
+                        bpf,
+                        "uprobe_ssl_write_ex",
+                        Some(write_ex),
+                        0,
+                        lib_path,
+                    )?;
                 }
                 if let Some(read_ex) = lib.read_ex_symbol {
-                    attached += attach_uprobe_program(bpf, "uprobe_ssl_read_ex_entry", Some(read_ex), 0, lib_path)?;
-                    attached += attach_uprobe_program(bpf, "uretprobe_ssl_read_ex", Some(read_ex), 0, lib_path)?;
+                    attached += attach_uprobe_program(
+                        bpf,
+                        "uprobe_ssl_read_ex_entry",
+                        Some(read_ex),
+                        0,
+                        lib_path,
+                    )?;
+                    attached += attach_uprobe_program(
+                        bpf,
+                        "uretprobe_ssl_read_ex",
+                        Some(read_ex),
+                        0,
+                        lib_path,
+                    )?;
                 }
-            }
+            },
             SslLibrary::GnuTLS => {
                 attached += attach_uprobe_program(
                     bpf,
@@ -467,7 +493,7 @@ impl SslTracer {
                     0,
                     lib_path,
                 )?;
-            }
+            },
         }
 
         Ok(attached)
@@ -494,11 +520,11 @@ fn attach_uprobe_program(
 
     let uprobe: &mut UProbe = program.try_into()?;
     match uprobe.load() {
-        Ok(()) | Err(ProgramError::AlreadyLoaded) => {}
+        Ok(()) | Err(ProgramError::AlreadyLoaded) => {},
         Err(e) => {
             warn!("Failed to load uprobe program {}: {}", program_name, e);
             return Ok(0);
-        }
+        },
     }
 
     match uprobe.attach(symbol, offset, target, None) {
@@ -510,7 +536,7 @@ fn attach_uprobe_program(
                 symbol.unwrap_or("<offset>")
             );
             Ok(1)
-        }
+        },
         Err(ProgramError::AlreadyAttached) => Ok(0),
         Err(e) => {
             warn!(
@@ -521,15 +547,12 @@ fn attach_uprobe_program(
                 e
             );
             Ok(0)
-        }
+        },
     }
 }
 
 /// Process captured SSL event and take action
-pub async fn process_ssl_event(
-    event: &SslEvent,
-    monitor: &SslMonitor,
-) -> Result<bool> {
+pub async fn process_ssl_event(event: &SslEvent, monitor: &SslMonitor) -> Result<bool> {
     let analysis = monitor.analyze_event(event).await;
     debug!(
         "SSL analysis: pid={} dir={:?} len={} risk={} secrets={} pii={} inj={} jb={}",
@@ -562,7 +585,7 @@ pub async fn process_ssl_event(
                 if analysis.has_pii {
                     info!("  PII: {:?}", analysis.pii_detected);
                 }
-            }
+            },
             ProtectionLevel::Alert => {
                 if analysis.risk_score >= 50 {
                     warn!(
@@ -579,7 +602,7 @@ pub async fn process_ssl_event(
                         warn!("  💉 Prompt injection detected!");
                     }
                 }
-            }
+            },
             ProtectionLevel::Block => {
                 if analysis.risk_score >= 80 {
                     error!(
@@ -595,7 +618,7 @@ pub async fn process_ssl_event(
                     // Return true to indicate blocking
                     return Ok(true);
                 }
-            }
+            },
         }
     }
 

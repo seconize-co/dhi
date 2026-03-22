@@ -2,11 +2,11 @@
 //!
 //! Enforces spending limits on LLM API calls.
 
+use chrono::Datelike;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::RwLock;
 use tracing::{info, warn};
-use chrono::Datelike;
 
 /// Budget limit configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,19 +86,19 @@ impl AgentSpending {
 pub struct BudgetController {
     /// Global limits
     global_limit: RwLock<BudgetLimit>,
-    
+
     /// Per-agent limits
     agent_limits: RwLock<HashMap<String, BudgetLimit>>,
-    
+
     /// Spending tracking
     spending: RwLock<HashMap<String, AgentSpending>>,
-    
+
     /// Global spending
     global_spending: RwLock<AgentSpending>,
-    
+
     /// Warning threshold (percentage)
     warning_threshold: f64,
-    
+
     /// Action on limit exceeded
     action_on_exceeded: BudgetAction,
 }
@@ -131,7 +131,10 @@ impl BudgetController {
     /// Set global budget limit
     pub fn set_global_limit(&self, limit: BudgetLimit) {
         if let Ok(mut global) = self.global_limit.write() {
-            info!("Global budget set: ${}/day, ${}/month", limit.daily_usd, limit.monthly_usd);
+            info!(
+                "Global budget set: ${}/day, ${}/month",
+                limit.daily_usd, limit.monthly_usd
+            );
             *global = limit;
         }
     }
@@ -139,8 +142,10 @@ impl BudgetController {
     /// Set per-agent budget limit
     pub fn set_agent_limit(&self, agent_id: &str, limit: BudgetLimit) {
         if let Ok(mut limits) = self.agent_limits.write() {
-            info!("Agent {} budget set: ${}/day, ${}/month", 
-                  agent_id, limit.daily_usd, limit.monthly_usd);
+            info!(
+                "Agent {} budget set: ${}/day, ${}/month",
+                agent_id, limit.daily_usd, limit.monthly_usd
+            );
             limits.insert(agent_id.to_string(), limit);
         }
     }
@@ -157,37 +162,45 @@ impl BudgetController {
         // Get locks - if poisoned, return a safe default (deny)
         let global_limit = match self.global_limit.read() {
             Ok(g) => g,
-            Err(_) => return BudgetCheckResult {
-                allowed: false,
-                reason: Some("Internal error: lock poisoned".to_string()),
-                status: BudgetStatus::default(),
+            Err(_) => {
+                return BudgetCheckResult {
+                    allowed: false,
+                    reason: Some("Internal error: lock poisoned".to_string()),
+                    status: BudgetStatus::default(),
+                }
             },
         };
-        
+
         let agent_limits = match self.agent_limits.read() {
             Ok(a) => a,
-            Err(_) => return BudgetCheckResult {
-                allowed: false,
-                reason: Some("Internal error: lock poisoned".to_string()),
-                status: BudgetStatus::default(),
+            Err(_) => {
+                return BudgetCheckResult {
+                    allowed: false,
+                    reason: Some("Internal error: lock poisoned".to_string()),
+                    status: BudgetStatus::default(),
+                }
             },
         };
-        
+
         let spending = match self.spending.read() {
             Ok(s) => s,
-            Err(_) => return BudgetCheckResult {
-                allowed: false,
-                reason: Some("Internal error: lock poisoned".to_string()),
-                status: BudgetStatus::default(),
+            Err(_) => {
+                return BudgetCheckResult {
+                    allowed: false,
+                    reason: Some("Internal error: lock poisoned".to_string()),
+                    status: BudgetStatus::default(),
+                }
             },
         };
-        
+
         let global_spending = match self.global_spending.read() {
             Ok(g) => g,
-            Err(_) => return BudgetCheckResult {
-                allowed: false,
-                reason: Some("Internal error: lock poisoned".to_string()),
-                status: BudgetStatus::default(),
+            Err(_) => {
+                return BudgetCheckResult {
+                    allowed: false,
+                    reason: Some("Internal error: lock poisoned".to_string()),
+                    status: BudgetStatus::default(),
+                }
             },
         };
 
@@ -266,7 +279,9 @@ impl BudgetController {
 
             // Check for warnings
             if let Ok(limit) = self.global_limit.read() {
-                if limit.daily_usd > 0.0 && agent_spend.daily_total / limit.daily_usd >= self.warning_threshold {
+                if limit.daily_usd > 0.0
+                    && agent_spend.daily_total / limit.daily_usd >= self.warning_threshold
+                {
                     warn!(
                         "Agent {} approaching daily budget: ${:.2} / ${:.2} ({:.0}%)",
                         agent_id,
@@ -344,7 +359,7 @@ impl BudgetController {
             monthly_remaining: (limit.monthly_usd - spending.monthly_total).max(0.0),
             monthly_percent_used: monthly_percent,
             is_exceeded: daily_percent >= 100.0 || monthly_percent >= 100.0,
-            is_warning: daily_percent >= self.warning_threshold * 100.0 
+            is_warning: daily_percent >= self.warning_threshold * 100.0
                 || monthly_percent >= self.warning_threshold * 100.0,
         }
     }
@@ -352,11 +367,13 @@ impl BudgetController {
     /// Reset counters if day/month changed
     fn reset_if_needed(&self, agent_id: &str) {
         let now = chrono::Utc::now();
-        let today = now.date_naive()
+        let today = now
+            .date_naive()
             .and_hms_opt(0, 0, 0)
             .map(|t| t.and_utc().timestamp())
             .unwrap_or(0);
-        let this_month = now.date_naive()
+        let this_month = now
+            .date_naive()
             .with_day(1)
             .and_then(|d| d.and_hms_opt(0, 0, 0))
             .map(|t| t.and_utc().timestamp())
