@@ -147,10 +147,11 @@ async fn run_monitor(config: DhiConfig, port: u16, slack_webhook: Option<String>
 
     // Start HTTP metrics server (bind to localhost only for security)
     let metrics_clone = Arc::clone(&metrics);
+    let stats_clone = Arc::clone(&runtime.stats);
     let addr = format!("127.0.0.1:{}", port);
     tokio::spawn(async move {
         info!("Starting metrics server on {}...", addr);
-        if let Err(e) = dhi::server::start_metrics_server(&addr, metrics_clone).await {
+        if let Err(e) = dhi::server::start_metrics_server(&addr, metrics_clone, stats_clone).await {
             warn!("Metrics server error: {}", e);
         }
     });

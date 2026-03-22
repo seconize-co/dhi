@@ -556,6 +556,16 @@ Important:
 4. The script auto-detects Copilot CLI mode:
 - Uses `copilot chat --prompt-file` when supported.
 - Falls back to `copilot -p "<prompt>"` for older CLI versions.
+5. Provide a real writable log file for regex assertions (binary-safe grep is used):
+```bash
+scripts/copilot-cli-e2e.sh --mode alert \
+  --dhi-log-file /tmp/log/dhi/dhi.log \
+  --tmp-dir /tmp/log/dhi/tmp
+```
+6. If Copilot is not auto-discovered in your environment, set:
+```bash
+export DHI_SSL_EXTRA_TARGETS=/home/<user>/.local/bin/copilot
+```
 
 ---
 

@@ -121,6 +121,45 @@ ebpf_block_action = "kill"
 
 **No proxy configuration needed!** All applications using OpenSSL, BoringSSL, or GnuTLS are automatically monitored.
 
+### Copilot CLI eBPF Setup (Required for reliable attribution)
+
+For Copilot CLI validation, add the Copilot executable as an explicit SSL target and ensure logs are written to a file used by the harness.
+
+```bash
+# Discover Copilot binary path
+command -v copilot
+readlink -f "$(command -v copilot)"
+
+# Example systemd override (adjust path if needed)
+sudo systemctl edit dhi
+```
+
+Use this override content:
+
+```ini
+[Service]
+Environment=DHI_SSL_EXTRA_TARGETS=/home/<user>/.local/bin/copilot
+StandardOutput=append:/tmp/log/dhi/dhi.log
+StandardError=append:/tmp/log/dhi/dhi.log
+```
+
+Then reload + restart:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart dhi
+```
+
+Quick verification:
+
+```bash
+grep -aE 'Found runtime SSL target|Attached uprobe_ssl_.*copilot' /tmp/log/dhi/dhi.log | tail -n 20
+```
+
+Expected:
+- Copilot target discovery line.
+- `Attached uprobe_ssl_*` lines for Copilot path.
+
 ---
 
 ## Proxy Mode (Limited - Hostname Only)
@@ -521,6 +560,16 @@ sudo journalctl -u dhi -n 80 --no-pager | grep -E 'Attached uprobe|Failed to att
 Expected:
 - `Attached uprobe_*` lines for OpenSSL/GnuTLS
 - no repeated `perf_event_open failed`
+
+If Copilot tests still fail while synthetic HTTPS works:
+
+```bash
+# Confirm Copilot marker + detection lines are present
+grep -aE 'COPILOT RUN MARKER|Secrets detected|PII detected|Prompt injection detected|SSL ALERT' /tmp/log/dhi/dhi.log | tail -n 40
+
+# Confirm stats are moving (used by copilot-cli-e2e.sh)
+curl -s http://127.0.0.1:9090/api/stats
+```
 
 ### No Alerts Being Sent
 

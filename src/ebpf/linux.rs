@@ -70,7 +70,11 @@ pub async fn start_monitor(runtime: &crate::DhiRuntime) -> Result<()> {
     drop(config);
 
     // Start SSL/TLS interception
-    tokio::spawn(start_ssl_monitor(protection_level, block_action));
+    tokio::spawn(start_ssl_monitor(
+        runtime.stats.clone(),
+        protection_level,
+        block_action,
+    ));
 
     // Check if BPF program exists for syscall monitoring
     let bpf_path = std::path::Path::new(BPF_PROGRAM_PATH);
@@ -134,10 +138,11 @@ pub async fn start_monitor(runtime: &crate::DhiRuntime) -> Result<()> {
 
 /// Start SSL/TLS traffic monitoring
 async fn start_ssl_monitor(
+    runtime_stats: std::sync::Arc<tokio::sync::RwLock<crate::RuntimeStats>>,
     protection_level: crate::ProtectionLevel,
     block_action: crate::EbpfBlockAction,
 ) {
-    use super::ssl_hook::{process_ssl_event, RawSslEvent, SslEvent, SslTracer};
+    use super::ssl_hook::{process_ssl_event_with_outcome, RawSslEvent, SslEvent, SslTracer};
     use tokio::sync::mpsc;
 
     info!("Starting SSL/TLS traffic interception...");
@@ -173,18 +178,27 @@ async fn start_ssl_monitor(
     // Process analyzed SSL events.
     tokio::spawn(async move {
         while let Some(event) = rx.recv().await {
-            match process_ssl_event(&event, &monitor).await {
-                Ok(true) => {
-                    warn!(
+            match process_ssl_event_with_outcome(&event, &monitor).await {
+                Ok(outcome) => {
+                    if outcome.risk_score > 0 {
+                        let mut stats = runtime_stats.write().await;
+                        stats.total_alerts = stats.total_alerts.saturating_add(1);
+                    }
+                    if outcome.blocked {
+                        let mut stats = runtime_stats.write().await;
+                        stats.total_blocks = stats.total_blocks.saturating_add(1);
+                    }
+                    if outcome.blocked {
+                        warn!(
                         "SSL block decision triggered for pid={} comm={}; enforcement action={:?}",
                         event.pid, event.comm, block_action
                     );
 
-                    if let Err(e) = enforce_block_action(event.pid, block_action) {
-                        error!("Failed to enforce SSL block for pid={}: {}", event.pid, e);
+                        if let Err(e) = enforce_block_action(event.pid, block_action) {
+                            error!("Failed to enforce SSL block for pid={}: {}", event.pid, e);
+                        }
                     }
                 },
-                Ok(false) => {},
                 Err(e) => {
                     error!("Error processing SSL event: {}", e);
                 },

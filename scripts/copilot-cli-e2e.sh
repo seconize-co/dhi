@@ -273,7 +273,7 @@ for line in "${TEST_LINES[@]}"; do
 
   if [[ -n "$regex" ]]; then
     if [[ -n "$DHI_LOG_FILE" && -f "$DHI_LOG_FILE" ]]; then
-      if grep -E "$regex" "$DHI_LOG_FILE" >/dev/null 2>&1 && grep -F "RUN-${RUN_ID}" "$DHI_LOG_FILE" >/dev/null 2>&1; then
+      if grep -aE "$regex" "$DHI_LOG_FILE" >/dev/null 2>&1 && grep -aF "RUN-${RUN_ID}" "$DHI_LOG_FILE" >/dev/null 2>&1; then
         pass "${id}-log-regex"
       else
         fail "${id}-log-regex"

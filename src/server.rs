@@ -10,17 +10,27 @@ use tokio::net::{TcpListener, TcpStream};
 use tracing::{error, info};
 
 use crate::agentic::DhiMetrics;
+use crate::RuntimeStats;
 
 /// HTTP Server for Dhi metrics and API
 pub struct HttpServer {
     pub addr: SocketAddr,
     pub metrics: Arc<tokio::sync::RwLock<DhiMetrics>>,
+    pub runtime_stats: Arc<tokio::sync::RwLock<RuntimeStats>>,
 }
 
 impl HttpServer {
     /// Create a new HTTP server
-    pub fn new(addr: SocketAddr, metrics: Arc<tokio::sync::RwLock<DhiMetrics>>) -> Self {
-        Self { addr, metrics }
+    pub fn new(
+        addr: SocketAddr,
+        metrics: Arc<tokio::sync::RwLock<DhiMetrics>>,
+        runtime_stats: Arc<tokio::sync::RwLock<RuntimeStats>>,
+    ) -> Self {
+        Self {
+            addr,
+            metrics,
+            runtime_stats,
+        }
     }
 
     /// Start the HTTP server
@@ -32,8 +42,9 @@ impl HttpServer {
             match listener.accept().await {
                 Ok((stream, addr)) => {
                     let metrics = Arc::clone(&self.metrics);
+                    let runtime_stats = Arc::clone(&self.runtime_stats);
                     tokio::spawn(async move {
-                        if let Err(e) = handle_connection(stream, metrics).await {
+                        if let Err(e) = handle_connection(stream, metrics, runtime_stats).await {
                             error!("Connection error from {}: {}", addr, e);
                         }
                     });
@@ -50,12 +61,13 @@ impl HttpServer {
 async fn handle_connection(
     mut stream: TcpStream,
     metrics: Arc<tokio::sync::RwLock<DhiMetrics>>,
+    runtime_stats: Arc<tokio::sync::RwLock<RuntimeStats>>,
 ) -> Result<()> {
     let mut buffer = [0u8; 1024];
     let n = stream.read(&mut buffer).await?;
 
     let request = String::from_utf8_lossy(&buffer[..n]);
-    let (status, content_type, body) = route_request(&request, &metrics).await;
+    let (status, content_type, body) = route_request(&request, &metrics, &runtime_stats).await;
 
     let response = format!(
         "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -75,6 +87,7 @@ async fn handle_connection(
 async fn route_request(
     request: &str,
     metrics: &Arc<tokio::sync::RwLock<DhiMetrics>>,
+    runtime_stats: &Arc<tokio::sync::RwLock<RuntimeStats>>,
 ) -> (&'static str, &'static str, String) {
     let path = request
         .lines()
@@ -100,6 +113,7 @@ async fn route_request(
         "/" => ("200 OK", "text/html", get_dashboard_html()),
         "/api/stats" => {
             let m = metrics.read().await;
+            let stats = runtime_stats.read().await;
             let llm_calls = m
                 .llm_calls_total
                 .with_label_values(&["unknown", "unknown", "unknown"])
@@ -108,11 +122,8 @@ async fn route_request(
                 .tool_calls_total
                 .with_label_values(&["unknown", "unknown", "unknown"])
                 .get();
-            let alerts = m
-                .alerts_total
-                .with_label_values(&["warning", "unknown"])
-                .get();
-            let blocked = m.blocks_total.with_label_values(&["unknown"]).get();
+            let alerts = stats.total_alerts;
+            let blocked = stats.total_blocks;
             (
                 "200 OK",
                 "application/json",
@@ -213,8 +224,9 @@ curl http://localhost:9090/health
 pub async fn start_metrics_server(
     addr: &str,
     metrics: Arc<tokio::sync::RwLock<DhiMetrics>>,
+    runtime_stats: Arc<tokio::sync::RwLock<RuntimeStats>>,
 ) -> Result<()> {
     let addr: SocketAddr = addr.parse()?;
-    let server = HttpServer::new(addr, metrics);
+    let server = HttpServer::new(addr, metrics, runtime_stats);
     server.start().await
 }

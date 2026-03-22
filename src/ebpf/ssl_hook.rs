@@ -449,7 +449,9 @@ impl SslMonitor {
             let connections = self.connections.read().await;
             if let Some(conn) = connections.get(&event.ssl_ptr) {
                 match event.direction {
-                    SslDirection::Write if !conn.write_buffer.is_empty() => conn.write_buffer.clone(),
+                    SslDirection::Write if !conn.write_buffer.is_empty() => {
+                        conn.write_buffer.clone()
+                    },
                     SslDirection::Read if !conn.read_buffer.is_empty() => conn.read_buffer.clone(),
                     _ => event.data.clone(),
                 }
@@ -533,6 +535,12 @@ pub struct SslAnalysisResult {
     pub jailbreak_detected: bool,
     pub is_llm_traffic: bool,
     pub risk_score: u32,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SslProcessOutcome {
+    pub risk_score: u32,
+    pub blocked: bool,
 }
 
 /// eBPF SSL Tracer - attaches uprobes to SSL libraries
@@ -779,7 +787,10 @@ fn resolve_symbol_offset(target: &std::path::Path, symbol: &str) -> Option<u64> 
 }
 
 /// Process captured SSL event and take action
-pub async fn process_ssl_event(event: &SslEvent, monitor: &SslMonitor) -> Result<bool> {
+pub async fn process_ssl_event_with_outcome(
+    event: &SslEvent,
+    monitor: &SslMonitor,
+) -> Result<SslProcessOutcome> {
     let analysis = monitor.analyze_event(event).await;
     let comm_lower = event.comm.to_ascii_lowercase();
     let is_copilot_event = comm_lower.contains("copilot") || comm_lower.contains("mainthread");
@@ -791,6 +802,14 @@ pub async fn process_ssl_event(event: &SslEvent, monitor: &SslMonitor) -> Result
             "[COPILOT SSL EVENT] pid={} comm={} dir={:?} len={} risk={} preview=\"{}\"",
             event.pid, event.comm, event.direction, event.total_len, analysis.risk_score, preview
         );
+        let text = String::from_utf8_lossy(&event.data);
+        if let Some(run_pos) = text.find("RUN-") {
+            let marker = text[run_pos..]
+                .split_whitespace()
+                .next()
+                .unwrap_or("RUN-unknown");
+            info!("[COPILOT RUN MARKER] pid={} marker={}", event.pid, marker);
+        }
     }
 
     debug!(
@@ -855,14 +874,26 @@ pub async fn process_ssl_event(event: &SslEvent, monitor: &SslMonitor) -> Result
                         error!("  💉 BLOCKED - Injection attempt!");
                     }
                     // Return true to indicate blocking
-                    return Ok(true);
+                    return Ok(SslProcessOutcome {
+                        risk_score: analysis.risk_score,
+                        blocked: true,
+                    });
                 }
             },
         }
     }
 
     // Return false - not blocked
-    Ok(false)
+    Ok(SslProcessOutcome {
+        risk_score: analysis.risk_score,
+        blocked: false,
+    })
+}
+
+/// Process captured SSL event and return whether it should be blocked.
+pub async fn process_ssl_event(event: &SslEvent, monitor: &SslMonitor) -> Result<bool> {
+    let outcome = process_ssl_event_with_outcome(event, monitor).await?;
+    Ok(outcome.blocked)
 }
 
 #[cfg(test)]
