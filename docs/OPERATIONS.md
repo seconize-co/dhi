@@ -153,7 +153,7 @@ export HTTPS_PROXY=http://127.0.0.1:8080
 
 ### Install as Service
 
-Create `/etc/systemd/system/dhi.service`:
+Create `/etc/systemd/system/dhi.service` (or copy from `ops/systemd/dhi.service`):
 
 ```ini
 [Unit]
@@ -176,8 +176,8 @@ ProtectHome=read-only
 ReadWritePaths=/var/log/dhi
 
 # For eBPF mode (needs capabilities)
-AmbientCapabilities=CAP_BPF CAP_PERFMON CAP_SYS_PTRACE CAP_NET_ADMIN
-CapabilityBoundingSet=CAP_BPF CAP_PERFMON CAP_SYS_PTRACE CAP_NET_ADMIN
+AmbientCapabilities=CAP_BPF CAP_PERFMON CAP_SYS_ADMIN CAP_SYS_PTRACE CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_BPF CAP_PERFMON CAP_SYS_ADMIN CAP_SYS_PTRACE CAP_NET_ADMIN
 
 [Install]
 WantedBy=multi-user.target
@@ -236,8 +236,8 @@ ExecStart=/usr/local/bin/dhi --level alert --ebpf-ssl-only --port 9090
 Restart=always
 RestartSec=5
 WorkingDirectory=/var/log/dhi
-AmbientCapabilities=CAP_BPF CAP_PERFMON CAP_SYS_PTRACE CAP_NET_ADMIN
-CapabilityBoundingSet=CAP_BPF CAP_PERFMON CAP_SYS_PTRACE CAP_NET_ADMIN
+AmbientCapabilities=CAP_BPF CAP_PERFMON CAP_SYS_ADMIN CAP_SYS_PTRACE CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_BPF CAP_PERFMON CAP_SYS_ADMIN CAP_SYS_PTRACE CAP_NET_ADMIN
 
 [Install]
 WantedBy=multi-user.target
@@ -254,6 +254,11 @@ curl http://127.0.0.1:9090/health
 ```
 
 > Note: `dhi.toml.example` is a template and may not map 1:1 to the runtime config struct in this build. The service above starts Dhi via CLI flags for a reliable boot path.
+
+Reference files in this repository:
+
+- `ops/systemd/dhi.service` (systemd unit)
+- `ops/sysctl/99-dhi-ebpf.conf` (kernel perf settings for eBPF uprobes)
 
 ---
 
@@ -493,6 +498,29 @@ capsh --print | grep bpf
 # View eBPF errors
 sudo dmesg | grep -i bpf
 ```
+
+If logs show `perf_event_open failed` while attaching SSL uprobes, apply:
+
+```bash
+# 1) Lower perf restrictions for uprobes
+echo 'kernel.perf_event_paranoid=1' | sudo tee /etc/sysctl.d/99-dhi-ebpf.conf
+sudo sysctl --system | grep perf_event_paranoid
+
+# 2) Ensure systemd unit has required capabilities
+sudo cp ops/systemd/dhi.service /etc/systemd/system/dhi.service
+sudo systemctl daemon-reload
+sudo systemctl restart dhi
+```
+
+Verify fix:
+
+```bash
+sudo journalctl -u dhi -n 80 --no-pager | grep -E 'Attached uprobe|Failed to attach|No SSL uprobes'
+```
+
+Expected:
+- `Attached uprobe_*` lines for OpenSSL/GnuTLS
+- no repeated `perf_event_open failed`
 
 ### No Alerts Being Sent
 
