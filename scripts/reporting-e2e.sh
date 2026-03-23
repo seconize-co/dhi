@@ -10,6 +10,7 @@ STATS_URL="${STATS_URL:-http://127.0.0.1:9090/api/stats}"
 METRICS_URL="${METRICS_URL:-http://127.0.0.1:9090/metrics}"
 REQUIRE_RUNTIME_REPORTS=0
 SKIP_LIVE_ENDPOINTS=0
+SKIP_HTML_REPORT=0
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -25,12 +26,14 @@ Options:
   --metrics-url URL          Metrics endpoint (default: http://127.0.0.1:9090/metrics)
   --require-runtime-reports  Fail if no runtime JSON reports are found in reports dir
   --skip-live-endpoints      Skip /api/stats and /metrics checks
+  --skip-html-report         Skip daily HTML report generation smoke check
   -h, --help                 Show help
 
 What this validates:
   1) Sample report schema contracts (daily + agent analysis)
   2) Runtime report JSON files in reports dir (if present)
   3) Live reporting endpoints (/api/stats, /metrics) unless skipped
+  4) Daily HTML report generation from JSON (unless skipped)
 
 Note: Slack integration payload testing is intentionally excluded.
 EOF
@@ -60,6 +63,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-live-endpoints)
       SKIP_LIVE_ENDPOINTS=1
+      shift
+      ;;
+    --skip-html-report)
+      SKIP_HTML_REPORT=1
       shift
       ;;
     -h|--help)
@@ -253,6 +260,38 @@ PY
   fi
 }
 
+validate_html_report_generation() {
+  if [[ "$SKIP_HTML_REPORT" -eq 1 ]]; then
+    echo "WARN: html report generation check skipped"
+    return
+  fi
+
+  local out_html="/tmp/dhi-sample-daily-report.html"
+  rm -f "$out_html"
+
+  if cargo run --quiet -- report-html --input examples/sample-report-daily.json --output "$out_html" --company Seconize >/tmp/dhi-report-html.out 2>/tmp/dhi-report-html.err; then
+    pass "reporting-html-generate-command"
+  else
+    fail "reporting-html-generate-command"
+    echo "---- report-html stderr ----"
+    cat /tmp/dhi-report-html.err || true
+    return
+  fi
+
+  if [[ -f "$out_html" ]]; then
+    pass "reporting-html-output-exists"
+  else
+    fail "reporting-html-output-exists"
+    return
+  fi
+
+  if grep -q "Executive Summary" "$out_html" && grep -q "All Alerts (Human Readable)" "$out_html" && grep -q "daily-report-json" "$out_html"; then
+    pass "reporting-html-structure"
+  else
+    fail "reporting-html-structure"
+  fi
+}
+
 echo "== Dhi Reporting E2E Harness =="
 echo "Vectors: $VECTORS_FILE"
 echo "Reports dir: $REPORTS_DIR"
@@ -265,6 +304,9 @@ validate_runtime_reports
 
 echo "== Validate reporting endpoints =="
 validate_live_endpoints
+
+echo "== Validate daily HTML report generation =="
+validate_html_report_generation
 
 echo "== Summary =="
 echo "Passed: $PASS_COUNT"

@@ -828,6 +828,7 @@ Mark PASS/FAIL for each item:
 12. Automated harness passes with `Failed: 0`.
 13. Quality gate (`cargo test`, `cargo clippy`) passes.
 14. Reporting harness validates sample schemas and runtime report artifacts (`scripts/reporting-e2e.sh`).
+15. Reporting harness validates daily HTML report generation (`report-html`) and required rendered sections.
 
 Release recommendation:
 - Announce only if all 14 are PASS in the target release environment.
