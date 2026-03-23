@@ -8,45 +8,23 @@
 
 Dhi uses **eBPF** to intercept SSL/TLS traffic at the kernel level. This provides full visibility into HTTPS content without certificates or proxy configuration.
 
-### 1. Build from Source
+### Quick Install (Release)
+
+For production Linux deployments, use the release installer:
 
 ```bash
-# Clone repository
-git clone https://github.com/seconize-co/dhi.git
-cd dhi
-
-# Build release binary
-cargo build --release
-
-# Binary is at: ./target/release/dhi
+# Download and run installer
+curl -sSL https://raw.githubusercontent.com/seconize-co/dhi/main/scripts/install-linux-release.sh | sudo bash
 ```
 
-### 2. Build eBPF Program
+The installer automatically:
+- Installs Dhi binary to `/usr/local/bin/dhi`
+- Installs eBPF object to `/usr/share/dhi/dhi_ssl.bpf.o`
+- Copies config template to `/etc/dhi/dhi.toml` (first install only)
+- Sets up systemd service with proper capabilities
+- Configures log rotation with logrotate
 
-```bash
-cd bpf
-clang -O2 -g -target bpf -c dhi_ssl.bpf.c -o dhi_ssl.bpf.o
-
-# Install system-wide
-sudo mkdir -p /usr/share/dhi
-sudo cp dhi_ssl.bpf.o /usr/share/dhi/
-```
-
-### 3. Install Binary and Config
-
-```bash
-# Copy to system path
-sudo cp target/release/dhi /usr/local/bin/
-
-# Copy config
-sudo mkdir -p /etc/dhi
-sudo cp dhi.toml.example /etc/dhi/dhi.toml
-
-# Create log directory
-sudo mkdir -p /var/log/dhi
-```
-
-### 4. Verify Installation
+### Verify Installation
 
 ```bash
 # Check binary
@@ -58,6 +36,8 @@ ls -la /usr/share/dhi/dhi_ssl.bpf.o
 # Check kernel version (needs 5.4+)
 uname -r
 ```
+
+For development/source builds, see [DEVELOPERS.md](DEVELOPERS.md).
 
 ---
 
@@ -111,54 +91,8 @@ level = "block"
 ebpf_block_action = "kill"
 ```
 
-### What Happens
-
-1. Dhi loads eBPF programs into the kernel
-2. Hooks SSL library functions (SSL_read, SSL_write, etc.)
-3. Captures plaintext **before encryption / after decryption**
-4. Scans for secrets, PII, injection attempts
-5. Alerts or blocks based on configuration (including configurable process signal action in block mode)
-
-**No proxy configuration needed!** All applications using OpenSSL, BoringSSL, or GnuTLS are automatically monitored.
-
-### Copilot CLI eBPF Setup (Required for reliable attribution)
-
-For Copilot CLI validation, add the Copilot executable as an explicit SSL target and ensure logs are written to a file used by the harness.
-
-```bash
-# Discover Copilot binary path
-command -v copilot
-readlink -f "$(command -v copilot)"
-
-# Example systemd override (adjust path if needed)
-sudo systemctl edit dhi
-```
-
-Use this override content:
-
-```ini
-[Service]
-Environment=DHI_SSL_EXTRA_TARGETS=/home/<user>/.local/bin/copilot
-StandardOutput=append:/tmp/log/dhi/dhi.log
-StandardError=append:/tmp/log/dhi/dhi.log
-```
-
-Then reload + restart:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl restart dhi
-```
-
-Quick verification:
-
-```bash
-grep -aE 'Found runtime SSL target|Attached uprobe_ssl_.*copilot' /tmp/log/dhi/dhi.log | tail -n 20
-```
-
-Expected:
-- Copilot target discovery line.
-- `Attached uprobe_ssl_*` lines for Copilot path.
+For architecture details on how eBPF interception works, see [DEVELOPERS.md](DEVELOPERS.md#architecture-how-ebpf-works).
+For Copilot CLI testing and instrumentation, see [DEVELOPERS.md](DEVELOPERS.md#copilot-cli-ebpf-setup-for-testing).
 
 ---
 
@@ -671,52 +605,20 @@ ls -la /usr/share/dhi/dhi_ssl.bpf.o
 
 ### eBPF Not Working
 
-```bash
-# Check kernel version (needs 5.4+)
-uname -r
-
-# Check BTF support
-ls /sys/kernel/btf/vmlinux
-
-# Check eBPF capabilities
-capsh --print | grep bpf
-
-# View eBPF errors
-sudo dmesg | grep -i bpf
-```
-
-If logs show `perf_event_open failed` while attaching SSL uprobes, apply:
+If Dhi won't attach SSL handlers (logs show `perf_event_open failed`):
 
 ```bash
-# 1) Lower perf restrictions for uprobes
+# Lower perf restrictions for uprobes
 echo 'kernel.perf_event_paranoid=1' | sudo tee /etc/sysctl.d/99-dhi-ebpf.conf
 sudo sysctl --system | grep perf_event_paranoid
 
-# 2) Ensure systemd unit has required capabilities
+# Ensure systemd unit has required capabilities
 sudo cp ops/systemd/dhi.service /etc/systemd/system/dhi.service
 sudo systemctl daemon-reload
 sudo systemctl restart dhi
 ```
 
-Verify fix:
-
-```bash
-sudo journalctl -u dhi -n 80 --no-pager | grep -E 'Attached uprobe|Failed to attach|No SSL uprobes'
-```
-
-Expected:
-- `Attached uprobe_*` lines for OpenSSL/GnuTLS
-- no repeated `perf_event_open failed`
-
-If Copilot tests still fail while synthetic HTTPS works:
-
-```bash
-# Confirm Copilot marker + detection lines are present
-grep -aE 'COPILOT RUN MARKER|Secrets detected|PII detected|Prompt injection detected|SSL ALERT' /tmp/log/dhi/dhi.log | tail -n 40
-
-# Confirm stats are moving (used by copilot-cli-e2e.sh)
-curl -s http://127.0.0.1:9090/api/stats
-```
+For kernel requirements (5.4+ needed) and deep eBPF debugging, see [DEVELOPERS.md](DEVELOPERS.md#ebpf-troubleshooting--deep-debugging).
 
 ### No Alerts Being Sent
 
@@ -734,27 +636,29 @@ grep "rate_limit" /var/log/dhi/dhi.log
 
 ## Upgrade Procedure
 
+### Using Release Installer (Recommended)
+
 ```bash
-# 1. Build new version
-cd dhi && git pull && cargo build --release
+# Upgrade using release installer
+curl -sSL https://raw.githubusercontent.com/seconize-co/dhi/main/scripts/install-linux-release.sh | sudo bash
 
-# 2. Stop service
-sudo systemctl stop dhi
+# Verify
+sudo systemctl status dhi
+curl http://127.0.0.1:9090/health
+```
 
-# 3. Backup config
+### From Source
+
+For source builds, see [DEVELOPERS.md](DEVELOPERS.md#development-environment-setup) for build instructions, then:
+
+```bash
+# Backup config
 sudo cp /etc/dhi/dhi.toml /etc/dhi/dhi.toml.backup
 
-# 4. Install new binary
-sudo cp target/release/dhi /usr/local/bin/
+# Stop service, install new binary/eBPF, and start
+sudo systemctl restart dhi
 
-# 5. Rebuild eBPF if needed
-cd bpf && clang -O2 -g -target bpf -c dhi_ssl.bpf.c -o dhi_ssl.bpf.o
-sudo cp dhi_ssl.bpf.o /usr/share/dhi/
-
-# 6. Start service
-sudo systemctl start dhi
-
-# 7. Verify
+# Verify
 sudo systemctl status dhi
 curl http://127.0.0.1:9090/health
 ```
