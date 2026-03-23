@@ -28,10 +28,14 @@ The installer automatically:
 - Installs eBPF object to `/usr/share/dhi/dhi_ssl.bpf.o`
 - Copies config template to `/etc/dhi/dhi.toml` (first install only)
 - Sets up systemd service with proper capabilities
-- Configures log rotation with logrotate
+- Installs a logrotate policy at `/etc/logrotate.d/dhi` when `logrotate` is available
 - Enables health check timer (runs every 1 minute)
 
 That's it! The service is now ready to start.
+
+Note: automatic rotation depends on the host scheduler for logrotate (`logrotate.timer` or cron). Rotation is useful only when Dhi is configured to write logs/reports to files.
+
+Note: scheduler warnings for logrotate are emitted by the installer or `--verify-only` flow. They are not written into Dhi application logs, and the `dhi-health-check` script does not validate logrotate state.
 
 ---
 
@@ -355,7 +359,14 @@ Per session: `session_id`, `session_name`, `total_tokens`, `total_tool_calls`.
 
 ### Log Rotation (Production)
 
-Log rotation is pre-configured. Install on host:
+The installer attempts to install the Dhi logrotate policy to `/etc/logrotate.d/dhi` and validates it. Automatic rotation then depends on the host having either `logrotate.timer` enabled or a cron-based logrotate job.
+
+Primary configuration points:
+- Dhi file output paths: `/etc/dhi/dhi.toml`
+- Rotation policy: `/etc/logrotate.d/dhi`
+- Source policy in repo: `ops/logrotate/dhi`
+
+Install or refresh the policy manually:
 
 ```bash
 sudo install -m 644 ops/logrotate/dhi /etc/logrotate.d/dhi
@@ -373,9 +384,25 @@ Test rotation:
 sudo logrotate -f /etc/logrotate.d/dhi
 ```
 
+Verify the scheduler:
+
+```bash
+# systemd hosts
+sudo systemctl status logrotate.timer
+
+# cron-based hosts
+ls -l /etc/cron.daily/logrotate
+```
+
 **Policy:**
 - `*.log`: daily, keep 14 days, compress
 - `*.json` reports: weekly, keep 8 weeks, compress
+
+Important:
+- journald output from `journalctl -u dhi` is not controlled by this file; that is managed by systemd-journald.
+- If you change `[logging].file` or `[reporting].output_dir` to a custom path, also update `/etc/logrotate.d/dhi` to match the new locations.
+- Missing or disabled logrotate scheduler warnings appear during installer execution or `sudo ./scripts/install-linux-release.sh --verify-only`; they do not appear in `/var/log/dhi/dhi.log`.
+- The `dhi-health-check` script validates Dhi service/endpoint health only; it does not check logrotate policy or scheduler state.
 
 ### Advanced Log Filtering
 
@@ -473,6 +500,18 @@ Ensure directories exist and are writable:
 sudo mkdir -p /custom/path
 sudo chown dhi:dhi /custom/path
 sudo chmod 755 /custom/path
+```
+
+If you change log/report paths, update the logrotate policy too:
+
+```bash
+sudo editor /etc/logrotate.d/dhi
+```
+
+Replace the default paths with your custom ones, then validate:
+
+```bash
+sudo logrotate -d /etc/logrotate.d/dhi
 ```
 
 ---
