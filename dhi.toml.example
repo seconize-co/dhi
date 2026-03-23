@@ -13,6 +13,15 @@
 # pattern_rules_path = "dhi.patterns.toml"
 
 # ----------------------------------------------------------------------------
+# REPORTING (for HTML report generation)
+# ----------------------------------------------------------------------------
+[reporting]
+# Company name to display in report headers and branding
+# Used when generating daily security reports with: dhi report-html --company "Your Company"
+# Or set here and it will be used as the default
+company_name = "Seconize"
+
+# ----------------------------------------------------------------------------
 # PROTECTION SETTINGS
 # ----------------------------------------------------------------------------
 [protection]

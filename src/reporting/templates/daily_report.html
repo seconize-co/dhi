@@ -5,233 +5,59 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{{COMPANY}} | Dhi Daily Security Report</title>
   <style>
-    :root {
-      --brand-primary: #1e3a5f;
-      --brand-slate: #0f172a;
-      --brand-accent: #f59e0b;
-      --brand-teal: #22d3ee;
-      --brand-critical: #ef4444;
-      --bg: #f3f6fa;
-      --card: #ffffff;
-      --ink: #1f2937;
-      --muted: #64748b;
-      --border: #dbe3ed;
-      --high: #dc2626;
-      --medium: #d97706;
-      --low: #2563eb;
-      --ok: #0f766e;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      padding: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
-      color: var(--ink);
-      background: radial-gradient(circle at top right, #dce8f6 0%, #f3f6fa 38%, #eff5fb 100%);
-    }
-    .page {
-      max-width: 1180px;
-      margin: 0 auto;
-      padding: 22px 20px 84px;
-    }
-    .header-card {
-      background: linear-gradient(135deg, var(--brand-slate), var(--brand-primary));
-      border: 1px solid #1a3353;
-      border-radius: 14px;
-      box-shadow: 0 14px 28px rgba(15, 23, 42, 0.22);
-      overflow: hidden;
-    }
-    .header-top {
-      display: flex;
-      gap: 16px;
-      flex-wrap: wrap;
-      align-items: center;
-      justify-content: space-between;
-      padding: 18px 20px 10px;
-      color: #e2e8f0;
-    }
-    .branding-header {
-      display: flex;
-      align-items: center;
-      justify-content: flex-end;
-      margin-left: auto;
-    }
-    .logo {
-      height: 28px;
-      width: auto;
-      filter: brightness(0) invert(1);
-      opacity: 0.95;
-    }
-    .header {
-      display: flex;
-      gap: 16px;
-      flex-wrap: wrap;
-      justify-content: space-between;
-      align-items: center;
-    }
-    .header-left {
-      padding: 0 20px 16px;
-      border-left: 6px solid var(--brand-accent);
-    }
-    .header-left h1 {
-      margin: 0;
-      color: #ffffff;
-      font-size: 22px;
-      letter-spacing: 0.15px;
-    }
-    .header-left p {
-      margin: 7px 0 0;
-      font-size: 13px;
-      color: #c9d8ea;
-    }
-    .header-right {
-      text-align: right;
-      padding: 0 20px 16px;
-      font-size: 12px;
-      color: #cbd5e1;
-    }
-    .tagline {
-      display: inline-block;
-      margin-top: 8px;
-      padding: 4px 10px;
-      border-radius: 999px;
-      border: 1px solid rgba(34, 211, 238, 0.45);
-      color: #9ee8f5;
-      font-size: 11px;
-      letter-spacing: 0.2px;
-    }
-    .section {
-      margin-top: 18px;
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 16px;
-      box-shadow: 0 6px 18px rgba(30, 58, 95, 0.06);
-    }
-    .section h2 {
-      margin: 0 0 12px;
-      font-size: 18px;
-      color: var(--brand-primary);
-    }
-    .meta {
-      color: var(--muted);
-      font-size: 13px;
-      margin-top: 6px;
-    }
-    .summary-grid {
-      display: grid;
-      gap: 12px;
-      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-      margin-top: 12px;
-    }
-    .metric {
-      background: linear-gradient(180deg, #f8fbff, #f2f7fd);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 10px;
-    }
-    .metric .value {
-      font-size: 20px;
-      font-weight: 700;
-      color: var(--brand-primary);
-    }
-    .metric .label {
-      font-size: 12px;
-      color: var(--muted);
-      margin-top: 2px;
-    }
-    .bullets {
-      margin: 8px 0 0 18px;
-      padding: 0;
-      line-height: 1.5;
-    }
-    .bullets li { margin-bottom: 5px; }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 10px;
-      font-size: 13px;
-    }
-    th, td {
-      border: 1px solid var(--border);
-      padding: 8px 10px;
-      text-align: left;
-      vertical-align: top;
-    }
-    th {
-      background: #eef3f9;
-      font-weight: 600;
-      color: var(--brand-primary);
-    }
-    .severity {
-      display: inline-block;
-      border-radius: 999px;
-      padding: 2px 8px;
-      color: #fff;
-      font-size: 11px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.3px;
-    }
-    .severity.critical { background: var(--brand-critical); }
-    .severity.high { background: var(--high); }
-    .severity.medium { background: var(--medium); }
-    .severity.low { background: var(--low); }
-    .severity.info { background: var(--ok); }
-    .mono {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
-      font-size: 12px;
-    }
-    .footer {
-      position: fixed;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: #fff;
-      border-top: 1px solid var(--border);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 8px 16px;
-      color: var(--muted);
-      font-size: 12px;
-    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; background: #f7f7f7; color: #222; line-height: 1.6; }
+    .page { max-width: 1000px; margin: 40px auto; padding: 20px; background: #fff; border-radius: 8px; }
+    .branding-header { display: flex; justify-content: flex-end; align-items: center; margin-bottom: 0; }
+    .logo { height: 28px; margin-top: 10px; margin-right: 2px; }
+    h1 { text-align: center; color: #1a237e; margin-top: 10px; margin-bottom: 8px; font-size: 24px; }
+    .header-right { text-align: center; color: #666; font-size: 13px; margin-bottom: 20px; }
+    .section { padding: 16px 20px; border-radius: 6px; margin-bottom: 24px; border-left: 4px solid; font-size: 14px; }
+    .section.info { background: #e3f2fd; border-color: #1565c0; }
+    section h2 { font-size: 1.08em; font-weight: 600; color: #283593; margin-top: 0; margin-bottom: 16px; border-bottom: 2px solid #283593; padding-bottom: 8px; }
+    .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 24px; }
+    @media (max-width: 800px) { .summary-grid { grid-template-columns: repeat(2, 1fr); } }
+    .metric { background: #fff; border-radius: 6px; padding: 16px; border: 1px solid #e0e0e0; text-align: center; }
+    .metric .value { font-size: 26px; font-weight: bold; color: #1565c0; }
+    .metric .label { font-size: 12px; color: #666; margin-top: 4px; }
+    .metric.success .value { color: #2e7d32; }
+    .metric.warning .value { color: #f9a825; }
+    .metric.danger .value { color: #c62828; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; margin-bottom: 16px; }
+    th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #e0e0e0; }
+    th { background: #f5f5f5; font-weight: 600; color: #333; }
+    .badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+    .badge-success { background: #e8f5e9; color: #2e7d32; }
+    .badge-warning { background: #fff8e1; color: #f57f17; }
+    .badge-danger { background: #ffebee; color: #c62828; }
+    .badge-info { background: #e3f2fd; color: #1565c0; }
+    .severity { display: inline-block; border-radius: 999px; padding: 2px 8px; color: #fff; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+    .severity.critical { background: #c62828; }
+    .severity.high { background: #dc2626; }
+    .severity.medium { background: #d97706; }
+    .severity.low { background: #2563eb; }
+    .severity.info { background: #0f766e; }
+    .mono { font-family: monospace; font-size: 12px; }
+    .footer { text-align: center; color: #999; padding: 20px; font-size: 11px; margin-top: 20px; border-top: 1px solid #e0e0e0; }
     @media (max-width: 760px) {
-      .header-right {
-        text-align: left;
-      }
-      .branding-header {
-        width: 100%;
-        justify-content: flex-start;
-      }
-      th, td {
-        padding: 7px 8px;
-      }
+      .summary-grid { grid-template-columns: repeat(2, 1fr); }
+      th, td { padding: 7px 8px; font-size: 12px; }
     }
   </style>
 </head>
 <body>
   <div class="page">
-    <section class="header-card">
-      <div class="header-top">
-        <div class="branding-header">
-          <img class="logo" src="https://seconize.co/wp-content/uploads/2024/04/SECONIZE_LOGO_Transparent_-700x125-1.png" alt="Seconize Logo" />
-        </div>
-      </div>
-      <div class="header">
-        <div class="header-left">
-          <h1>{{COMPANY}} — Dhi Daily Security Report</h1>
-          <p>Executive Summary and Human-Readable Alert Listing</p>
-          <div class="tagline">Runtime Security for AI Agents</div>
-        </div>
-        <div class="header-right">
-          <div>Generated: <span id="generated-at">{{GENERATED_AT}}</span></div>
-          <div>Source JSON: <span class="mono">{{SOURCE_PATH}}</span></div>
-        </div>
-      </div>
-    </section>
+    <div class="branding-header">
+      <img class="logo" src="https://seconize.co/wp-content/uploads/2024/04/SECONIZE_LOGO_Transparent_-700x125-1.png" alt="Seconize Logo" />
+    </div>
+    <h1>{{COMPANY}} — Dhi Daily Security Report</h1>
+    <div class="header-right">
+      <div>Executive Summary and Human-Readable Alert Listing</div>
+      <div>Generated: <span id="generated-at">{{GENERATED_AT}}</span></div>
+      <div>Source: <span class="mono">{{SOURCE_PATH}}</span></div>
+    </div>
 
-    <section class="section">
+    <section class="section info">
       <h2>Executive Summary</h2>
       <p id="summary-text" class="meta">Loading summary...</p>
       <div id="summary-grid" class="summary-grid"></div>

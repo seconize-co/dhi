@@ -563,6 +563,35 @@ if [[ -n "$SLACK_WEBHOOK" ]]; then
   fi
 fi
 
+# Company name for report branding (optional)
+if [[ -t 0 ]]; then
+  echo
+  echo "Report branding (optional)"
+  echo "  Dhi generates daily security reports with company branding."
+  printf "  Enter your company name, or press Enter to use default (Seconize): "
+  read -r _input_company
+  if [[ -n "$_input_company" ]]; then
+    if [[ -f /etc/dhi/dhi.toml ]]; then
+      if grep -q 'company_name' /etc/dhi/dhi.toml; then
+        sudo sed -i "s|company_name[[:space:]]*=.*|company_name = \"${_input_company}\"|" /etc/dhi/dhi.toml
+      else
+        if grep -q '^\[reporting\]' /etc/dhi/dhi.toml; then
+          sudo sed -i "/^\[reporting\]/a company_name = \"${_input_company}\"" /etc/dhi/dhi.toml
+        else
+          printf '\n[reporting]\ncompany_name = "%s"\n' "${_input_company}" | sudo tee -a /etc/dhi/dhi.toml >/dev/null
+        fi
+      fi
+      echo "Company name configured in /etc/dhi/dhi.toml"
+    else
+      echo "WARNING: /etc/dhi/dhi.toml not found; could not write company name."
+      echo "         Set it manually: [reporting] company_name = \"${_input_company}\""
+    fi
+  else
+    echo "  Skipped (using default). You can update it later in /etc/dhi/dhi.toml under [reporting] company_name."
+  fi
+  unset _input_company
+fi
+
 if install_logrotate_pkg; then
   if install_logrotate_policy; then
     if logrotate -d /etc/logrotate.d/dhi >/dev/null 2>&1; then
