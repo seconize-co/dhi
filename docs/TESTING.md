@@ -521,6 +521,7 @@ Pass criteria:
 - alert records are persisted to configured `alert_log_path`.
 - `use_case_id` exists on emitted alerts.
 - runtime-origin alerts also include session trace fields when context is available (`session_id`, optional `session_name`, `correlation_id`, process metadata).
+- transport payload formatting preserves enrichment fields: Slack attachment fields and generic webhook JSON both carry `use_case_id` and trace metadata.
 
 ---
 

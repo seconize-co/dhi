@@ -769,6 +769,75 @@ mod tests {
     use super::*;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+    use tokio::sync::oneshot;
+
+    async fn start_capture_server() -> (String, oneshot::Receiver<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test server bind should succeed");
+        let addr = listener
+            .local_addr()
+            .expect("test server local addr should be available");
+        let (tx, rx) = oneshot::channel();
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener
+                .accept()
+                .await
+                .expect("test server should accept one request");
+            let mut buffer = Vec::new();
+            let mut temp = [0u8; 1024];
+            let mut header_end = None;
+            let mut content_length = 0usize;
+
+            loop {
+                let read = socket
+                    .read(&mut temp)
+                    .await
+                    .expect("test server should read request");
+                if read == 0 {
+                    break;
+                }
+                buffer.extend_from_slice(&temp[..read]);
+
+                if header_end.is_none() {
+                    if let Some(pos) = buffer.windows(4).position(|w| w == b"\r\n\r\n") {
+                        header_end = Some(pos + 4);
+                        let headers = String::from_utf8_lossy(&buffer[..pos + 4]);
+                        for line in headers.lines() {
+                            let lower = line.to_ascii_lowercase();
+                            if let Some(value) = lower.strip_prefix("content-length:") {
+                                content_length = value.trim().parse::<usize>().unwrap_or(0);
+                            }
+                        }
+                    }
+                }
+
+                if let Some(start) = header_end {
+                    let body_len = buffer.len().saturating_sub(start);
+                    if body_len >= content_length {
+                        break;
+                    }
+                }
+            }
+
+            let body = if let Some(start) = header_end {
+                let end = (start + content_length).min(buffer.len());
+                String::from_utf8_lossy(&buffer[start..end]).to_string()
+            } else {
+                String::new()
+            };
+
+            let _ = tx.send(body);
+            let _ = socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK")
+                .await;
+        });
+
+        (format!("http://{addr}"), rx)
+    }
 
     #[test]
     fn test_severity_threshold() {
@@ -831,5 +900,90 @@ mod tests {
         assert!(content.contains("\"use_case_id\":\"sze.dhi.alerts.uc01.dispatch\""));
 
         let _ = fs::remove_file(&log_path);
+    }
+
+    #[tokio::test]
+    async fn test_send_slack_payload_contains_enriched_metadata() {
+        let (url, rx) = start_capture_server().await;
+        let alerter = Alerter::new(AlertConfig {
+            slack_webhook_url: Some(url.clone()),
+            alert_log_path: None,
+            ..Default::default()
+        });
+        let alert = Alert::new(AlertSeverity::Critical, "Trace Alert", "Trace me")
+            .with_event_type("prompt_injection")
+            .with_use_case_id("sze.dhi.prompt.uc01.detect")
+            .with_correlation_id("corr-transport-1")
+            .with_session("process-session:42", Some("Workspace A"))
+            .with_process(Some("copilot"), Some(42))
+            .with_destination(Some("api.openai.com"), Some("/v1/chat/completions"))
+            .with_action("BLOCKED")
+            .with_risk_score(90);
+
+        alerter
+            .send_slack(&url, &alert)
+            .await
+            .expect("send_slack should succeed");
+
+        let body = rx.await.expect("captured request body should be returned");
+        let payload: serde_json::Value =
+            serde_json::from_str(&body).expect("slack payload should be valid json");
+        let fields = payload["attachments"][0]["fields"]
+            .as_array()
+            .expect("slack payload fields should be an array");
+
+        let mut by_title = std::collections::HashMap::new();
+        for field in fields {
+            let title = field["title"].as_str().unwrap_or_default().to_string();
+            let value = field["value"].as_str().unwrap_or_default().to_string();
+            by_title.insert(title, value);
+        }
+
+        assert_eq!(
+            by_title.get("use_case_id").map(String::as_str),
+            Some("\"sze.dhi.prompt.uc01.detect\"")
+        );
+        assert_eq!(
+            by_title.get("correlation_id").map(String::as_str),
+            Some("\"corr-transport-1\"")
+        );
+        assert_eq!(
+            by_title.get("session_id").map(String::as_str),
+            Some("\"process-session:42\"")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_send_webhook_payload_contains_enriched_metadata() {
+        let (url, rx) = start_capture_server().await;
+        let alerter = Alerter::new(AlertConfig {
+            alert_log_path: None,
+            ..Default::default()
+        });
+        let alert = Alert::new(AlertSeverity::Warning, "Webhook Alert", "Webhook trace")
+            .with_event_type("tool_risk")
+            .with_use_case_id("sze.dhi.tools.uc01.detect")
+            .with_correlation_id("corr-webhook-2")
+            .with_session("process-session:77", Some("Workspace B"))
+            .with_process(Some("claude"), Some(77))
+            .with_destination(Some("api.anthropic.com"), Some("/v1/messages"));
+
+        alerter
+            .send_webhook(&url, &alert)
+            .await
+            .expect("send_webhook should succeed");
+
+        let body = rx.await.expect("captured request body should be returned");
+        let payload: serde_json::Value =
+            serde_json::from_str(&body).expect("webhook payload should be valid json");
+
+        assert_eq!(payload["event_type"], "tool_risk");
+        assert_eq!(
+            payload["metadata"]["use_case_id"],
+            "sze.dhi.tools.uc01.detect"
+        );
+        assert_eq!(payload["metadata"]["correlation_id"], "corr-webhook-2");
+        assert_eq!(payload["metadata"]["session_id"], "process-session:77");
+        assert_eq!(payload["metadata"]["destination"], "api.anthropic.com");
     }
 }
