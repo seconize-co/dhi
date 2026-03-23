@@ -180,6 +180,7 @@ const MAX_EVENTS: usize = 10_000;
 pub struct AgenticRuntime {
     agents: Arc<RwLock<HashMap<String, AgentContext>>>,
     llm_monitor: Arc<LlmMonitor>,
+    budget_controller: Arc<BudgetController>,
     tool_monitor: Arc<ToolMonitor>,
     _mcp_monitor: Arc<McpMonitor>,
     prompt_security: Arc<PromptSecurityAnalyzer>,
@@ -234,6 +235,7 @@ impl AgenticRuntime {
         Self {
             agents: Arc::new(RwLock::new(HashMap::new())),
             llm_monitor: Arc::new(LlmMonitor::new()),
+            budget_controller: Arc::new(BudgetController::new()),
             tool_monitor: Arc::new(ToolMonitor::new()),
             _mcp_monitor: Arc::new(McpMonitor::new()),
             prompt_security: Arc::new(PromptSecurityAnalyzer::new()),
@@ -246,6 +248,14 @@ impl AgenticRuntime {
 
     pub fn fingerprinter(&self) -> Arc<AgentFingerprinter> {
         Arc::clone(&self.fingerprinter)
+    }
+
+    pub fn configure_max_budget_usd(&self, max_budget_usd: f64) {
+        self.budget_controller.set_global_limit(BudgetLimit {
+            daily_usd: max_budget_usd,
+            monthly_usd: max_budget_usd * 30.0,
+            per_call_usd: None,
+        });
     }
 
     /// Register a new agent for monitoring
@@ -286,9 +296,29 @@ impl AgenticRuntime {
         let cost_usd = self
             .llm_monitor
             .estimate_cost(model, input_tokens, output_tokens);
+        let budget_check = self.budget_controller.check_budget(agent_id, cost_usd);
 
         let mut risk_score = 0u32;
         let mut alerts = Vec::new();
+
+        if budget_check.status.is_warning {
+            alerts.push("budget_warning".to_string());
+        }
+        if !budget_check.allowed {
+            risk_score += 50;
+            alerts.push("budget_exceeded".to_string());
+            self.emit_event(
+                AgentEventType::BudgetExceeded,
+                agent_id,
+                serde_json::json!({
+                    "call_id": call_id,
+                    "cost_usd": cost_usd,
+                    "reason": budget_check.reason.clone(),
+                }),
+            )
+            .await;
+            warn!("Budget exceeded for agent {}", agent_id);
+        }
 
         // Analyze prompt security if provided
         if let Some(ref prompt_text) = prompt {
@@ -345,6 +375,7 @@ impl AgenticRuntime {
             ctx.total_cost_usd += cost_usd;
             ctx.risk_score = ctx.risk_score.max(risk_score);
         }
+        self.budget_controller.record_spend(agent_id, cost_usd);
 
         self.emit_event(
             AgentEventType::LlmRequest,
@@ -356,6 +387,8 @@ impl AgenticRuntime {
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
                 "cost_usd": cost_usd,
+                "budget_allowed": budget_check.allowed,
+                "budget_warning": budget_check.status.is_warning,
                 "has_tools": has_tools,
                 "tool_names": tool_names,
             }),
