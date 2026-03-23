@@ -642,21 +642,23 @@ fn render_daily_report_html(
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>{company} - Dhi Daily Security Report</title>
+    <title>{company} | Dhi Daily Security Report</title>
   <style>
     :root {{
-      --bg: #f7f8fb;
-      --card: #ffffff;
-      --ink: #1f2937;
-      --muted: #6b7280;
-      --brand: #0f172a;
-      --accent: #f59e0b;
-      --border: #e5e7eb;
-      --critical: #b91c1c;
-      --high: #dc2626;
-      --medium: #d97706;
-      --low: #2563eb;
-      --ok: #15803d;
+            --brand-primary: #1e3a5f;
+            --brand-slate: #0f172a;
+            --brand-accent: #f59e0b;
+            --brand-teal: #22d3ee;
+            --brand-critical: #ef4444;
+            --bg: #f3f6fa;
+            --card: #ffffff;
+            --ink: #1f2937;
+            --muted: #64748b;
+            --border: #dbe3ed;
+            --high: #dc2626;
+            --medium: #d97706;
+            --low: #2563eb;
+            --ok: #0f766e;
     }}
     * {{ box-sizing: border-box; }}
     body {{
@@ -664,54 +666,91 @@ fn render_daily_report_html(
       padding: 0;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
       color: var(--ink);
-      background: var(--bg);
+            background: radial-gradient(circle at top right, #dce8f6 0%, #f3f6fa 38%, #eff5fb 100%);
     }}
     .page {{
       max-width: 1180px;
       margin: 0 auto;
-      padding: 20px 20px 80px;
+            padding: 22px 20px 84px;
     }}
-    .header {{
+        .header-card {{
+            background: linear-gradient(135deg, var(--brand-slate), var(--brand-primary));
+            border: 1px solid #1a3353;
+            border-radius: 14px;
+            box-shadow: 0 14px 28px rgba(15, 23, 42, 0.22);
+            overflow: hidden;
+        }}
+        .header-top {{
       display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
       align-items: center;
       justify-content: space-between;
-      background: var(--brand);
-      color: #fff;
-      border-radius: 10px;
-      overflow: hidden;
-      box-shadow: 0 4px 16px rgba(15, 23, 42, 0.18);
+            padding: 18px 20px 10px;
+            color: #e2e8f0;
+        }}
+        .branding-header {{
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            margin-left: auto;
+        }}
+        .logo {{
+            height: 28px;
+            width: auto;
+            filter: brightness(0) invert(1);
+            opacity: 0.95;
     }}
+        .header {{
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            align-items: center;
+        }}
     .header-left {{
-      padding: 18px 20px;
-      border-left: 6px solid var(--accent);
+            padding: 0 20px 16px;
+            border-left: 6px solid var(--brand-accent);
     }}
     .header-left h1 {{
       margin: 0;
-      font-size: 20px;
-      letter-spacing: 0.2px;
+            color: #ffffff;
+            font-size: 22px;
+            letter-spacing: 0.15px;
     }}
     .header-left p {{
-      margin: 6px 0 0;
+            margin: 7px 0 0;
       font-size: 13px;
-      color: #cbd5e1;
+            color: #c9d8ea;
     }}
     .header-right {{
       text-align: right;
-      padding: 18px 20px;
+            padding: 0 20px 16px;
       font-size: 12px;
       color: #cbd5e1;
     }}
+        .tagline {{
+            display: inline-block;
+            margin-top: 8px;
+            padding: 4px 10px;
+            border-radius: 999px;
+            border: 1px solid rgba(34, 211, 238, 0.45);
+            color: #9ee8f5;
+            font-size: 11px;
+            letter-spacing: 0.2px;
+        }}
     .section {{
-      margin-top: 16px;
+            margin-top: 18px;
       background: var(--card);
       border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 16px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+            border-radius: 12px;
+            padding: 16px;
+            box-shadow: 0 6px 18px rgba(30, 58, 95, 0.06);
     }}
     .section h2 {{
       margin: 0 0 12px;
       font-size: 18px;
+            color: var(--brand-primary);
     }}
     .meta {{
       color: var(--muted);
@@ -725,14 +764,15 @@ fn render_daily_report_html(
       margin-top: 12px;
     }}
     .metric {{
-      background: #f8fafc;
+            background: linear-gradient(180deg, #f8fbff, #f2f7fd);
       border: 1px solid var(--border);
-      border-radius: 8px;
+            border-radius: 10px;
       padding: 10px;
     }}
     .metric .value {{
       font-size: 20px;
       font-weight: 700;
+            color: var(--brand-primary);
     }}
     .metric .label {{
       font-size: 12px;
@@ -758,8 +798,9 @@ fn render_daily_report_html(
       vertical-align: top;
     }}
     th {{
-      background: #f3f4f6;
+            background: #eef3f9;
       font-weight: 600;
+            color: var(--brand-primary);
     }}
     .severity {{
       display: inline-block;
@@ -771,7 +812,7 @@ fn render_daily_report_html(
       text-transform: uppercase;
       letter-spacing: 0.3px;
     }}
-    .severity.critical {{ background: var(--critical); }}
+        .severity.critical {{ background: var(--brand-critical); }}
     .severity.high {{ background: var(--high); }}
     .severity.medium {{ background: var(--medium); }}
     .severity.low {{ background: var(--low); }}
@@ -794,18 +835,38 @@ fn render_daily_report_html(
       color: var(--muted);
       font-size: 12px;
     }}
+        @media (max-width: 760px) {{
+            .header-right {{
+                text-align: left;
+            }}
+            .branding-header {{
+                width: 100%;
+                justify-content: flex-start;
+            }}
+            th, td {{
+                padding: 7px 8px;
+            }}
+        }}
   </style>
 </head>
 <body>
   <div class="page">
-    <section class="header">
-      <div class="header-left">
-        <h1>{company} — Dhi Daily Security Report</h1>
-        <p>Executive Summary and Human-Readable Alert Listing</p>
+        <section class="header-card">
+            <div class="header-top">
+                <div class="branding-header">
+                    <img class="logo" src="https://seconize.co/wp-content/uploads/2024/04/SECONIZE_LOGO_Transparent_-700x125-1.png" alt="Seconize Logo" />
+                </div>
       </div>
-      <div class="header-right">
-        <div>Generated: <span id="generated-at">{generated_at}</span></div>
-        <div>Source JSON: <span class="mono">{source_path}</span></div>
+            <div class="header">
+                <div class="header-left">
+                    <h1>{company} — Dhi Daily Security Report</h1>
+                    <p>Executive Summary and Human-Readable Alert Listing</p>
+                    <div class="tagline">Runtime Security for AI Agents</div>
+                </div>
+                <div class="header-right">
+                    <div>Generated: <span id="generated-at">{generated_at}</span></div>
+                    <div>Source JSON: <span class="mono">{source_path}</span></div>
+                </div>
       </div>
     </section>
 
@@ -838,7 +899,7 @@ fn render_daily_report_html(
   <section class="footer">
     <div>Confidential</div>
     <div>{company}</div>
-    <div>Dhi HTML Report</div>
+        <div>Dhi Runtime Security Report</div>
   </section>
 
   <script id="daily-report-json" type="application/json">{report_json}</script>
