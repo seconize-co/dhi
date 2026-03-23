@@ -8,8 +8,9 @@ use clap::{Parser, Subcommand};
 use dhi::agentic::validate_slack_webhook;
 use dhi::agentic::DhiMetrics;
 use dhi::proxy::{CheckToggles, ProxyConfig};
+use dhi::reporting::generate_daily_report_html;
 use dhi::{DhiConfig, DhiRuntime, EbpfBlockAction, ProtectionLevel};
-use std::fs::{create_dir_all, read_to_string, remove_file, write, OpenOptions};
+use std::fs::{remove_file, OpenOptions};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -107,9 +108,9 @@ enum Commands {
 
     /// Check Dhi health endpoint
     Health {
-        /// Health endpoint URL
-        #[arg(long, default_value = "http://127.0.0.1:9090/health")]
-        url: String,
+        /// Health endpoint URL (overrides metrics bind/port from config)
+        #[arg(long)]
+        url: Option<String>,
 
         /// HTTP timeout in seconds
         #[arg(long, default_value_t = 5)]
@@ -615,456 +616,26 @@ async fn run_health(url: &str, timeout_secs: u64, json_output: bool) -> Result<(
     Err(anyhow::anyhow!("health endpoint payload was not healthy"))
 }
 
-fn html_escape(input: &str) -> String {
-    input
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('\"', "&quot;")
-        .replace('\'', "&#39;")
-}
+fn resolve_health_url(
+    cli_url: Option<&str>,
+    toml_bind_address: Option<&str>,
+    toml_metrics_port: Option<u16>,
+    cli_port: u16,
+) -> String {
+    if let Some(url) = cli_url {
+        return url.to_string();
+    }
 
-fn render_daily_report_html(
-    report: &serde_json::Value,
-    source_path: &str,
-    company: &str,
-) -> Result<String> {
-    let report_json = serde_json::to_string_pretty(report)?.replace("</", "<\\/");
-    let generated_at = report
-        .get("generated_at")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown");
-    let company_escaped = html_escape(company);
-    let source_escaped = html_escape(source_path);
-    Ok(format!(
-        r#"<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>{company} | Dhi Daily Security Report</title>
-  <style>
-    :root {{
-            --brand-primary: #1e3a5f;
-            --brand-slate: #0f172a;
-            --brand-accent: #f59e0b;
-            --brand-teal: #22d3ee;
-            --brand-critical: #ef4444;
-            --bg: #f3f6fa;
-            --card: #ffffff;
-            --ink: #1f2937;
-            --muted: #64748b;
-            --border: #dbe3ed;
-            --high: #dc2626;
-            --medium: #d97706;
-            --low: #2563eb;
-            --ok: #0f766e;
-    }}
-    * {{ box-sizing: border-box; }}
-    body {{
-      margin: 0;
-      padding: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
-      color: var(--ink);
-            background: radial-gradient(circle at top right, #dce8f6 0%, #f3f6fa 38%, #eff5fb 100%);
-    }}
-    .page {{
-      max-width: 1180px;
-      margin: 0 auto;
-            padding: 22px 20px 84px;
-    }}
-        .header-card {{
-            background: linear-gradient(135deg, var(--brand-slate), var(--brand-primary));
-            border: 1px solid #1a3353;
-            border-radius: 14px;
-            box-shadow: 0 14px 28px rgba(15, 23, 42, 0.22);
-            overflow: hidden;
-        }}
-        .header-top {{
-      display: flex;
-            gap: 16px;
-            flex-wrap: wrap;
-      align-items: center;
-      justify-content: space-between;
-            padding: 18px 20px 10px;
-            color: #e2e8f0;
-        }}
-        .branding-header {{
-            display: flex;
-            align-items: center;
-            justify-content: flex-end;
-            margin-left: auto;
-        }}
-        .logo {{
-            height: 28px;
-            width: auto;
-            filter: brightness(0) invert(1);
-            opacity: 0.95;
-    }}
-        .header {{
-            display: flex;
-            gap: 16px;
-            flex-wrap: wrap;
-            justify-content: space-between;
-            align-items: center;
-        }}
-    .header-left {{
-            padding: 0 20px 16px;
-            border-left: 6px solid var(--brand-accent);
-    }}
-    .header-left h1 {{
-      margin: 0;
-            color: #ffffff;
-            font-size: 22px;
-            letter-spacing: 0.15px;
-    }}
-    .header-left p {{
-            margin: 7px 0 0;
-      font-size: 13px;
-            color: #c9d8ea;
-    }}
-    .header-right {{
-      text-align: right;
-            padding: 0 20px 16px;
-      font-size: 12px;
-      color: #cbd5e1;
-    }}
-        .tagline {{
-            display: inline-block;
-            margin-top: 8px;
-            padding: 4px 10px;
-            border-radius: 999px;
-            border: 1px solid rgba(34, 211, 238, 0.45);
-            color: #9ee8f5;
-            font-size: 11px;
-            letter-spacing: 0.2px;
-        }}
-    .section {{
-            margin-top: 18px;
-      background: var(--card);
-      border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 16px;
-            box-shadow: 0 6px 18px rgba(30, 58, 95, 0.06);
-    }}
-    .section h2 {{
-      margin: 0 0 12px;
-      font-size: 18px;
-            color: var(--brand-primary);
-    }}
-    .meta {{
-      color: var(--muted);
-      font-size: 13px;
-      margin-top: 6px;
-    }}
-    .summary-grid {{
-      display: grid;
-      gap: 12px;
-      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-      margin-top: 12px;
-    }}
-    .metric {{
-            background: linear-gradient(180deg, #f8fbff, #f2f7fd);
-      border: 1px solid var(--border);
-            border-radius: 10px;
-      padding: 10px;
-    }}
-    .metric .value {{
-      font-size: 20px;
-      font-weight: 700;
-            color: var(--brand-primary);
-    }}
-    .metric .label {{
-      font-size: 12px;
-      color: var(--muted);
-      margin-top: 2px;
-    }}
-    .bullets {{
-      margin: 8px 0 0 18px;
-      padding: 0;
-      line-height: 1.5;
-    }}
-    .bullets li {{ margin-bottom: 5px; }}
-    table {{
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 10px;
-      font-size: 13px;
-    }}
-    th, td {{
-      border: 1px solid var(--border);
-      padding: 8px 10px;
-      text-align: left;
-      vertical-align: top;
-    }}
-    th {{
-            background: #eef3f9;
-      font-weight: 600;
-            color: var(--brand-primary);
-    }}
-    .severity {{
-      display: inline-block;
-      border-radius: 999px;
-      padding: 2px 8px;
-      color: #fff;
-      font-size: 11px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.3px;
-    }}
-        .severity.critical {{ background: var(--brand-critical); }}
-    .severity.high {{ background: var(--high); }}
-    .severity.medium {{ background: var(--medium); }}
-    .severity.low {{ background: var(--low); }}
-    .severity.info {{ background: var(--ok); }}
-    .mono {{
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
-      font-size: 12px;
-    }}
-    .footer {{
-      position: fixed;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: #fff;
-      border-top: 1px solid var(--border);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 8px 16px;
-      color: var(--muted);
-      font-size: 12px;
-    }}
-        @media (max-width: 760px) {{
-            .header-right {{
-                text-align: left;
-            }}
-            .branding-header {{
-                width: 100%;
-                justify-content: flex-start;
-            }}
-            th, td {{
-                padding: 7px 8px;
-            }}
-        }}
-  </style>
-</head>
-<body>
-  <div class="page">
-        <section class="header-card">
-            <div class="header-top">
-                <div class="branding-header">
-                    <img class="logo" src="https://seconize.co/wp-content/uploads/2024/04/SECONIZE_LOGO_Transparent_-700x125-1.png" alt="Seconize Logo" />
-                </div>
-      </div>
-            <div class="header">
-                <div class="header-left">
-                    <h1>{company} — Dhi Daily Security Report</h1>
-                    <p>Executive Summary and Human-Readable Alert Listing</p>
-                    <div class="tagline">Runtime Security for AI Agents</div>
-                </div>
-                <div class="header-right">
-                    <div>Generated: <span id="generated-at">{generated_at}</span></div>
-                    <div>Source JSON: <span class="mono">{source_path}</span></div>
-                </div>
-      </div>
-    </section>
-
-    <section class="section">
-      <h2>Executive Summary</h2>
-      <p id="summary-text" class="meta">Loading summary...</p>
-      <div id="summary-grid" class="summary-grid"></div>
-      <ul id="summary-bullets" class="bullets"></ul>
-    </section>
-
-    <section class="section">
-      <h2>All Alerts (Human Readable)</h2>
-      <p class="meta">This section is rendered from embedded JSON arrays (secrets/PII/prompt/tool events).</p>
-      <table>
-        <thead>
-          <tr>
-            <th style="width: 120px;">Time</th>
-            <th style="width: 100px;">Severity</th>
-            <th style="width: 130px;">Category</th>
-            <th style="width: 140px;">Agent</th>
-            <th>Alert Detail</th>
-            <th style="width: 90px;">Action</th>
-          </tr>
-        </thead>
-        <tbody id="alerts-table-body"></tbody>
-      </table>
-    </section>
-  </div>
-
-  <section class="footer">
-    <div>Confidential</div>
-    <div>{company}</div>
-        <div>Dhi Runtime Security Report</div>
-  </section>
-
-  <script id="daily-report-json" type="application/json">{report_json}</script>
-  <script>
-    function num(v) {{
-      if (typeof v === 'number') return v;
-      const n = Number(v);
-      return Number.isFinite(n) ? n : 0;
-    }}
-    function esc(v) {{
-      if (v === null || v === undefined) return '';
-      return String(v)
-        .replaceAll('&', '&amp;')
-        .replaceAll('<', '&lt;')
-        .replaceAll('>', '&gt;');
-    }}
-    function severityFor(category, action, score) {{
-      const c = String(category || '').toLowerCase();
-      const a = String(action || '').toLowerCase();
-      if (a === 'blocked') return 'critical';
-      if (c.includes('secret')) return 'critical';
-      if (c.includes('injection') || c.includes('tool')) return num(score) >= 90 ? 'critical' : 'high';
-      if (c.includes('pii')) return 'medium';
-      return 'low';
-    }}
-    function summaryMetric(label, value) {{
-      return `<div class="metric"><div class="value">${{esc(value)}}</div><div class="label">${{esc(label)}}</div></div>`;
-    }}
-    function actionUpper(v) {{
-      const a = String(v || 'alerted').toUpperCase();
-      return a;
-    }}
-    function pushAlert(out, row) {{
-      out.push(row);
-    }}
-
-    const report = JSON.parse(document.getElementById('daily-report-json').textContent);
-    const summary = report.summary || {{}};
-    const totalAlerts = num(summary.total_alerts);
-    const totalBlocks = num(summary.total_blocks);
-    const totalCalls = num(summary.total_llm_calls) + num(summary.total_tool_calls);
-    const blockedPct = totalAlerts > 0 ? ((totalBlocks / totalAlerts) * 100).toFixed(1) : '0.0';
-
-    document.getElementById('summary-text').textContent =
-      `Observed ${{num(summary.total_agents)}} agents, ${{num(summary.total_llm_calls)}} LLM calls, and ${{num(summary.total_tool_calls)}} tool calls in this period.`;
-    document.getElementById('summary-grid').innerHTML =
-      summaryMetric('Total Alerts', totalAlerts) +
-      summaryMetric('Total Blocks', totalBlocks) +
-      summaryMetric('Block Rate', `${{blockedPct}}%`) +
-      summaryMetric('Total Calls', totalCalls) +
-      summaryMetric('Total Cost (USD)', num(summary.total_cost_usd).toFixed(2));
-
-    const bullets = [];
-    if (num(summary.total_blocks) > 0) {{
-      bullets.push(`Blocking controls actively prevented ${{num(summary.total_blocks)}} high-risk events.`);
-    }}
-    if (num(summary.total_alerts) > 0) {{
-      bullets.push(`Alerting generated ${{num(summary.total_alerts)}} actionable detections for review.`);
-    }}
-    const topTypes = report.alerts_by_type ? Object.entries(report.alerts_by_type).sort((a,b) => num(b[1]) - num(a[1])).slice(0,3) : [];
-    if (topTypes.length > 0) {{
-      bullets.push(`Top alert types: ${{topTypes.map(([k,v]) => `${{k}} (${{v}})`).join(', ')}}.`);
-    }}
-    if (Array.isArray(report.recommendations) && report.recommendations.length > 0) {{
-      bullets.push(`Primary recommendation: ${{report.recommendations[0]}}`);
-    }}
-    document.getElementById('summary-bullets').innerHTML =
-      bullets.map(b => `<li>${{esc(b)}}</li>`).join('');
-
-    const rows = [];
-    for (const s of (report.secrets_detected || [])) {{
-      pushAlert(rows, {{
-        ts: s.timestamp || '',
-        category: 'Secrets',
-        agent: s.agent_id || '-',
-        detail: `${{s.secret_type || 'secret'}} detected in ${{s.location || 'unknown location'}}${{s.masked_value ? ` (masked: ${{s.masked_value}})` : ''}}`,
-        action: actionUpper(s.action),
-        severity: severityFor('secrets', s.action, 100)
-      }});
-    }}
-    for (const p of (report.pii_detected || [])) {{
-      pushAlert(rows, {{
-        ts: p.timestamp || '',
-        category: 'PII',
-        agent: p.agent_id || '-',
-        detail: `${{p.pii_type || 'pii'}} detected in ${{p.location || 'unknown location'}} (count: ${{num(p.count)}})`,
-        action: actionUpper(p.action),
-        severity: severityFor('pii', p.action, 60)
-      }});
-    }}
-    for (const i of (report.injection_attempts || [])) {{
-      pushAlert(rows, {{
-        ts: i.timestamp || '',
-        category: 'Prompt',
-        agent: i.agent_id || '-',
-        detail: `${{i.attack_type || 'prompt attack'}} pattern '${{i.pattern || 'unknown'}}' (risk: ${{num(i.risk_score)}})`,
-        action: actionUpper(i.action),
-        severity: severityFor('injection', i.action, i.risk_score)
-      }});
-    }}
-    for (const t of (report.dangerous_tool_calls || [])) {{
-      const args = t.args ? JSON.stringify(t.args) : '';
-      pushAlert(rows, {{
-        ts: t.timestamp || '',
-        category: 'Tool Risk',
-        agent: t.agent_id || '-',
-        detail: `${{t.tool || 'tool'}} invoked with args ${{args}} (risk: ${{num(t.risk_score)}})`,
-        action: actionUpper(t.action),
-        severity: severityFor('tool', t.action, t.risk_score)
-      }});
-    }}
-    rows.sort((a, b) => (a.ts < b.ts ? 1 : -1));
-
-    const tbody = document.getElementById('alerts-table-body');
-    if (rows.length === 0) {{
-      tbody.innerHTML = `<tr><td colspan="6">No detailed alert events found in source JSON.</td></tr>`;
-    }} else {{
-      tbody.innerHTML = rows.map(r => `
-        <tr>
-          <td class="mono">${{esc(r.ts)}}</td>
-          <td><span class="severity ${{esc(r.severity)}}">${{esc(r.severity)}}</span></td>
-          <td>${{esc(r.category)}}</td>
-          <td class="mono">${{esc(r.agent)}}</td>
-          <td>${{esc(r.detail)}}</td>
-          <td>${{esc(r.action)}}</td>
-        </tr>
-      `).join('');
-    }}
-  </script>
-</body>
-</html>
-"#,
-        company = company_escaped,
-        generated_at = html_escape(generated_at),
-        source_path = source_escaped,
-        report_json = report_json
-    ))
+    let host = match toml_bind_address.unwrap_or("127.0.0.1") {
+        "0.0.0.0" => "127.0.0.1",
+        other => other,
+    };
+    let port = toml_metrics_port.unwrap_or(cli_port);
+    format!("http://{host}:{port}/health")
 }
 
 fn run_report_html(input_path: &str, output_path: Option<&str>, company: &str) -> Result<()> {
-    let raw = read_to_string(input_path)?;
-    let report: serde_json::Value = serde_json::from_str(&raw)?;
-    let report_type = report
-        .get("report_type")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    if report_type != "security_summary" {
-        anyhow::bail!(
-            "expected report_type=security_summary in input JSON, found '{}'",
-            report_type
-        );
-    }
-
-    let html = render_daily_report_html(&report, input_path, company)?;
-    let out_path = if let Some(path) = output_path {
-        std::path::PathBuf::from(path)
-    } else {
-        let mut p = std::path::PathBuf::from(input_path);
-        p.set_extension("html");
-        p
-    };
-    if let Some(parent) = out_path.parent() {
-        create_dir_all(parent)?;
-    }
-    write(&out_path, html)?;
+    let out_path = generate_daily_report_html(input_path, output_path, company)?;
     println!(
         "Generated daily HTML report: {}",
         out_path.to_string_lossy()
@@ -1124,6 +695,12 @@ async fn main() -> Result<()> {
     struct TomlAlertingWrapper {
         alerting: Option<TomlAlertingSection>,
         checks: Option<TomlChecksSection>,
+        metrics: Option<TomlMetricsSection>,
+    }
+    #[derive(serde::Deserialize, Default)]
+    struct TomlMetricsSection {
+        port: Option<u16>,
+        bind_address: Option<String>,
     }
 
     // Build configuration
@@ -1158,6 +735,24 @@ async fn main() -> Result<()> {
     } else {
         None
     };
+    let (toml_metrics_port, toml_metrics_bind_address): (Option<u16>, Option<String>) =
+        if let Some(ref config_path) = cli.config {
+            match std::fs::read_to_string(config_path)
+                .ok()
+                .and_then(|c| toml::from_str::<TomlAlertingWrapper>(&c).ok())
+            {
+                Some(wrapper) => {
+                    if let Some(metrics) = wrapper.metrics {
+                        (metrics.port, metrics.bind_address)
+                    } else {
+                        (None, None)
+                    }
+                },
+                None => (None, None),
+            }
+        } else {
+            (None, None)
+        };
 
     let check_toggles = if let Some(ref config_path) = cli.config {
         let parsed = std::fs::read_to_string(config_path)
@@ -1253,7 +848,15 @@ async fn main() -> Result<()> {
             println!("Agents command not yet implemented");
             Ok(())
         },
-        Some(Commands::Health { url, timeout, json }) => run_health(&url, timeout, json).await,
+        Some(Commands::Health { url, timeout, json }) => {
+            let resolved_url = resolve_health_url(
+                url.as_deref(),
+                toml_metrics_bind_address.as_deref(),
+                toml_metrics_port,
+                cli.port,
+            );
+            run_health(&resolved_url, timeout, json).await
+        },
         Some(Commands::ReportHtml {
             input,
             output,
@@ -1355,39 +958,31 @@ mod tests {
     }
 
     #[test]
-    fn test_render_daily_report_html_contains_embedded_json_and_sections() {
-        let report = serde_json::json!({
-            "report_type": "security_summary",
-            "generated_at": "2026-03-23T00:00:00Z",
-            "summary": {
-                "total_agents": 2,
-                "total_llm_calls": 10,
-                "total_tool_calls": 5,
-                "total_cost_usd": 1.5,
-                "total_alerts": 3,
-                "total_blocks": 1
-            },
-            "alerts_by_type": { "prompt_injection": 1 },
-            "secrets_detected": [],
-            "pii_detected": [],
-            "injection_attempts": [{
-                "timestamp": "2026-03-23T00:01:00Z",
-                "agent_id": "agent-1",
-                "attack_type": "prompt_injection",
-                "pattern": "ignore previous instructions",
-                "risk_score": 92,
-                "action": "blocked"
-            }],
-            "dangerous_tool_calls": [],
-            "recommendations": ["Review risky prompts."]
-        });
+    fn test_resolve_health_url_prefers_cli_url() {
+        let url = resolve_health_url(
+            Some("http://10.1.2.3:7777/health"),
+            Some("127.0.0.1"),
+            Some(9090),
+            9090,
+        );
+        assert_eq!(url, "http://10.1.2.3:7777/health");
+    }
 
-        let html =
-            render_daily_report_html(&report, "examples/sample-report-daily.json", "Seconize")
-                .expect("report html should render");
-        assert!(html.contains("Executive Summary"));
-        assert!(html.contains("daily-report-json"));
-        assert!(html.contains("alerts-table-body"));
-        assert!(html.contains("security_summary"));
+    #[test]
+    fn test_resolve_health_url_uses_toml_metrics_settings() {
+        let url = resolve_health_url(None, Some("10.0.0.5"), Some(9191), 9090);
+        assert_eq!(url, "http://10.0.0.5:9191/health");
+    }
+
+    #[test]
+    fn test_resolve_health_url_maps_wildcard_bind_to_localhost() {
+        let url = resolve_health_url(None, Some("0.0.0.0"), Some(9191), 9090);
+        assert_eq!(url, "http://127.0.0.1:9191/health");
+    }
+
+    #[test]
+    fn test_resolve_health_url_falls_back_to_cli_port() {
+        let url = resolve_health_url(None, None, None, 8088);
+        assert_eq!(url, "http://127.0.0.1:8088/health");
     }
 }

@@ -32,6 +32,7 @@ pub mod detection;
 pub mod ebpf;
 pub mod monitor;
 pub mod proxy;
+pub mod reporting;
 pub mod server;
 
 #[cfg(test)]
