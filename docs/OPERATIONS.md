@@ -4,9 +4,15 @@
 
 ---
 
-## Quick Install (Linux with eBPF)
+## Overview
 
 Dhi uses **eBPF** to intercept SSL/TLS traffic at the kernel level. This provides full visibility into HTTPS content without certificate injection or client reconfiguration.
+
+---
+
+# BASIC OPERATIONS
+
+## Install
 
 ### Quick Install (Release)
 
@@ -23,34 +29,33 @@ The installer automatically:
 - Copies config template to `/etc/dhi/dhi.toml` (first install only)
 - Sets up systemd service with proper capabilities
 - Configures log rotation with logrotate
+- Enables health check timer (runs every 1 minute)
 
-### Verify Installation
-
-```bash
-sudo ./scripts/install-linux-release.sh --verify-only
-```
-
-For development/source builds, see [DEVELOPERS.md](DEVELOPERS.md).
+That's it! The service is now ready to start.
 
 ---
 
-## Running Dhi (eBPF Mode)
+## Start Dhi
 
-**eBPF mode is the primary mode** — intercepts SSL/TLS at the kernel level, full HTTPS content visibility without certificate injection.
+### Default Start (Recommended)
 
-### Start Dhi
+Before starting, review config defaults at `/etc/dhi/dhi.toml`:
+- Protection level: `alert` (monitors only, no blocking)
+- Logging level: `info`
+- Metrics port: `9090` (health endpoint: `/health`)
+- Health timer: enabled (auto-restarts on failure)
 
-The installer enables the service (auto-start on boot) but does not start it immediately.
+Start the service:
 
-Before first start, review config at `/etc/dhi/dhi.toml`.
+```bash
+sudo systemctl start dhi
+```
 
-Quick defaults to know:
-- `protection.level = "alert"`
-- `metrics.enabled = true`, `metrics.port = 9090` (health endpoint: `/health`)
-- `logging.level = "info"`
-- service is enabled, health timer is enabled (`dhi-health-check.timer`, 1-minute interval)
+**First-time workflow:** Start in `alert` mode to observe legitimate traffic for a few days before transitioning to `block` mode. See [Advanced: Block Mode](#advanced-block-mode) for details.
 
-If you skipped Slack webhook during install, add it now before first start (if not set, Dhi still starts; check `journalctl -u dhi`, `/var/log/dhi/dhi.log` for warnings, and `/var/log/dhi/alerts.log` for local alert history):
+### Optional: Configure Slack Webhook
+
+If you skipped the webhook during install, add it now (otherwise skip this):
 
 ```toml
 [alerting]
@@ -58,55 +63,29 @@ enabled = true
 slack_webhook = "https://hooks.slack.com/services/..."
 ```
 
-Then start:
+Then restart:
 
 ```bash
-sudo systemctl start dhi
+sudo systemctl restart dhi
 ```
 
-To run directly (without systemd):
+### Direct Run (Without systemd)
+
+For debugging or custom setups:
 
 ```bash
 sudo dhi --config /etc/dhi/dhi.toml
 ```
 
-For defaults and tuning, see the [Configuration](#configuration) section.
-
-**Recommended workflow:** Start in `alert` mode (default) for a few days to observe legitimate traffic and potential false positives. Once confident, transition to `block` mode and configure the block action via the [eBPF Block Action](#ebpf-block-action) subsection in Advanced.
-
-For non-Linux compatibility, see [NON_LINUX_PROXY.md](NON_LINUX_PROXY.md).
-
 ---
-
-## Service Management (systemd)
-
-The release installer already installs and enables `dhi.service` on systemd hosts.
-Use this section for day-2 operations.
-
-### Service Commands
-
-```bash
-# Start/stop/restart
-sudo systemctl start dhi
-sudo systemctl stop dhi
-sudo systemctl restart dhi
-
-# Check status
-sudo systemctl status dhi
-
-# Check enabled on boot
-sudo systemctl is-enabled dhi
-
-# View logs
-sudo journalctl -u dhi -f
-
-# View last 100 lines
-sudo journalctl -u dhi -n 100
-```
 
 ## Health Checks
 
-The installer sets up an automated health check timer that runs every minute. For a quick manual check:
+### Quick Status Checks
+
+The installer sets up an automated health check timer that runs every minute.
+
+Check service status:
 
 ```bash
 # Is Dhi running?
@@ -115,9 +94,58 @@ systemctl is-active dhi
 # Quick health check (service + endpoint)
 sudo dhi-health-check
 
-# Check timer status and recent runs
+# Check recent timer runs
 sudo systemctl status dhi-health-check.timer
-sudo journalctl -u dhi-health-check.service -n 20
+sudo journalctl -u dhi-health-check.service -n 10
+```
+
+### View Service Logs
+
+```bash
+# Real-time logs
+sudo journalctl -u dhi -f
+
+# Last 50 lines
+sudo journalctl -u dhi -n 50
+```
+
+---
+
+## Logs and Reports
+
+### Where Are the Logs?
+
+| Location | Content |
+|----------|---------|
+| `journalctl -u dhi` | systemd service logs |
+| `/var/log/dhi/dhi.log` | Main application log |
+| `/var/log/dhi/alerts.log` | Alert history (Slack webhook) |
+| `/var/log/dhi/reports/daily-*.json` | Daily security reports |
+
+### Viewing Logs
+
+```bash
+# Real-time logs
+sudo journalctl -u dhi -f
+
+# Today's logs
+sudo journalctl -u dhi --since today
+
+# Application log file
+tail -f /var/log/dhi/dhi.log
+
+# Check for alerts
+tail -f /var/log/dhi/alerts.log
+```
+
+### Viewing Reports
+
+```bash
+# View today's report
+cat /var/log/dhi/reports/daily-$(date +%Y-%m-%d).json | jq .
+
+# Summary of today's alerts
+cat /var/log/dhi/reports/daily-$(date +%Y-%m-%d).json | jq '.summary'
 ```
 
 ---
@@ -144,7 +172,7 @@ rate_limit_per_minute = 30
 
 [reporting]
 enabled = true
-output_dir = "/tmp/log/dhi/reports"
+output_dir = "/var/log/dhi/reports"
 daily_report = true
 
 [metrics]
@@ -153,217 +181,130 @@ port = 9090
 
 [logging]
 level = "info"
-file = "/tmp/log/dhi/dhi.log"
+file = "/var/log/dhi/dhi.log"
 ```
 
-Notes:
-- Defaults: `[protection].level = "alert"` and `[logging].level = "info"`.
-- Tune runtime behavior in this file (especially `[protection].level`, `[logging].level`, `[alerting]`, and `[metrics]`).
-- Log/report paths are deployment-specific and fully configurable.
-- Common choices are `/tmp/log/dhi/*` (dev/test) and `/var/log/dhi/*` (hardened production hosts).
-- Use one active log root per environment (do not run both concurrently):
-  - dev/test: `/tmp/log/dhi/*`
-  - production: `/var/log/dhi/*`
+**Defaults:**
+- Protection: `alert` (logs only)
+- Logging: `info` (standard verbosity)
+- Metrics port: `9090`
 
-### Environment Variables
+To change settings, edit `/etc/dhi/dhi.toml` and restart:
+
+```bash
+sudo systemctl restart dhi
+```
+
+### Common Configuration Changes
+
+**Increase logging verbosity:**
+```toml
+[logging]
+level = "debug"
+```
+
+**Enable block mode (after observation period):**
+```toml
+[protection]
+level = "block"
+ebpf_block_action = "kill"  # See Advanced section for options
+```
+
+**Disable Slack alerts:**
+```toml
+[alerting]
+enabled = false
+```
+
+### Environment Variables (Optional)
+
+You can also set these via environment variables:
 
 ```bash
 export DHI_PROTECTION_LEVEL=alert
-export DHI_SLACK_WEBHOOK=https://hooks.slack.com/...
 export DHI_LOG_LEVEL=info
+export DHI_SLACK_WEBHOOK=https://hooks.slack.com/...
 ```
 
 ---
 
-## Logs and Reports
+# ADVANCED OPERATIONS
 
-### Log Locations
+## Advanced: Install
 
-| File | Content |
-|------|---------|
-| `/tmp/log/dhi/dhi.log` (or `/var/log/dhi/dhi.log`) | Main application log |
-| `/tmp/log/dhi/reports/daily-*.json` (or `/var/log/dhi/reports/daily-*.json`) | Daily security reports |
-| `/tmp/log/dhi/alerts.log` (or `/var/log/dhi/alerts.log`) | Alert history |
-| `journalctl -u dhi` | systemd logs |
-
-### Log Rotation
-
-Log rotation config is provided at:
+### Verify Installation
 
 ```bash
-ops/logrotate/dhi
+sudo ./scripts/install-linux-release.sh --verify-only
 ```
 
-Install on host:
+### Install from Source
 
-```bash
-sudo install -m 644 ops/logrotate/dhi /etc/logrotate.d/dhi
-```
-
-Validate rotation config:
-
-```bash
-sudo logrotate -d /etc/logrotate.d/dhi
-```
-
-Force a rotation run (test only):
-
-```bash
-sudo logrotate -f /etc/logrotate.d/dhi
-```
-
-Policy summary:
-- `*.log`: daily, keep 14, compress.
-- report `*.json`: weekly, keep 8, compress.
-- covers both `/tmp/log/dhi/*` and `/var/log/dhi/*`, but operate with one active root per environment.
-
-### View Logs
-
-```bash
-# Real-time logs
-sudo journalctl -u dhi -f
-
-# Today's logs
-sudo journalctl -u dhi --since today
-
-# Filter by severity
-sudo journalctl -u dhi -p warning
-
-# Application log
-tail -f /tmp/log/dhi/dhi.log
-```
-
-### View Reports
-
-```bash
-# List reports
-ls -la /tmp/log/dhi/reports/
-
-# View latest daily report
-cat /tmp/log/dhi/reports/daily-$(date +%Y-%m-%d).json | jq .
-
-# Summary of today's events
-cat /tmp/log/dhi/reports/daily-$(date +%Y-%m-%d).json | jq '.summary'
-```
+For development/custom builds, see [DEVELOPERS.md](DEVELOPERS.md).
 
 ---
 
-## Troubleshooting
+## Advanced: Start Dhi
 
-### Dhi Won't Start
-
-```bash
-# Check for errors
-sudo journalctl -u dhi -n 50
-
-# Common issues:
-# 1. Config file syntax error
-dhi --config /etc/dhi/dhi.toml --check
-
-# 2. Port already in use
-sudo lsof -i :8080
-sudo lsof -i :9090
-
-# 3. Missing eBPF program
-ls -la /usr/share/dhi/dhi_ssl.bpf.o
-
-# 4. Insufficient permissions
-# eBPF needs root or CAP_BPF
-```
-
-### eBPF Not Working
-
-If Dhi won't attach SSL handlers (logs show `perf_event_open failed`):
+### Service Management Commands
 
 ```bash
-# Lower perf restrictions for uprobes
-echo 'kernel.perf_event_paranoid=1' | sudo tee /etc/sysctl.d/99-dhi-ebpf.conf
-sudo sysctl --system | grep perf_event_paranoid
-
-# Ensure systemd unit has required capabilities
-sudo cp ops/systemd/dhi.service /etc/systemd/system/dhi.service
-sudo systemctl daemon-reload
-sudo systemctl restart dhi
-```
-
-For kernel requirements (5.4+ needed) and deep eBPF debugging, see [DEVELOPERS.md](DEVELOPERS.md#ebpf-troubleshooting--deep-debugging).
-
-### No Alerts Being Sent
-
-```bash
-# Test Slack webhook
-curl -X POST -H 'Content-type: application/json' \
-  --data '{"text":"Test from Dhi"}' \
-  YOUR_SLACK_WEBHOOK_URL
-
-# Check rate limiting (might be throttled)
-grep "rate_limit" /var/log/dhi/dhi.log
-```
-
----
-
-## Upgrade Procedure
-
-### Using Release Installer (Recommended)
-
-```bash
-# Upgrade using release installer
-curl -sSL https://raw.githubusercontent.com/seconize-co/dhi/main/scripts/install-linux-release.sh | sudo bash
-
-# Verify
-sudo systemctl status dhi
-curl http://127.0.0.1:9090/health
-```
-
-### From Source
-
-For source builds, see [DEVELOPERS.md](DEVELOPERS.md#development-environment-setup) for build instructions, then:
-
-```bash
-# Backup config
-sudo cp /etc/dhi/dhi.toml /etc/dhi/dhi.toml.backup
-
-# Stop service, install new binary/eBPF, and start
-sudo systemctl restart dhi
-
-# Verify
-sudo systemctl status dhi
-curl http://127.0.0.1:9090/health
-```
-
----
-
-## Uninstall
-
-```bash
-# Stop and disable service
+# Start/stop/restart
+sudo systemctl start dhi
 sudo systemctl stop dhi
-sudo systemctl disable dhi
+sudo systemctl restart dhi
 
-# Remove files
-sudo rm /usr/local/bin/dhi
-sudo rm /etc/systemd/system/dhi.service
-sudo rm -rf /etc/dhi
-sudo rm -rf /usr/share/dhi
-sudo rm -rf /var/log/dhi
+# Check if enabled on boot
+sudo systemctl is-enabled dhi
 
-# Reload systemd
+# View full service status
+sudo systemctl status dhi --no-pager
+```
+
+### Customize Runtime Flags
+
+To override config settings via systemd, use:
+
+```bash
+sudo systemctl edit dhi
+```
+
+Add overrides:
+
+```ini
+[Service]
+ExecStart=
+ExecStart=/usr/local/bin/dhi --config /etc/dhi/dhi.toml --level alert -v
+```
+
+Apply and verify:
+
+```bash
 sudo systemctl daemon-reload
+sudo systemctl restart dhi
+```
+
+### Run Directly (Debugging)
+
+For troubleshooting, run without systemd:
+
+```bash
+sudo dhi --config /etc/dhi/dhi.toml --level debug
 ```
 
 ---
 
-## Advanced
+## Advanced: Health Checks
 
-### Health Check Options
+### Health Check Script Options
 
 The health check script supports guardrails to prevent restart flapping:
 
 ```bash
-# Auto-restart after 3 consecutive failures, with 10-min cooldown between restarts
+# Auto-restart after 3 consecutive failures, with 10-min cooldown
 sudo dhi-health-check --restart-on-fail
 
-# Run one check immediately via systemd
+# Run one check immediately
 sudo systemctl start dhi-health-check.service
 ```
 
@@ -383,43 +324,92 @@ Full options:
 | `--restart-on-fail` | off | — |
 | `--no-systemd-check` | off | — |
 
-The host/port for the derived URL can also be overridden via `DHI_HEALTH_HOST` and `DHI_HEALTH_PORT`.
+Override host/port:
+
+```bash
+export DHI_HEALTH_HOST=127.0.0.1
+export DHI_HEALTH_PORT=9090
+sudo dhi-health-check
+```
 
 ### Agent/Session Observability
+
+Query agent and session metrics:
 
 ```bash
 curl -s http://127.0.0.1:9090/api/agents | jq '.total_agents, .total_sessions, .total_tokens, .total_tool_calls'
 ```
 
-Key fields — per agent: `id`, `framework`, `pid`, `total_tokens`, `total_tool_calls`. Per session: `session_id`, `session_name`, `total_tokens`, `total_tool_calls`.
+Key fields per agent: `id`, `framework`, `pid`, `total_tokens`, `total_tool_calls`.
+Per session: `session_id`, `session_name`, `total_tokens`, `total_tool_calls`.
 
-### Customize Service Flags
+---
 
-If you need to change runtime flags (for example protection level, verbosity, or config path), use a systemd override:
+## Advanced: Logs and Reports
 
-```bash
-sudo systemctl edit dhi
-```
+### Log Rotation (Production)
 
-Example override:
-
-```ini
-[Service]
-ExecStart=
-ExecStart=/usr/local/bin/dhi --config /etc/dhi/dhi.toml --level alert -v
-```
-
-Apply and verify:
+Log rotation is pre-configured. Install on host:
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl restart dhi
-sudo systemctl status dhi --no-pager
+sudo install -m 644 ops/logrotate/dhi /etc/logrotate.d/dhi
 ```
 
-### eBPF Block Action
+Validate:
 
-When in block mode, set how Dhi enforces a block decision via `--ebpf-block-action` or in config:
+```bash
+sudo logrotate -d /etc/logrotate.d/dhi
+```
+
+Test rotation:
+
+```bash
+sudo logrotate -f /etc/logrotate.d/dhi
+```
+
+**Policy:**
+- `*.log`: daily, keep 14 days, compress
+- `*.json` reports: weekly, keep 8 weeks, compress
+
+### Advanced Log Filtering
+
+```bash
+# Filter by severity
+sudo journalctl -u dhi -p error
+
+# Filter by time window
+sudo journalctl -u dhi --since "2 hours ago"
+
+# Follow new logs with verbose output
+sudo journalctl -u dhi -f -o verbose
+
+# Search for specific pattern
+sudo journalctl -u dhi | grep "error"
+```
+
+### Report Processing
+
+```bash
+# List all reports
+ls -la /var/log/dhi/reports/
+
+# Pretty-print report
+cat /var/log/dhi/reports/daily-$(date +%Y-%m-%d).json | jq '.' | less
+
+# Extract specific field (e.g., total events)
+cat /var/log/dhi/reports/daily-$(date +%Y-%m-%d).json | jq '.summary.total_events'
+
+# Archive old reports
+tar czf dhi-reports-$(date +%Y%m%d).tar.gz /var/log/dhi/reports/
+```
+
+---
+
+## Advanced: Configuration
+
+### Block Mode
+
+When ready to enforce blocking (after observation period):
 
 ```toml
 [protection]
@@ -427,63 +417,215 @@ level = "block"
 ebpf_block_action = "kill"   # none | term | kill (default)
 ```
 
-- `none` — log decision only
-- `term` — send SIGTERM to the offending process
-- `kill` — send SIGKILL (default)
+**Block action types:**
+- `none` — log decision only (no enforcement)
+- `term` — send SIGTERM to offending process
+- `kill` — send SIGKILL (default, immediate termination)
 
-For architecture and eBPF internals, see [DEVELOPERS.md](DEVELOPERS.md#architecture-how-ebpf-works).
+For eBPF internals and architecture, see [DEVELOPERS.md](DEVELOPERS.md#architecture-how-ebpf-works).
 
-### Systemctl Portability & Edge Cases
+### Budget and Alerts
+
+Fine-tune alert sensitivity:
+
+```toml
+[budget]
+enabled = true
+daily_limit = 500.0      # Tokens per day
+monthly_limit = 5000.0   # Tokens per month
+alert_threshold = 0.8    # Alert at 80% usage
+
+[alerting]
+enabled = true
+slack_webhook = "..."
+min_severity = "medium"  # low, medium, high, critical
+rate_limit_per_minute = 30  # Max alerts per minute
+```
+
+### Custom Log Paths
+
+For non-standard deployments:
+
+```toml
+[logging]
+level = "info"
+file = "/custom/path/dhi.log"
+
+[reporting]
+enabled = true
+output_dir = "/custom/path/reports"
+
+[alerting]
+enabled = true
+```
+
+Ensure directories exist and are writable:
+
+```bash
+sudo mkdir -p /custom/path
+sudo chown dhi:dhi /custom/path
+sudo chmod 755 /custom/path
+```
+
+---
+
+## Advanced: Service & Deployment
+
+### Systemctl Portability
 
 The installer detects platform/init automatically:
 
-- systemd hosts: installs and enables `dhi.service`
-- Alpine/OpenRC hosts: skips systemd and prints OpenRC setup steps
-- other non-systemd hosts: installs binaries/config and prints manual-run guidance
+- **systemd hosts**: installs and enables `dhi.service`
+- **Alpine/OpenRC hosts**: prints manual setup steps
+- **Other hosts**: prints binary installation and manual-run guidance
 
 Quick check:
 
 ```bash
-command -v systemctl >/dev/null 2>&1 && echo "systemd path" || echo "non-systemd path"
+command -v systemctl >/dev/null 2>&1 && echo "systemd" || echo "non-systemd"
 ```
 
-For Alpine/OpenRC, follow the exact post-install instructions printed by the installer.
+For Alpine/OpenRC, follow post-install instructions from installer.
 
-Reference files in this repository:
+### Automatic Restart on Crash
 
-- `ops/systemd/dhi.service` (service template)
-- `ops/sysctl/99-dhi-ebpf.conf` (kernel perf settings for eBPF uprobes)
-
-### Crash Resistance
-
-#### Automatic Restart (systemd)
-
-Installer-provided `dhi.service` includes:
+The systemd service includes crash recovery:
 
 ```ini
-Restart=always          # Always restart on crash
-RestartPreventExitStatus=73  # Do not loop-restart on singleton lock conflict
+Restart=always          # Always restart
+RestartPreventExitStatus=73  # Don't loop-restart on lock conflict
 RestartSec=5            # Wait 5 seconds before restart
 StartLimitBurst=5       # Max 5 restarts
 StartLimitIntervalSec=60  # Within 60 seconds
 ```
 
-Behavior:
-- Crashes are auto-restarted after 5 seconds
-- Crash loops are capped at 5 restarts per 60 seconds
-- Exit code `73` is not loop-restarted (singleton-lock protection)
-
-Quick verification:
+Verify:
 
 ```bash
-systemctl show dhi -p Restart -p RestartSec -p RestartPreventExitStatus -p StartLimitBurst -p StartLimitIntervalSec
+systemctl show dhi -p Restart -p RestartSec -p StartLimitBurst -p StartLimitIntervalSec
 ```
 
-#### What Happens on Crash
+**Behavior:**
+- Crashes auto-restart after 5 seconds
+- Crash loops capped at 5 restarts per 60 seconds
+- Exit code 73 (singleton lock) prevents restart loop
 
-| Mode | Crash Behavior | Recommendation |
-|------|----------------|----------------|
-| **eBPF Mode** | **Fail-open**: Traffic flows normally, no protection | Acceptable - availability preserved |
+### Non-Linux Compatibility
+
+For non-Linux proxy mode, see [NON_LINUX_PROXY.md](NON_LINUX_PROXY.md).
+
+---
+
+## Troubleshooting
+
+### Dhi Won't Start
+
+```bash
+# Check systemd logs
+sudo journalctl -u dhi -n 50
+
+# Verify config syntax
+dhi --config /etc/dhi/dhi.toml --check
+
+# Check if ports are in use
+sudo lsof -i :9090
+
+# Verify eBPF object exists
+ls -la /usr/share/dhi/dhi_ssl.bpf.o
+
+# Check permissions (needs root or CAP_BPF)
+sudo -u dhi dhi --config /etc/dhi/dhi.toml 2>&1 | head -20
+```
+
+### eBPF Not Working
+
+If logs show `perf_event_open failed`:
+
+```bash
+# Lower perf restrictions
+echo 'kernel.perf_event_paranoid=1' | sudo tee /etc/sysctl.d/99-dhi-ebpf.conf
+sudo sysctl --system | grep perf_event_paranoid
+
+# Ensure systemd unit has capabilities
+sudo cp ops/systemd/dhi.service /etc/systemd/system/dhi.service
+sudo systemctl daemon-reload
+sudo systemctl restart dhi
+```
+
+**Requirements:** Linux 5.4+ kernel, CAP_BPF capability.
+
+See [DEVELOPERS.md](DEVELOPERS.md#ebpf-troubleshooting--deep-debugging) for deep debugging.
+
+### No Alerts Sent
+
+```bash
+# Test webhook manually
+curl -X POST -H 'Content-type: application/json' \
+  --data '{"text":"Test from Dhi"}' \
+  YOUR_SLACK_WEBHOOK_URL
+
+# Check webhook in config
+grep slack_webhook /etc/dhi/dhi.toml
+
+# Look for rate-limiting
+grep "rate_limit\|throttle" /var/log/dhi/dhi.log
+
+# Check alert severity threshold
+grep "min_severity" /etc/dhi/dhi.toml
+```
+
+---
+
+## Upgrade Procedure
+
+### Using Release Installer
+
+```bash
+curl -sSL https://raw.githubusercontent.com/seconize-co/dhi/main/scripts/install-linux-release.sh | sudo bash
+
+# Verify
+sudo systemctl status dhi
+curl http://127.0.0.1:9090/health
+```
+
+### From Source
+
+```bash
+# Backup config
+sudo cp /etc/dhi/dhi.toml /etc/dhi/dhi.toml.backup
+
+# Build and restart
+cd /path/to/dhi
+cargo build --release
+sudo cp target/release/dhi /usr/local/bin/
+sudo systemctl restart dhi
+
+# Verify
+sudo systemctl status dhi
+curl http://127.0.0.1:9090/health
+```
+
+---
+
+## Uninstall
+
+```bash
+# Stop and disable
+sudo systemctl stop dhi
+sudo systemctl disable dhi
+
+# Remove files
+sudo rm /usr/local/bin/dhi
+sudo rm /etc/systemd/system/dhi.service
+sudo rm -rf /etc/dhi
+sudo rm -rf /usr/share/dhi
+sudo rm -rf /var/log/dhi
+
+# Reload systemd
+sudo systemctl daemon-reload
+```
+
+---
 
 ## Quick Reference
 
@@ -491,7 +633,6 @@ systemctl show dhi -p Restart -p RestartSec -p RestartPreventExitStatus -p Start
 |--------|---------|
 | Start | `sudo systemctl start dhi` |
 | Stop | `sudo systemctl stop dhi` |
-| Restart | `sudo systemctl restart dhi` |
 | Status | `sudo systemctl status dhi` |
 | Logs | `sudo journalctl -u dhi -f` |
 | Health | `curl http://127.0.0.1:9090/health` |
