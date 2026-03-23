@@ -253,11 +253,29 @@ install_config_file() {
   
   # Install template
   sudo install -m 644 "$TMPDIR/etc/dhi/dhi.toml.example" /etc/dhi/dhi.toml.example
+
+  # Install external pattern template when available.
+  if [[ -f "$TMPDIR/etc/dhi/dhi.patterns.toml.example" ]]; then
+    sudo install -m 644 "$TMPDIR/etc/dhi/dhi.patterns.toml.example" /etc/dhi/dhi.patterns.toml.example
+  elif [[ -f "dhi.patterns.toml.example" ]]; then
+    sudo install -m 644 "dhi.patterns.toml.example" /etc/dhi/dhi.patterns.toml.example
+  else
+    local remote_patterns="https://raw.githubusercontent.com/${REPO}/${VERSION}/dhi.patterns.toml.example"
+    if ! curl -fsSL "$remote_patterns" -o "$TMPDIR/dhi.patterns.toml.example"; then
+      echo "WARNING: Could not obtain dhi.patterns.toml.example (archive/local/remote)."
+    else
+      sudo install -m 644 "$TMPDIR/dhi.patterns.toml.example" /etc/dhi/dhi.patterns.toml.example
+    fi
+  fi
   
   # Create config only if it doesn't exist (preserve on upgrades)
   if [[ ! -f /etc/dhi/dhi.toml ]]; then
     sudo install -m 644 "$TMPDIR/etc/dhi/dhi.toml.example" /etc/dhi/dhi.toml
-    return 0
+  fi
+
+  # Create external pattern config only if it doesn't exist (preserve on upgrades).
+  if [[ -f /etc/dhi/dhi.patterns.toml.example && ! -f /etc/dhi/dhi.patterns.toml ]]; then
+    sudo install -m 644 /etc/dhi/dhi.patterns.toml.example /etc/dhi/dhi.patterns.toml
   fi
   
   return 0
@@ -331,6 +349,18 @@ run_post_install_verification() {
     verify_ok "Config file present: /etc/dhi/dhi.toml"
   else
     verify_warn "Config file missing: /etc/dhi/dhi.toml"
+  fi
+
+  if [[ -f /etc/dhi/dhi.patterns.toml.example ]]; then
+    verify_ok "Pattern template installed: /etc/dhi/dhi.patterns.toml.example"
+  else
+    verify_warn "Pattern template missing: /etc/dhi/dhi.patterns.toml.example"
+  fi
+
+  if [[ -f /etc/dhi/dhi.patterns.toml ]]; then
+    verify_ok "Pattern config file present: /etc/dhi/dhi.patterns.toml"
+  else
+    verify_warn "Pattern config file missing: /etc/dhi/dhi.patterns.toml"
   fi
 
   if [[ -d "$LOG_ROOT" && -d "$LOG_ROOT/reports" ]]; then
@@ -576,6 +606,7 @@ echo "Done. Installed:"
 echo "  - /usr/local/bin/dhi"
 echo "  - /usr/share/dhi/dhi_ssl.bpf.o"
 echo "  - /etc/dhi/dhi.toml (and dhi.toml.example)"
+echo "  - /etc/dhi/dhi.patterns.toml (and dhi.patterns.toml.example)"
 echo "  - ${LOG_ROOT}"
 echo "  - ${LOG_ROOT}/reports"
 if command -v systemctl >/dev/null 2>&1; then

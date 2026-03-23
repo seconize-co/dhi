@@ -51,6 +51,7 @@ For complete matrices, benchmarks, and tool-by-tool comparisons, see [docs/COMPA
 | 🔒 **HTTPS Interception** | SSL/TLS traffic capture via eBPF uprobes (Linux) |
 
 > Dhi is framework-agnostic for core security controls; framework-specific logic is primarily used in the agent fingerprinting feature.
+> Security checks can be customized through config toggles and optional external pattern rule files.
 
 ### Hardening Features
 

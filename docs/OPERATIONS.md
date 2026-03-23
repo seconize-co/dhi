@@ -522,6 +522,49 @@ Replace the default paths with your custom ones, then validate:
 sudo logrotate -d /etc/logrotate.d/dhi
 ```
 
+### Custom PII/Prompt Pattern Rules (Ops Runbook)
+
+Use external rules to customize patterns without changing code.
+
+1. Ensure files exist after install:
+
+```bash
+ls -la /etc/dhi/dhi.patterns.toml /etc/dhi/dhi.patterns.toml.example
+```
+
+2. Enable external rules in `/etc/dhi/dhi.toml`:
+
+```toml
+pattern_rules_path = "dhi.patterns.toml"
+```
+
+3. Edit `/etc/dhi/dhi.patterns.toml` and add custom patterns:
+
+```toml
+[pii]
+patterns = [
+  { pii_type = "employee_id", regex = "\\bEMP-[0-9]{6}\\b", severity = "medium", redact_format = "[EMP_ID]" },
+]
+
+[prompt]
+injection_patterns = ['(?i)ignore\\s+company\\s+policy']
+jailbreak_patterns = ['(?i)simulate\\s+an\\s+unrestricted\\s+assistant']
+```
+
+4. Restart and verify:
+
+```bash
+sudo systemctl restart dhi
+sudo journalctl -u dhi -n 80 --no-pager | grep -i "Loaded external security pattern rules"
+```
+
+Operational notes:
+- Keep regexes precise to avoid noisy false positives.
+- Allowed PII severities: `low`, `medium`, `high`, `critical`.
+- Invalid regex in external file causes startup failure (fail-fast by design).
+- Keep a backup before edits:
+  - `sudo cp /etc/dhi/dhi.patterns.toml /etc/dhi/dhi.patterns.toml.bak`
+
 ---
 
 ## Advanced: Service & Deployment
