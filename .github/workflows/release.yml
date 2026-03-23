@@ -22,15 +22,6 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             package: dhi-linux-arm64.tar.gz
-          - target: x86_64-apple-darwin
-            os: macos-latest
-            package: dhi-darwin-amd64.tar.gz
-          - target: aarch64-apple-darwin
-            os: macos-latest
-            package: dhi-darwin-arm64.tar.gz
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
-            package: dhi-windows-amd64.zip
 
     steps:
       - uses: actions/checkout@v4
@@ -41,29 +32,28 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Install eBPF build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang
+
       - name: Install cross-compilation tools (Linux ARM64)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
-          sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
 
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Package binary (Unix)
-        if: runner.os != 'Windows'
-        run: |
-          mkdir -p dist
-          cp target/${{ matrix.target }}/release/dhi dist/dhi
-          tar -C dist -czf ${{ matrix.package }} dhi
+      - name: Build eBPF object
+        run: clang -O2 -target bpf -c bpf/dhi_ssl.bpf.c -o bpf/dhi_ssl.bpf.o
 
-      - name: Package binary (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
+      - name: Package binary (Unix)
         run: |
-          New-Item -ItemType Directory -Path dist -Force | Out-Null
-          Copy-Item "target/${{ matrix.target }}/release/dhi.exe" "dist/dhi.exe"
-          Compress-Archive -Path "dist/dhi.exe" -DestinationPath "${{ matrix.package }}" -Force
+          mkdir -p dist/usr/local/bin dist/usr/share/dhi
+          cp target/${{ matrix.target }}/release/dhi dist/usr/local/bin/dhi
+          cp bpf/dhi_ssl.bpf.o dist/usr/share/dhi/dhi_ssl.bpf.o
+          tar -C dist -czf ${{ matrix.package }} usr
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

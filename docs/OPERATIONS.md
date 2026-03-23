@@ -257,6 +257,59 @@ sudo journalctl -u dhi -f
 sudo journalctl -u dhi -n 100
 ```
 
+### Systemctl Portability & Edge Cases
+
+**systemd is the standard init system across all major Linux distributions:**
+
+| Distribution | Init System | Status |
+|--------------|------------|--------|
+| Ubuntu, Debian | systemd | ✅ Default (20.04+) |
+| Fedora, RHEL, CentOS, AlmaLinux, Rocky | systemd | ✅ Standard |
+| openSUSE, SLES | systemd | ✅ Default |
+| Arch Linux | systemd | ✅ Standard |
+| Alpine Linux | OpenRC | ⚠️ Minimal distro; systemd optional |
+
+**For ~99% of production Linux (AWS, GCP, Azure, on-premises servers), systemd is available.**
+
+#### Check if systemd is available
+
+```bash
+# Test if systemd is present
+command -v systemctl >/dev/null 2>&1 && echo "systemd available" || echo "systemd NOT available"
+
+# View init system
+ps -p 1 -o comm=
+```
+
+Expected output: `systemd` or `init` (if using systemd, output is `systemd`).
+
+#### Alpine Linux (OpenRC) - Fallback
+
+If you deploy on Alpine or another non-systemd system:
+
+1. **Install script gracefully skips service setup:**
+   ```
+   WARNING: systemd not detected; Dhi service will not be registered.
+   You can still run Dhi manually: sudo dhi --level alert
+   ```
+
+2. **Manual start on reboot:**
+
+   Create `/etc/local.d/dhi.start`:
+   ```bash
+   #!/bin/sh
+   exec /usr/local/bin/dhi --level alert
+   ```
+
+   Make executable:
+   ```bash
+   sudo chmod +x /etc/local.d/dhi.start
+   ```
+
+   Alternatively, use a simple shell wrapper in your startup scripts or use `supervisord`/`runit` for service management.
+
+3. **Recommended:** Use systemd-enabled distribution (Ubuntu 20.04+, Debian 11+, RHEL 8+) for production deployments. systemd adoption is near-universal for production workloads.
+
 ### Auto-start Setup (Verified)
 
 If you want Dhi to start automatically after VM reboot, use this exact setup:

@@ -69,39 +69,19 @@ For complete matrices, benchmarks, and tool-by-tool comparisons, see [docs/COMPA
 ### Install from GitHub Releases (No Compile)
 
 Download prebuilt binaries from GitHub Releases instead of building from source.
+GitHub Releases currently publish Linux binaries only.
 
-Linux (amd64):
-
-```bash
-VERSION=v1.0.0
-curl -fL -o dhi-linux-amd64.tar.gz \
-    https://github.com/seconize-co/dhi/releases/download/${VERSION}/dhi-linux-amd64.tar.gz
-tar -xzf dhi-linux-amd64.tar.gz
-chmod +x dhi
-sudo mv dhi /usr/local/bin/dhi
-```
-
-macOS (Apple Silicon):
+Use the install script (downloads the correct Linux artifact for your CPU, installs `dhi`, and installs `dhi_ssl.bpf.o`):
 
 ```bash
-VERSION=v1.0.0
-curl -fL -o dhi-darwin-arm64.tar.gz \
-    https://github.com/seconize-co/dhi/releases/download/${VERSION}/dhi-darwin-arm64.tar.gz
-tar -xzf dhi-darwin-arm64.tar.gz
-chmod +x dhi
-sudo mv dhi /usr/local/bin/dhi
+# from a cloned repo
+./scripts/install-linux-release.sh v1.0.0
+
+# or one-liner (without cloning first)
+curl -fsSL https://raw.githubusercontent.com/seconize-co/dhi/main/scripts/install-linux-release.sh | bash -s -- v1.0.0
 ```
 
-Windows (PowerShell):
-
-```powershell
-$Version = "v1.0.0"
-Invoke-WebRequest -Uri "https://github.com/seconize-co/dhi/releases/download/$Version/dhi-windows-amd64.zip" -OutFile "dhi-windows-amd64.zip"
-Expand-Archive -Path "dhi-windows-amd64.zip" -DestinationPath ".\dhi-bin" -Force
-Move-Item ".\dhi-bin\dhi.exe" "$env:ProgramFiles\dhi.exe" -Force
-```
-
-Use the matching archive for your platform (`dhi-linux-arm64.tar.gz`, `dhi-darwin-amd64.tar.gz`, etc.).
+For macOS/Windows proxy-mode notes, see [docs/NON_LINUX_PROXY.md](docs/NON_LINUX_PROXY.md).
 
 ### Build & Run (Linux)
 
@@ -124,22 +104,43 @@ sudo ./target/release/dhi --level alert --slack-webhook "https://hooks.slack.com
 
 ### Post-install checklist (recommended)
 
-1. Choose exactly one log root per environment:
-- dev/test: `/tmp/log/dhi/*`
-- production: `/var/log/dhi/*`
+What the install script now does by default (production-oriented):
+- creates `/var/log/dhi` and `/var/log/dhi/reports`
+- installs `/etc/logrotate.d/dhi` (when available)
+- validates logrotate policy and checks scheduler presence
+- installs and enables systemd service (when systemd is available)
 
-2. Install log rotation policy:
+Default Dhi runtime behavior is still:
+- logs -> stdout/journald (`[logging].file` unset)
+- reports -> `./dhi-reports` (`[reporting].output_dir`)
+
+**To start Dhi** (if systemd service was installed):
+
 ```bash
-sudo install -m 644 ops/logrotate/dhi /etc/logrotate.d/dhi
+# Start now
+sudo systemctl start dhi
+
+# Check status
+systemctl status dhi
+
+# Follow logs in real-time
+sudo journalctl -u dhi -f
 ```
 
-3. Validate policy (dry run):
+If you want production file paths, set these in config:
+
+1. Configure file log/report paths:
+```toml
+[logging]
+file = "/var/log/dhi/dhi.log"
+
+[reporting]
+output_dir = "/var/log/dhi/reports"
+```
+
+2. Verify rotation setup:
 ```bash
 sudo logrotate -d /etc/logrotate.d/dhi
-```
-
-4. Ensure scheduler is enabled:
-```bash
 systemctl status logrotate.timer
 ```
 
@@ -147,24 +148,7 @@ If logrotate is not installed or not running, Dhi logs/reports can grow unbounde
 - install/enable logrotate, or
 - rely on journald retention limits (`SystemMaxUse`, `MaxRetentionSec`) and avoid file append logging until rotation is enabled.
 
-### Proxy Mode (macOS/Windows - Limited)
-
-> ✅ Supported runtime modes today: **eBPF mode** and **proxy mode**.
->
-> 🔮 **MITM mode is not supported yet** and is a future enhancement.
->
-> ⚠️ Proxy mode only sees **hostnames**, not content. HTTPS is encrypted end-to-end. Use eBPF mode on Linux for full inspection.
->
-> ⚠️ In production, run **one mode at a time**. Do not run both eBPF and proxy mode together unless you have a specific, documented operational reason.
-
-```bash
-# Start proxy (hostname-level monitoring only)
-./target/release/dhi proxy --port 18080
-
-# Configure your tools
-export HTTP_PROXY=http://127.0.0.1:18080
-export HTTPS_PROXY=http://127.0.0.1:18080
-```
+Note for macOS/Windows: only proxy mode is available and currently untested; see [docs/NON_LINUX_PROXY.md](docs/NON_LINUX_PROXY.md).
 
 ## Architecture
 
@@ -226,7 +210,7 @@ export HTTPS_PROXY=http://127.0.0.1:18080
 4. **Policy action** is applied as configured: Block (stop), Alert (notify + allow), or Log (record only).
 5. **Telemetry and alerts** are exported to Slack, Prometheus, webhook, or SIEM pipelines.
 
-Optional for macOS/Windows: use proxy mode by setting `HTTP_PROXY`/`HTTPS_PROXY` to Dhi.
+macOS/Windows note: proxy mode only and currently untested. See [docs/NON_LINUX_PROXY.md](docs/NON_LINUX_PROXY.md).
 
 ## Documentation
 
@@ -237,6 +221,7 @@ Optional for macOS/Windows: use proxy mode by setting `HTTP_PROXY`/`HTTPS_PROXY`
 | [CTO Guide](docs/CTO_GUIDE.md) | Executive-ready security narrative for blog/announcement reuse |
 | [Testing Guide](docs/TESTING.md) | Manual acceptance test cases for alert/block release validation |
 | [Security Guide](docs/SECURITY.md) | Security posture, hardening, and vulnerability reporting |
+| [Non-Linux Proxy Note](docs/NON_LINUX_PROXY.md) | macOS/Windows proxy-mode-only note (currently untested) |
 | [Comparison](docs/COMPARISON.md) | How Dhi compares to other tools |
 | [Branding](docs/BRANDING.md) | Brand and positioning assets |
 
