@@ -36,17 +36,20 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y clang linux-tools-common
+          sudo apt-get install -y "linux-tools-$(uname -r)" "linux-cloud-tools-$(uname -r)" || true
+          sudo apt-get install -y linux-tools-azure linux-cloud-tools-azure || true
 
       - name: Generate vmlinux.h for eBPF build
         run: |
-          BPFOOL_BIN="$(command -v bpftool || true)"
+          BPFOOL_BIN="$(find /usr/lib/linux-tools -type f -name bpftool | head -n 1)"
           if [ -z "$BPFOOL_BIN" ]; then
-            BPFOOL_BIN="$(find /usr/lib/linux-tools -type f -name bpftool | head -n 1)"
+            BPFOOL_BIN="$(command -v bpftool || true)"
           fi
           if [ -z "$BPFOOL_BIN" ]; then
             echo "bpftool not found after installing linux-tools-common"
             exit 1
           fi
+          echo "Using bpftool: $BPFOOL_BIN"
           "$BPFOOL_BIN" btf dump file /sys/kernel/btf/vmlinux format c > bpf/vmlinux.h
 
       - name: Install cross-compilation tools (Linux ARM64)
