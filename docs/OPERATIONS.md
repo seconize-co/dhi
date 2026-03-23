@@ -40,7 +40,25 @@ For development/source builds, see [DEVELOPERS.md](DEVELOPERS.md).
 
 ### Start Dhi
 
-The release installer installs and enables the systemd service. To start:
+The installer enables the service (auto-start on boot) but does not start it immediately.
+
+Before first start, review config at `/etc/dhi/dhi.toml`.
+
+Quick defaults to know:
+- `protection.level = "alert"`
+- `metrics.enabled = true`, `metrics.port = 9090` (health endpoint: `/health`)
+- `logging.level = "info"`
+- service is enabled, health timer is enabled (`dhi-health-check.timer`, 1-minute interval)
+
+If you skipped Slack webhook during install, add it now before first start (if not set, Dhi still starts; check `journalctl -u dhi`, `/var/log/dhi/dhi.log` for warnings, and `/var/log/dhi/alerts.log` for local alert history):
+
+```toml
+[alerting]
+enabled = true
+slack_webhook = "https://hooks.slack.com/services/..."
+```
+
+Then start:
 
 ```bash
 sudo systemctl start dhi
@@ -49,26 +67,12 @@ sudo systemctl start dhi
 To run directly (without systemd):
 
 ```bash
-sudo dhi --config /etc/dhi/dhi.toml --level alert
+sudo dhi --config /etc/dhi/dhi.toml
 ```
 
-Protection levels: `log` (record only) · `alert` (notify) · `block` (enforce).
+For defaults and tuning, see the [Configuration](#configuration) section.
 
-### eBPF Block Action
-
-When in block mode, set how Dhi enforces a block decision via `--ebpf-block-action` or in config:
-
-```toml
-[protection]
-level = "block"
-ebpf_block_action = "kill"   # none | term | kill (default)
-```
-
-- `none` — log decision only
-- `term` — send SIGTERM to the offending process
-- `kill` — send SIGKILL (default)
-
-For architecture and eBPF internals, see [DEVELOPERS.md](DEVELOPERS.md#architecture-how-ebpf-works).
+**Recommended workflow:** Start in `alert` mode (default) for a few days to observe legitimate traffic and potential false positives. Once confident, transition to `block` mode and configure the block action via the [eBPF Block Action](#ebpf-block-action) subsection in Advanced.
 
 For non-Linux compatibility, see [NON_LINUX_PROXY.md](NON_LINUX_PROXY.md).
 
@@ -100,30 +104,6 @@ sudo journalctl -u dhi -f
 sudo journalctl -u dhi -n 100
 ```
 
-### Optional: Customize Service Flags
-
-If you need to change runtime flags (for example protection level, verbosity, or config path), use a systemd override:
-
-```bash
-sudo systemctl edit dhi
-```
-
-Example override:
-
-```ini
-[Service]
-ExecStart=
-ExecStart=/usr/local/bin/dhi --config /etc/dhi/dhi.toml --level alert -v
-```
-
-Apply and verify:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl restart dhi
-sudo systemctl status dhi --no-pager
-```
-
 ## Health Checks
 
 The installer sets up an automated health check timer that runs every minute. For a quick manual check:
@@ -139,44 +119,6 @@ sudo dhi-health-check
 sudo systemctl status dhi-health-check.timer
 sudo journalctl -u dhi-health-check.service -n 20
 ```
-
-### Advanced: Health Check Options
-
-The health check script supports guardrails to prevent restart flapping:
-
-```bash
-# Auto-restart after 3 consecutive failures, with 10-min cooldown between restarts
-sudo dhi-health-check --restart-on-fail
-
-# Run one check immediately via systemd
-sudo systemctl start dhi-health-check.service
-```
-
-Full options:
-
-| Option | Default | Env var |
-|--------|---------|---------|
-| `--url <url>` | derived from `dhi.toml` | — |
-| `--config <path>` | `/etc/dhi/dhi.toml` | `DHI_CONFIG` |
-| `--health-scheme <value>` | `http` | `DHI_HEALTH_SCHEME` |
-| `--health-path <path>` | `/health` | `DHI_HEALTH_PATH` |
-| `--service <name>` | `dhi` | — |
-| `--timeout <seconds>` | `5` | — |
-| `--failures-before-restart <n>` | `3` | — |
-| `--restart-cooldown <seconds>` | `600` | — |
-| `--state-dir <path>` | `/run/dhi-health-check` | — |
-| `--restart-on-fail` | off | — |
-| `--no-systemd-check` | off | — |
-
-The host/port for the derived URL can also be overridden via `DHI_HEALTH_HOST` and `DHI_HEALTH_PORT`.
-
-### Advanced: Agent/Session Observability
-
-```bash
-curl -s http://127.0.0.1:9090/api/agents | jq '.total_agents, .total_sessions, .total_tokens, .total_tool_calls'
-```
-
-Key fields — per agent: `id`, `framework`, `pid`, `total_tokens`, `total_tool_calls`. Per session: `session_id`, `session_name`, `total_tokens`, `total_tool_calls`.
 
 ---
 
@@ -215,6 +157,8 @@ file = "/tmp/log/dhi/dhi.log"
 ```
 
 Notes:
+- Defaults: `[protection].level = "alert"` and `[logging].level = "info"`.
+- Tune runtime behavior in this file (especially `[protection].level`, `[logging].level`, `[alerting]`, and `[metrics]`).
 - Log/report paths are deployment-specific and fully configurable.
 - Common choices are `/tmp/log/dhi/*` (dev/test) and `/var/log/dhi/*` (hardened production hosts).
 - Use one active log root per environment (do not run both concurrently):
@@ -409,7 +353,85 @@ sudo systemctl daemon-reload
 
 ---
 
-## Advanced / Miscellaneous
+## Advanced
+
+### Health Check Options
+
+The health check script supports guardrails to prevent restart flapping:
+
+```bash
+# Auto-restart after 3 consecutive failures, with 10-min cooldown between restarts
+sudo dhi-health-check --restart-on-fail
+
+# Run one check immediately via systemd
+sudo systemctl start dhi-health-check.service
+```
+
+Full options:
+
+| Option | Default | Env var |
+|--------|---------|---------|
+| `--url <url>` | derived from `dhi.toml` | — |
+| `--config <path>` | `/etc/dhi/dhi.toml` | `DHI_CONFIG` |
+| `--health-scheme <value>` | `http` | `DHI_HEALTH_SCHEME` |
+| `--health-path <path>` | `/health` | `DHI_HEALTH_PATH` |
+| `--service <name>` | `dhi` | — |
+| `--timeout <seconds>` | `5` | — |
+| `--failures-before-restart <n>` | `3` | — |
+| `--restart-cooldown <seconds>` | `600` | — |
+| `--state-dir <path>` | `/run/dhi-health-check` | — |
+| `--restart-on-fail` | off | — |
+| `--no-systemd-check` | off | — |
+
+The host/port for the derived URL can also be overridden via `DHI_HEALTH_HOST` and `DHI_HEALTH_PORT`.
+
+### Agent/Session Observability
+
+```bash
+curl -s http://127.0.0.1:9090/api/agents | jq '.total_agents, .total_sessions, .total_tokens, .total_tool_calls'
+```
+
+Key fields — per agent: `id`, `framework`, `pid`, `total_tokens`, `total_tool_calls`. Per session: `session_id`, `session_name`, `total_tokens`, `total_tool_calls`.
+
+### Customize Service Flags
+
+If you need to change runtime flags (for example protection level, verbosity, or config path), use a systemd override:
+
+```bash
+sudo systemctl edit dhi
+```
+
+Example override:
+
+```ini
+[Service]
+ExecStart=
+ExecStart=/usr/local/bin/dhi --config /etc/dhi/dhi.toml --level alert -v
+```
+
+Apply and verify:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart dhi
+sudo systemctl status dhi --no-pager
+```
+
+### eBPF Block Action
+
+When in block mode, set how Dhi enforces a block decision via `--ebpf-block-action` or in config:
+
+```toml
+[protection]
+level = "block"
+ebpf_block_action = "kill"   # none | term | kill (default)
+```
+
+- `none` — log decision only
+- `term` — send SIGTERM to the offending process
+- `kill` — send SIGKILL (default)
+
+For architecture and eBPF internals, see [DEVELOPERS.md](DEVELOPERS.md#architecture-how-ebpf-works).
 
 ### Systemctl Portability & Edge Cases
 
@@ -462,8 +484,6 @@ systemctl show dhi -p Restart -p RestartSec -p RestartPreventExitStatus -p Start
 | Mode | Crash Behavior | Recommendation |
 |------|----------------|----------------|
 | **eBPF Mode** | **Fail-open**: Traffic flows normally, no protection | Acceptable - availability preserved |
-
----
 
 ## Quick Reference
 
