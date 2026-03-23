@@ -37,6 +37,37 @@ Note: automatic rotation depends on the host scheduler for logrotate (`logrotate
 
 Note: scheduler warnings for logrotate are emitted by the installer or `--verify-only` flow. They are not written into Dhi application logs, and the `dhi-health-check` script does not validate logrotate state.
 
+Uninstall (Linux):
+
+```bash
+sudo ./scripts/uninstall-linux.sh
+```
+
+Preview uninstall actions without making changes:
+
+```bash
+./scripts/uninstall-linux.sh --dry-run
+```
+
+For custom config path:
+
+```bash
+sudo ./scripts/uninstall-linux.sh --config /path/to/dhi.toml
+```
+
+For additional custom install/build paths:
+
+```bash
+sudo ./scripts/uninstall-linux.sh \
+  --extra-path /opt/dhi \
+  --extra-path /home/user/dhi-build-output
+```
+
+By default, the uninstall script also parses `dhi.toml` and removes custom absolute paths configured under:
+- `[logging].file`
+- `[reporting].output_dir`
+- `[alerting].alert_log_path`
+
 ---
 
 ## Start Dhi
