@@ -6,6 +6,9 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fs::{create_dir_all, OpenOptions};
+use std::io::Write;
+use std::path::Path;
 use std::sync::RwLock;
 use tracing::{error, info, warn};
 
@@ -111,6 +114,10 @@ impl Alert {
     pub fn with_risk_score(self, risk_score: u32) -> Self {
         self.with_metadata("risk_score", serde_json::json!(risk_score))
     }
+
+    pub fn with_use_case_id(self, use_case_id: &str) -> Self {
+        self.with_metadata("use_case_id", serde_json::json!(use_case_id))
+    }
 }
 
 /// Slack message format
@@ -156,6 +163,8 @@ pub struct AlertConfig {
     pub smtp_server: Option<String>,
     /// Generic webhook URLs
     pub webhook_urls: Vec<String>,
+    /// Local append-only alert log file (JSONL)
+    pub alert_log_path: Option<String>,
     /// Minimum severity to alert on
     pub min_severity: AlertSeverity,
     /// Enable/disable alerting
@@ -174,6 +183,7 @@ impl Default for AlertConfig {
             email_recipients: Vec::new(),
             smtp_server: None,
             webhook_urls: Vec::new(),
+            alert_log_path: Some("/tmp/log/dhi/alerts.log".to_string()),
             min_severity: AlertSeverity::Warning,
             enabled: true,
             rate_limit_per_minute: 30,
@@ -318,6 +328,10 @@ impl Alerter {
 
         let mut errors = Vec::new();
 
+        if let Err(e) = self.persist_alert(alert) {
+            errors.push(format!("LocalLog: {}", e));
+        }
+
         // Send to Slack
         if let Some(ref webhook_url) = self.config.slack_webhook_url {
             if let Err(e) = self.send_slack(webhook_url, alert).await {
@@ -337,6 +351,25 @@ impl Alerter {
             error!("Alert delivery failed: {}", err);
         }
 
+        Ok(())
+    }
+
+    fn persist_alert(&self, alert: &Alert) -> Result<()> {
+        let Some(path) = self.config.alert_log_path.as_deref() else {
+            return Ok(());
+        };
+
+        let file_path = Path::new(path);
+        if let Some(parent) = file_path.parent() {
+            create_dir_all(parent)?;
+        }
+
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(file_path)?;
+        let line = serde_json::to_string(alert)?;
+        writeln!(file, "{}", line)?;
         Ok(())
     }
 
@@ -459,6 +492,7 @@ impl Alerter {
             ),
         )
         .with_agent(agent_id)
+        .with_use_case_id("sze.dhi.secrets.uc01.detect")
         .with_event_type("credential_detected")
         .with_metadata("credential_type", serde_json::json!(credential_type))
         .with_metadata("location", serde_json::json!(location));
@@ -482,6 +516,7 @@ impl Alerter {
             ),
         )
         .with_agent(agent_id)
+        .with_use_case_id("sze.dhi.pii.uc01.detect")
         .with_event_type("pii_detected")
         .with_metadata("pii_types", serde_json::json!(pii_types))
         .with_metadata("count", serde_json::json!(count));
@@ -505,6 +540,7 @@ impl Alerter {
             ),
         )
         .with_agent(agent_id)
+        .with_use_case_id("sze.dhi.budget.uc02.block")
         .with_event_type("budget_exceeded")
         .with_metadata("spent", serde_json::json!(spent))
         .with_metadata("limit", serde_json::json!(limit));
@@ -529,6 +565,7 @@ impl Alerter {
             ),
         )
         .with_agent(agent_id)
+        .with_use_case_id("sze.dhi.budget.uc01.detect")
         .with_event_type("budget_warning")
         .with_metadata("spent", serde_json::json!(spent))
         .with_metadata("limit", serde_json::json!(limit))
@@ -548,6 +585,7 @@ impl Alerter {
             ),
         )
         .with_agent(agent_id)
+        .with_use_case_id("sze.dhi.prompt.uc01.detect")
         .with_event_type("prompt_injection")
         .with_metadata("pattern", serde_json::json!(pattern));
 
@@ -565,6 +603,7 @@ impl Alerter {
             ),
         )
         .with_agent(agent_id)
+        .with_use_case_id("sze.dhi.tools.uc01.detect")
         .with_event_type("tool_loop")
         .with_metadata("tool_name", serde_json::json!(tool_name))
         .with_metadata("count", serde_json::json!(count));
@@ -595,6 +634,11 @@ impl Alerter {
             ),
         )
         .with_agent(agent_id)
+        .with_use_case_id(if action == "BLOCKED" {
+            "sze.dhi.tools.uc02.block"
+        } else {
+            "sze.dhi.tools.uc01.detect"
+        })
         .with_event_type("tool_risk")
         .with_metadata("tool_name", serde_json::json!(tool_name))
         .with_metadata("risk_level", serde_json::json!(risk_level))
@@ -723,6 +767,8 @@ pub async fn validate_slack_webhook(url: &str) -> SlackWebhookValidation {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn test_severity_threshold() {
@@ -747,5 +793,43 @@ mod tests {
         assert_eq!(alert.title, "Test");
         assert_eq!(alert.agent_id, Some("agent-1".to_string()));
         assert!(alert.metadata.contains_key("key"));
+    }
+
+    #[test]
+    fn test_use_case_id_builder() {
+        let alert = Alert::new(AlertSeverity::Warning, "UC", "Use case test")
+            .with_use_case_id("sze.dhi.test.uc01.detect");
+        assert_eq!(
+            alert.metadata.get("use_case_id").and_then(|v| v.as_str()),
+            Some("sze.dhi.test.uc01.detect")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_send_persists_alert_to_configured_log_file() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after unix epoch")
+            .as_nanos();
+        let log_path = format!(
+            "/tmp/dhi-alerting-test-{}-{}.jsonl",
+            std::process::id(),
+            nanos
+        );
+        let alerter = Alerter::new(AlertConfig {
+            alert_log_path: Some(log_path.clone()),
+            ..Default::default()
+        });
+
+        let alert = Alert::new(AlertSeverity::Error, "Persisted", "Persist me")
+            .with_event_type("persist_test")
+            .with_use_case_id("sze.dhi.alerts.uc01.dispatch");
+        alerter.send(&alert).await.expect("send should succeed");
+
+        let content = fs::read_to_string(&log_path).expect("alert log file should exist");
+        assert!(content.contains("\"title\":\"Persisted\""));
+        assert!(content.contains("\"use_case_id\":\"sze.dhi.alerts.uc01.dispatch\""));
+
+        let _ = fs::remove_file(&log_path);
     }
 }

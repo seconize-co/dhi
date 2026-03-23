@@ -79,6 +79,9 @@ min_severity = "high"
 # Get yours at: https://api.slack.com/messaging/webhooks
 # slack_webhook = "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
 
+# Local alert log file (JSONL, append-only)
+alert_log_path = "/tmp/log/dhi/alerts.log"   # use /var/log/dhi/alerts.log in production
+
 # Custom webhook URL (receives JSON POST)
 # webhook_url = "https://your-siem.example.com/api/alerts"
 
@@ -198,6 +201,24 @@ detect_extraction = true
 
 # Block prompts with risk score above threshold
 # block_threshold = 70
+
+# ----------------------------------------------------------------------------
+# CHECK TOGGLES (hybrid model)
+# ----------------------------------------------------------------------------
+[checks]
+# Type-level toggles (coarse controls)
+detect_secrets = true
+block_secrets = true
+detect_pii = true
+block_pii = false
+detect_prompt_injection = true
+block_prompt_injection = true
+detect_ssrf = true
+block_ssrf = true
+
+# Fine-grained overrides by use-case ID
+# Example format:
+# use_case_overrides = { "sze.dhi.secrets.uc02.block" = false, "sze.dhi.ssrf.uc02.block" = true }
 
 # ----------------------------------------------------------------------------
 # WHITELISTS (bypass security checks)

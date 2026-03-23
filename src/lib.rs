@@ -76,6 +76,9 @@ pub struct DhiConfig {
 
     /// Enable agentic runtime monitoring
     pub enable_agentic: bool,
+
+    /// Optional alert log file path (JSONL)
+    pub alert_log_path: Option<String>,
 }
 
 impl Default for DhiConfig {
@@ -96,6 +99,7 @@ impl Default for DhiConfig {
             ebpf_ssl_only: false,
             ebpf_block_action: EbpfBlockAction::Kill,
             enable_agentic: true,
+            alert_log_path: Some("/tmp/log/dhi/alerts.log".to_string()),
         }
     }
 }
@@ -156,7 +160,12 @@ impl DhiRuntime {
     /// Create a new Dhi runtime
     pub fn new(config: DhiConfig) -> Self {
         let max_budget_usd = config.max_budget_usd;
-        let agentic_runtime = Arc::new(agentic::AgenticRuntime::new());
+        let alert_config = agentic::AlertConfig {
+            alert_log_path: config.alert_log_path.clone(),
+            ..agentic::AlertConfig::default()
+        };
+        let agentic_runtime =
+            Arc::new(agentic::AgenticRuntime::new_with_alert_config(alert_config));
         if let Some(budget) = max_budget_usd {
             agentic_runtime.configure_max_budget_usd(budget);
         }

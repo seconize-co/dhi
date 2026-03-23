@@ -7,7 +7,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use dhi::agentic::validate_slack_webhook;
 use dhi::agentic::DhiMetrics;
-use dhi::proxy::ProxyConfig;
+use dhi::proxy::{CheckToggles, ProxyConfig};
 use dhi::{DhiConfig, DhiRuntime, EbpfBlockAction, ProtectionLevel};
 use std::fs::{remove_file, OpenOptions};
 use std::io::ErrorKind;
@@ -342,6 +342,8 @@ async fn run_proxy(
     block_secrets: bool,
     block_pii: bool,
     slack_webhook: Option<String>,
+    alert_log_path: Option<String>,
+    check_toggles: CheckToggles,
 ) -> Result<()> {
     println!("═══════════════════════════════════════════════════════════════════");
     println!("  ██████╗ ██╗  ██╗██╗    PROXY MODE");
@@ -369,6 +371,8 @@ async fn run_proxy(
             "api.cohere.ai".to_string(),
         ],
         slack_webhook,
+        alert_log_path,
+        check_toggles,
     };
 
     dhi::proxy::start_proxy(config).await
@@ -381,7 +385,8 @@ async fn run_demo() -> Result<()> {
     println!("═══════════════════════════════════════════════════════════════════");
     println!();
 
-    let runtime = dhi::agentic::AgenticRuntime::new();
+    let runtime =
+        dhi::agentic::AgenticRuntime::new_with_alert_config(dhi::agentic::AlertConfig::default());
 
     // Register an agent
     println!("📍 Registering agent...");
@@ -629,10 +634,24 @@ async fn main() -> Result<()> {
     #[derive(serde::Deserialize, Default)]
     struct TomlAlertingSection {
         slack_webhook: Option<String>,
+        alert_log_path: Option<String>,
+    }
+    #[derive(serde::Deserialize, Default)]
+    struct TomlChecksSection {
+        detect_secrets: Option<bool>,
+        block_secrets: Option<bool>,
+        detect_pii: Option<bool>,
+        block_pii: Option<bool>,
+        detect_prompt_injection: Option<bool>,
+        block_prompt_injection: Option<bool>,
+        detect_ssrf: Option<bool>,
+        block_ssrf: Option<bool>,
+        use_case_overrides: Option<std::collections::HashMap<String, bool>>,
     }
     #[derive(serde::Deserialize, Default)]
     struct TomlAlertingWrapper {
         alerting: Option<TomlAlertingSection>,
+        checks: Option<TomlChecksSection>,
     }
 
     // Build configuration
@@ -656,9 +675,64 @@ async fn main() -> Result<()> {
     } else {
         None
     };
+    let toml_alert_log_path: Option<String> = if let Some(ref config_path) = cli.config {
+        match std::fs::read_to_string(config_path)
+            .ok()
+            .and_then(|c| toml::from_str::<TomlAlertingWrapper>(&c).ok())
+        {
+            Some(wrapper) => wrapper.alerting.and_then(|a| a.alert_log_path),
+            None => None,
+        }
+    } else {
+        None
+    };
+
+    let check_toggles = if let Some(ref config_path) = cli.config {
+        let parsed = std::fs::read_to_string(config_path)
+            .ok()
+            .and_then(|c| toml::from_str::<TomlAlertingWrapper>(&c).ok());
+        let mut toggles = CheckToggles::default();
+        if let Some(wrapper) = parsed {
+            if let Some(checks) = wrapper.checks {
+                if let Some(v) = checks.detect_secrets {
+                    toggles.detect_secrets = v;
+                }
+                if let Some(v) = checks.block_secrets {
+                    toggles.block_secrets = v;
+                }
+                if let Some(v) = checks.detect_pii {
+                    toggles.detect_pii = v;
+                }
+                if let Some(v) = checks.block_pii {
+                    toggles.block_pii = v;
+                }
+                if let Some(v) = checks.detect_prompt_injection {
+                    toggles.detect_prompt_injection = v;
+                }
+                if let Some(v) = checks.block_prompt_injection {
+                    toggles.block_prompt_injection = v;
+                }
+                if let Some(v) = checks.detect_ssrf {
+                    toggles.detect_ssrf = v;
+                }
+                if let Some(v) = checks.block_ssrf {
+                    toggles.block_ssrf = v;
+                }
+                if let Some(overrides) = checks.use_case_overrides {
+                    toggles.use_case_overrides = overrides;
+                }
+            }
+        }
+        toggles
+    } else {
+        CheckToggles::default()
+    };
 
     // Resolve: CLI > TOML.
     let resolved_slack_webhook = cli.slack_webhook.clone().or(toml_slack_webhook);
+    if toml_alert_log_path.is_some() {
+        config.alert_log_path = toml_alert_log_path.clone();
+    }
 
     // Override with CLI args
     config.protection_level = protection_level;
@@ -694,6 +768,8 @@ async fn main() -> Result<()> {
                 block_secrets,
                 block_pii,
                 resolved_slack_webhook,
+                toml_alert_log_path,
+                check_toggles,
             )
             .await
         },

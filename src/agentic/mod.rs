@@ -135,6 +135,18 @@ pub struct LlmCallResult {
     pub alerts: Vec<String>,
 }
 
+/// Optional trace context to enrich runtime alerts for operator investigation.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AlertTraceContext {
+    pub correlation_id: Option<String>,
+    pub session_id: Option<String>,
+    pub session_name: Option<String>,
+    pub process_name: Option<String>,
+    pub pid: Option<u32>,
+    pub destination: Option<String>,
+    pub path: Option<String>,
+}
+
 /// Tool call tracking result
 #[derive(Debug, Clone, Serialize)]
 pub struct ToolCallResult {
@@ -297,6 +309,32 @@ impl AgenticRuntime {
         has_tools: bool,
         tool_names: Vec<String>,
     ) -> LlmCallResult {
+        self.track_llm_call_with_context(
+            agent_id,
+            provider,
+            model,
+            input_tokens,
+            output_tokens,
+            prompt,
+            has_tools,
+            tool_names,
+            None,
+        )
+        .await
+    }
+
+    pub async fn track_llm_call_with_context(
+        &self,
+        agent_id: &str,
+        provider: &str,
+        model: &str,
+        input_tokens: u64,
+        output_tokens: u64,
+        prompt: Option<String>,
+        has_tools: bool,
+        tool_names: Vec<String>,
+        trace: Option<AlertTraceContext>,
+    ) -> LlmCallResult {
         let call_id = format!("{}-{}", agent_id, chrono::Utc::now().timestamp_millis());
         let total_tokens = input_tokens + output_tokens;
         let cost_usd = self
@@ -309,31 +347,72 @@ impl AgenticRuntime {
 
         if budget_check.status.is_warning {
             alerts.push("budget_warning".to_string());
-            if let Err(err) = self
-                .alerter
-                .alert_budget_warning(
-                    agent_id,
-                    budget_check.status.daily_spent,
-                    budget_check.status.daily_limit,
-                    budget_check.status.daily_percent_used,
+            let alert_result = if let Some(ref ctx) = trace {
+                let mut alert = Alert::new(
+                    AlertSeverity::Warning,
+                    "Budget Warning Threshold Reached",
+                    &format!(
+                        "Agent {} has reached budget warning: ${:.2}/${:.2} ({:.1}%)",
+                        agent_id,
+                        budget_check.status.daily_spent,
+                        budget_check.status.daily_limit,
+                        budget_check.status.daily_percent_used
+                    ),
                 )
-                .await
-            {
+                .with_agent(agent_id)
+                .with_use_case_id("sze.dhi.budget.uc01.detect")
+                .with_event_type("budget_warning")
+                .with_metadata("spent", serde_json::json!(budget_check.status.daily_spent))
+                .with_metadata("limit", serde_json::json!(budget_check.status.daily_limit))
+                .with_metadata(
+                    "percent_used",
+                    serde_json::json!(budget_check.status.daily_percent_used),
+                );
+                apply_alert_trace_context(&mut alert, ctx);
+                self.alerter.send(&alert).await
+            } else {
+                self.alerter
+                    .alert_budget_warning(
+                        agent_id,
+                        budget_check.status.daily_spent,
+                        budget_check.status.daily_limit,
+                        budget_check.status.daily_percent_used,
+                    )
+                    .await
+            };
+            if let Err(err) = alert_result {
                 warn!("Failed to dispatch budget warning alert for {agent_id}: {err}");
             }
         }
         if !budget_check.allowed {
             risk_score += 50;
             alerts.push("budget_exceeded".to_string());
-            if let Err(err) = self
-                .alerter
-                .alert_budget_exceeded(
-                    agent_id,
-                    budget_check.status.daily_spent,
-                    budget_check.status.daily_limit,
+            let alert_result = if let Some(ref ctx) = trace {
+                let mut alert = Alert::new(
+                    AlertSeverity::Error,
+                    "Budget Limit Exceeded",
+                    &format!(
+                        "Agent {} has exceeded budget: ${:.2} spent, ${:.2} limit",
+                        agent_id, budget_check.status.daily_spent, budget_check.status.daily_limit
+                    ),
                 )
-                .await
-            {
+                .with_agent(agent_id)
+                .with_use_case_id("sze.dhi.budget.uc02.block")
+                .with_event_type("budget_exceeded")
+                .with_metadata("spent", serde_json::json!(budget_check.status.daily_spent))
+                .with_metadata("limit", serde_json::json!(budget_check.status.daily_limit));
+                apply_alert_trace_context(&mut alert, ctx);
+                self.alerter.send(&alert).await
+            } else {
+                self.alerter
+                    .alert_budget_exceeded(
+                        agent_id,
+                        budget_check.status.daily_spent,
+                        budget_check.status.daily_limit,
+                    )
+                    .await
+            };
+            if let Err(err) = alert_result {
                 warn!("Failed to dispatch budget exceeded alert for {agent_id}: {err}");
             }
             self.emit_event(
@@ -357,11 +436,27 @@ impl AgenticRuntime {
                 risk_score += 40;
                 alerts.push("prompt_injection_detected".to_string());
                 if let Some(finding) = security.findings.first() {
-                    if let Err(err) = self
-                        .alerter
-                        .alert_prompt_injection(agent_id, &finding.pattern)
-                        .await
-                    {
+                    let alert_result = if let Some(ref ctx) = trace {
+                        let mut alert = Alert::new(
+                            AlertSeverity::Critical,
+                            "Prompt Injection Attempt Detected",
+                            &format!(
+                                "Prompt injection attempt detected for agent {}: {}",
+                                agent_id, finding.pattern
+                            ),
+                        )
+                        .with_agent(agent_id)
+                        .with_use_case_id("sze.dhi.prompt.uc01.detect")
+                        .with_event_type("prompt_injection")
+                        .with_metadata("pattern", serde_json::json!(finding.pattern));
+                        apply_alert_trace_context(&mut alert, ctx);
+                        self.alerter.send(&alert).await
+                    } else {
+                        self.alerter
+                            .alert_prompt_injection(agent_id, &finding.pattern)
+                            .await
+                    };
+                    if let Err(err) = alert_result {
                         warn!("Failed to dispatch prompt injection alert for {agent_id}: {err}");
                     }
                 }
@@ -455,6 +550,18 @@ impl AgenticRuntime {
         tool_type: &str,
         parameters: serde_json::Value,
     ) -> ToolCallResult {
+        self.track_tool_call_with_context(agent_id, tool_name, tool_type, parameters, None)
+            .await
+    }
+
+    pub async fn track_tool_call_with_context(
+        &self,
+        agent_id: &str,
+        tool_name: &str,
+        tool_type: &str,
+        parameters: serde_json::Value,
+        trace: Option<AlertTraceContext>,
+    ) -> ToolCallResult {
         let invocation_id = format!(
             "{}-tool-{}",
             agent_id,
@@ -511,17 +618,44 @@ impl AgenticRuntime {
 
         if risk.risk_score >= 50 {
             let action = if result.allowed { "ALLOWED" } else { "BLOCKED" };
-            if let Err(err) = self
-                .alerter
-                .alert_tool_risk(
-                    agent_id,
-                    tool_name,
-                    &risk.risk_level,
-                    risk.risk_score,
-                    action,
+            let alert_result = if let Some(ref ctx) = trace {
+                let mut alert = Alert::new(
+                    if risk.risk_score >= 80 {
+                        AlertSeverity::Error
+                    } else {
+                        AlertSeverity::Warning
+                    },
+                    "High-Risk Tool Invocation",
+                    &format!(
+                        "Agent {} invoked tool '{}' with {} risk (score: {}).",
+                        agent_id, tool_name, risk.risk_level, risk.risk_score
+                    ),
                 )
-                .await
-            {
+                .with_agent(agent_id)
+                .with_use_case_id(if action == "BLOCKED" {
+                    "sze.dhi.tools.uc02.block"
+                } else {
+                    "sze.dhi.tools.uc01.detect"
+                })
+                .with_event_type("tool_risk")
+                .with_metadata("tool_name", serde_json::json!(tool_name))
+                .with_metadata("risk_level", serde_json::json!(risk.risk_level))
+                .with_metadata("risk_score", serde_json::json!(risk.risk_score))
+                .with_action(action);
+                apply_alert_trace_context(&mut alert, ctx);
+                self.alerter.send(&alert).await
+            } else {
+                self.alerter
+                    .alert_tool_risk(
+                        agent_id,
+                        tool_name,
+                        &risk.risk_level,
+                        risk.risk_score,
+                        action,
+                    )
+                    .await
+            };
+            if let Err(err) = alert_result {
                 warn!("Failed to dispatch tool risk alert for {agent_id}: {err}");
             }
         }
@@ -677,6 +811,27 @@ impl AgenticRuntime {
 
         self.events.write().await.push(event);
         *self.total_events.write().await += 1;
+    }
+}
+
+fn apply_alert_trace_context(alert: &mut Alert, trace: &AlertTraceContext) {
+    if let Some(ref correlation_id) = trace.correlation_id {
+        *alert = alert.clone().with_correlation_id(correlation_id);
+    }
+    if let Some(ref session_id) = trace.session_id {
+        *alert = alert
+            .clone()
+            .with_session(session_id, trace.session_name.as_deref());
+    }
+    if trace.process_name.is_some() || trace.pid.is_some() {
+        *alert = alert
+            .clone()
+            .with_process(trace.process_name.as_deref(), trace.pid);
+    }
+    if trace.destination.is_some() || trace.path.is_some() {
+        *alert = alert
+            .clone()
+            .with_destination(trace.destination.as_deref(), trace.path.as_deref());
     }
 }
 
