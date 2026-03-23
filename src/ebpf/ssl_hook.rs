@@ -1052,9 +1052,28 @@ fn sanitize_run_marker(raw: &str) -> String {
     }
 }
 
+const MAX_RUN_MARKERS_PER_PAYLOAD: usize = 64;
+const MAX_RUNTIME_JSON_CANDIDATES: usize = 128;
+const MAX_JSON_CHUNKS_PER_PAYLOAD: usize = 128;
+const MAX_JSON_CHUNK_LEN: usize = 32 * 1024;
+
+fn push_runtime_candidate(
+    candidates: &mut Vec<String>,
+    seen: &mut std::collections::HashSet<String>,
+    candidate: String,
+) {
+    if candidates.len() >= MAX_RUNTIME_JSON_CANDIDATES {
+        return;
+    }
+    if seen.insert(candidate.clone()) {
+        candidates.push(candidate);
+    }
+}
+
 fn extract_run_markers(text: &str) -> Vec<String> {
     let bytes = text.as_bytes();
     let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
     let mut i = 0usize;
     while i + 4 <= bytes.len() {
         if &bytes[i..i + 4] == b"RUN-" {
@@ -1074,8 +1093,11 @@ fn extract_run_markers(text: &str) -> Vec<String> {
                 }
             }
             let marker = sanitize_run_marker(&text[i..j]);
-            if marker.len() > 4 && !out.contains(&marker) {
+            if marker.len() > 4 && seen.insert(marker.clone()) {
                 out.push(marker);
+                if out.len() >= MAX_RUN_MARKERS_PER_PAYLOAD {
+                    break;
+                }
             }
             i = j;
         } else {
@@ -1153,12 +1175,17 @@ fn extract_runtime_usage(text: &str) -> (u64, u64) {
             )
     }
 
-    let mut candidates: Vec<String> = Vec::new();
+    let mut candidates = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
     if let Ok(json) = serde_json::from_str::<serde_json::Value>(text) {
-        candidates.push(json.to_string());
+        push_runtime_candidate(&mut candidates, &mut seen, json.to_string());
     }
 
     for line in text.lines() {
+        if candidates.len() >= MAX_RUNTIME_JSON_CANDIDATES {
+            break;
+        }
         let trimmed = line.trim();
         let payload = trimmed
             .strip_prefix("data:")
@@ -1168,18 +1195,18 @@ fn extract_runtime_usage(text: &str) -> (u64, u64) {
             continue;
         }
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(payload) {
-            candidates.push(json.to_string());
+            push_runtime_candidate(&mut candidates, &mut seen, json.to_string());
         }
     }
 
     for chunk in extract_json_object_chunks(text) {
+        if candidates.len() >= MAX_RUNTIME_JSON_CANDIDATES {
+            break;
+        }
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&chunk) {
-            candidates.push(json.to_string());
+            push_runtime_candidate(&mut candidates, &mut seen, json.to_string());
         }
     }
-
-    candidates.sort();
-    candidates.dedup();
 
     for candidate in &candidates {
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(candidate) {
@@ -1226,7 +1253,12 @@ fn extract_json_object_chunks(text: &str) -> Vec<String> {
             if depth == 0 {
                 if let Some(s) = start.take() {
                     let chunk: String = chars[s..=idx].iter().collect();
-                    out.push(chunk);
+                    if chunk.len() <= MAX_JSON_CHUNK_LEN {
+                        out.push(chunk);
+                        if out.len() >= MAX_JSON_CHUNKS_PER_PAYLOAD {
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -1414,6 +1446,42 @@ mod tests {
         let (tokens, tool_calls) = extract_runtime_usage(payload);
         assert_eq!(tokens, 14);
         assert_eq!(tool_calls, 1);
+    }
+
+    #[test]
+    fn test_extract_run_markers_caps_output() {
+        let mut text = String::new();
+        for i in 0..90 {
+            text.push_str(&format!(" RUN-LOAD-{i}"));
+        }
+        let markers = extract_run_markers(&text);
+        assert_eq!(markers.len(), 64);
+        assert!(markers.contains(&"RUN-LOAD-0".to_string()));
+    }
+
+    #[test]
+    fn test_extract_json_object_chunks_caps_and_filters_large() {
+        let small = r#"{"a":1}"#;
+        let large_payload = "x".repeat((32 * 1024) + 10);
+        let large = format!(r#"{{"big":"{}"}}"#, large_payload);
+        let text = format!("{small}{large}");
+        let chunks = extract_json_object_chunks(&text);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0], small);
+    }
+
+    #[test]
+    fn test_extract_runtime_usage_caps_candidates() {
+        let mut sse = String::new();
+        for i in 0..300 {
+            sse.push_str(&format!(
+                "data: {{\"usage\":{{\"input_tokens\":{},\"output_tokens\":1}}}}\n",
+                i + 1
+            ));
+        }
+        let (tokens, tool_calls) = extract_runtime_usage(&sse);
+        assert!(tokens > 0);
+        assert_eq!(tool_calls, 0);
     }
 
     #[tokio::test]

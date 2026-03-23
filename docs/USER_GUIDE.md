@@ -125,6 +125,7 @@ Runtime extraction details:
 - Typical paths:
 - `/tmp/log/dhi/reports` for dev/test
 - `/var/log/dhi/reports` for hardened production hosts
+- Choose one log/report root per environment (dev/test or production), not both.
 
 See sample output formats:
 - `examples/sample-report-daily.json`

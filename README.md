@@ -85,6 +85,31 @@ sudo ./target/release/dhi --level alert --slack-webhook "https://hooks.slack.com
 
 **That's it!** All your AI agents are now protected automatically. Full HTTPS visibility without certificates.
 
+### Post-install checklist (recommended)
+
+1. Choose exactly one log root per environment:
+- dev/test: `/tmp/log/dhi/*`
+- production: `/var/log/dhi/*`
+
+2. Install log rotation policy:
+```bash
+sudo install -m 644 ops/logrotate/dhi /etc/logrotate.d/dhi
+```
+
+3. Validate policy (dry run):
+```bash
+sudo logrotate -d /etc/logrotate.d/dhi
+```
+
+4. Ensure scheduler is enabled:
+```bash
+systemctl status logrotate.timer
+```
+
+If logrotate is not installed or not running, Dhi logs/reports can grow unbounded. In that case:
+- install/enable logrotate, or
+- rely on journald retention limits (`SystemMaxUse`, `MaxRetentionSec`) and avoid file append logging until rotation is enabled.
+
 ### Proxy Mode (macOS/Windows - Limited)
 
 > ✅ Supported runtime modes today: **eBPF mode** and **proxy mode**.

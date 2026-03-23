@@ -155,9 +155,15 @@ pub struct RuntimeStats {
 impl DhiRuntime {
     /// Create a new Dhi runtime
     pub fn new(config: DhiConfig) -> Self {
+        let max_budget_usd = config.max_budget_usd;
+        let agentic_runtime = Arc::new(agentic::AgenticRuntime::new());
+        if let Some(budget) = max_budget_usd {
+            agentic_runtime.configure_max_budget_usd(budget);
+        }
+
         Self {
             config: Arc::new(RwLock::new(config)),
-            agentic: Arc::new(agentic::AgenticRuntime::new()),
+            agentic: agentic_runtime,
             detection: Arc::new(detection::DetectionEngine::new()),
             stats: Arc::new(RwLock::new(RuntimeStats::default())),
         }

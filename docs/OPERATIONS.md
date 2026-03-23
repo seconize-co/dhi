@@ -498,6 +498,9 @@ file = "/tmp/log/dhi/dhi.log"
 Notes:
 - Log/report paths are deployment-specific and fully configurable.
 - Common choices are `/tmp/log/dhi/*` (dev/test) and `/var/log/dhi/*` (hardened production hosts).
+- Use one active log root per environment (do not run both concurrently):
+  - dev/test: `/tmp/log/dhi/*`
+  - production: `/var/log/dhi/*`
 
 ### Environment Variables
 
@@ -519,6 +522,37 @@ export DHI_LOG_LEVEL=info
 | `/tmp/log/dhi/reports/daily-*.json` (or `/var/log/dhi/reports/daily-*.json`) | Daily security reports |
 | `/tmp/log/dhi/alerts.log` (or `/var/log/dhi/alerts.log`) | Alert history |
 | `journalctl -u dhi` | systemd logs |
+
+### Log Rotation
+
+Log rotation config is provided at:
+
+```bash
+ops/logrotate/dhi
+```
+
+Install on host:
+
+```bash
+sudo install -m 644 ops/logrotate/dhi /etc/logrotate.d/dhi
+```
+
+Validate rotation config:
+
+```bash
+sudo logrotate -d /etc/logrotate.d/dhi
+```
+
+Force a rotation run (test only):
+
+```bash
+sudo logrotate -f /etc/logrotate.d/dhi
+```
+
+Policy summary:
+- `*.log`: daily, keep 14, compress.
+- report `*.json`: weekly, keep 8, compress.
+- covers both `/tmp/log/dhi/*` and `/var/log/dhi/*`, but operate with one active root per environment.
 
 ### View Logs
 
