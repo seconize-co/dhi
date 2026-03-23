@@ -52,7 +52,7 @@ Primary use cases for release validation are:
 |---|---|---|
 | 1. Credential leakage | TC-02, TC-05, TC-06, TC-07, TC-09 | `scripts/security-e2e.sh` proxy vectors + `scripts/copilot-cli-e2e.sh` (`copilot-secret-detection`) |
 | 2. PII exfiltration | TC-03, TC-09 | `scripts/security-e2e.sh` proxy vectors + `scripts/copilot-cli-e2e.sh` (`copilot-pii-detection`) |
-| 3. Cost explosion control | TC-11 (demo cost signal), TC-12 (quality gate) | `scripts/security-e2e.sh` quality gate + demo check |
+| 3. Cost explosion control | TC-11 (demo cost signal), TC-11E/TC-11F (budget warning/exceeded), TC-12 (quality gate) | `scripts/security-e2e.sh` quality gate + demo check |
 | 4. Dangerous tools | TC-11 (demo tool allow/deny signal) | `scripts/security-e2e.sh` demo check |
 | 5. Prompt injection | TC-04, TC-10 | `scripts/security-e2e.sh` proxy vectors + `scripts/copilot-cli-e2e.sh` (`copilot-injection-detection`) |
 | 6. Shadow AI visibility | TC-01, TC-13 | `scripts/security-e2e.sh` monitor endpoint checks + `scripts/copilot-cli-e2e.sh` stats delta checks + `scripts/reporting-e2e.sh` report artifact/schema checks |
@@ -523,6 +523,59 @@ Pass criteria:
 
 ---
 
+## 8B. Budget Monitoring Validation (CTO Concern #3)
+
+These cases validate runtime LLM budget warning/exceeded behavior after budget enforcement wiring.
+
+### TC-11E: Budget warning appears near threshold
+
+Command:
+```bash
+./target/release/dhi monitor --max-budget 0.01 --no-ebpf --level alert --port 9090
+```
+
+In a second terminal, trigger at least two LLM calls from the same agent/session (e.g., Copilot CLI prompt flow) so cumulative estimated cost approaches the configured budget.
+
+Expected evidence:
+1. `/api/agents` shows affected agent with:
+```text
+"alerts": [..., "budget_warning", ...]
+```
+2. LLM request event payload contains:
+```text
+"budget_warning": true
+```
+
+Pass criteria:
+- `budget_warning` is visible before hard overage.
+
+---
+
+### TC-11F: Budget exceeded is emitted and observable
+
+Command:
+```bash
+./target/release/dhi monitor --max-budget 0.0001 --no-ebpf --level alert --port 9090
+```
+
+In a second terminal, trigger one high-cost LLM call (or several small calls) to exceed budget.
+
+Expected evidence:
+1. `/api/agents` shows:
+```text
+"alerts": [..., "budget_exceeded", ...]
+```
+2. Runtime emits `BudgetExceeded` event metadata for the call.
+3. LLM request event includes:
+```text
+"budget_allowed": false
+```
+
+Pass criteria:
+- `budget_exceeded` signal is present and over-limit request is marked `budget_allowed: false`.
+
+---
+
 ## 9. Alert-Mode and Block-Mode Automation Parity Run
 
 Run the full harness:
@@ -574,6 +627,9 @@ Mark PASS/FAIL for each item:
 - denylisted destructive command denied and listed in `denied_tools`.
 - benign tool remains allowed.
 - tool invocation counters are consistent in agent + overall stats.
+11b. Budget-monitoring cases pass:
+- warning threshold emits `budget_warning`.
+- over-limit emits `budget_exceeded` and marks `budget_allowed: false`.
 12. Automated harness passes with `Failed: 0`.
 13. Quality gate (`cargo test`, `cargo clippy`) passes.
 14. Reporting harness validates sample schemas and runtime report artifacts (`scripts/reporting-e2e.sh`).
