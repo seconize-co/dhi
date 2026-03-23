@@ -216,6 +216,38 @@ scrape_configs:
 
 ---
 
+## OWASP Top 10 for Agentic/LLM AI Alignment
+
+The table below maps Dhi against common OWASP LLM/Agentic risk categories.
+
+| OWASP Category | Dhi Coverage | What Dhi Provides | Shared Responsibility / Gap |
+|----------------|--------------|-------------------|-----------------------------|
+| LLM01 Prompt Injection | **Strong** | Runtime injection/jailbreak pattern detection and alert/block enforcement | Add app-level guardrails and structured prompt boundaries |
+| LLM02 Insecure Output Handling | **Partial** | Detects risky content and dangerous downstream tool behavior | Enforce safe output handling in application code |
+| LLM03 Training Data Poisoning | **Gap** | Not a model training pipeline control | Use dataset provenance, curation, and training pipeline governance |
+| LLM04 Model DoS | **Partial** | Budget thresholds and runaway behavior containment | Add infra/API rate limits, quotas, WAF, and autoscaling controls |
+| LLM05 Supply Chain Risks | **Gap** | Not a dependency/SBOM scanner | Use SCA, signed artifacts, lockfiles, and CI policy checks |
+| LLM06 Sensitive Information Disclosure | **Strong** | Secrets/PII detection, redaction, and blocking at runtime | Add data classification, tokenization, and secrets lifecycle controls |
+| LLM07 Insecure Plugin/Tool Design | **Partial-Strong** | Tool risk scoring, denylisting, sensitive path controls, MCP monitoring | Enforce plugin authN/authZ and least-privilege boundaries |
+| LLM08 Excessive Agency | **Strong** | Tool governance and policy-based block decisions | Add human approval for high-impact actions |
+| LLM09 Overreliance | **Gap** | Not a human governance or UX trust control | Add HITL review, confidence thresholds, and escalation workflows |
+| LLM10 Model Theft | **Partial** | Runtime telemetry for suspicious access patterns | Add network segmentation, strict IAM, and model-serving protections |
+
+### Executive Takeaway
+
+1. Dhi is strongest as a **runtime prevention and observability layer**.
+2. Dhi materially reduces risk for injection, data leakage, and excessive agency.
+3. Complete OWASP alignment still requires build-time, supply-chain, and governance controls.
+
+### Recommended Defense-in-Depth Stack
+
+1. **Runtime (Dhi)**: detect, alert, and block risky agent behavior.
+2. **Application controls**: output validation, approvals, and strict tool permissions.
+3. **Platform/security controls**: IAM, network boundaries, rate limiting, SIEM, incident response.
+4. **SDLC controls**: dependency scanning, SBOM, signing, and policy enforcement in CI/CD.
+
+---
+
 ## Quick Start
 
 ```bash
