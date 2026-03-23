@@ -100,7 +100,7 @@ impl Default for DhiConfig {
             ebpf_ssl_only: false,
             ebpf_block_action: EbpfBlockAction::Kill,
             enable_agentic: true,
-            alert_log_path: Some("/tmp/log/dhi/alerts.log".to_string()),
+            alert_log_path: Some("/var/log/dhi/alerts.log".to_string()),
         }
     }
 }

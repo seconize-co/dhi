@@ -183,7 +183,7 @@ impl Default for AlertConfig {
             email_recipients: Vec::new(),
             smtp_server: None,
             webhook_urls: Vec::new(),
-            alert_log_path: Some("/tmp/log/dhi/alerts.log".to_string()),
+            alert_log_path: Some("/var/log/dhi/alerts.log".to_string()),
             min_severity: AlertSeverity::Warning,
             enabled: true,
             rate_limit_per_minute: 30,

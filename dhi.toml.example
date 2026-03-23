@@ -21,6 +21,19 @@
 # Or set here and it will be used as the default
 company_name = "Seconize"
 
+# Directory for report output (created if doesn't exist)
+output_dir = "/var/log/dhi/reports"
+
+# Report format: "json", "text", or "both"
+format = "json"
+
+# Generate periodic reports
+# daily_report = true
+# weekly_report = true
+
+# Retention period for reports (days)
+retention_days = 30
+
 # ----------------------------------------------------------------------------
 # PROTECTION SETTINGS
 # ----------------------------------------------------------------------------
@@ -92,7 +105,7 @@ min_severity = "high"
 # slack_webhook = "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
 
 # Local alert log file (JSONL, append-only)
-alert_log_path = "/tmp/log/dhi/alerts.log"   # use /var/log/dhi/alerts.log in production
+alert_log_path = "/var/log/dhi/alerts.log"
 
 # Custom webhook URL (receives JSON POST)
 # webhook_url = "https://your-siem.example.com/api/alerts"
@@ -114,23 +127,6 @@ rate_limit_per_agent_per_hour = 100 # Per-agent limit
 # password = "your-smtp-password"  # Consider using environment variable
 # from_address = "dhi-alerts@company.com"
 # tls = true
-
-# ----------------------------------------------------------------------------
-# REPORTING
-# ----------------------------------------------------------------------------
-[reporting]
-# Directory for report output (created if doesn't exist)
-output_dir = "./dhi-reports"
-
-# Report format: "json", "text", or "both"
-format = "json"
-
-# Generate periodic reports
-# daily_report = true
-# weekly_report = true
-
-# Retention period for reports (days)
-retention_days = 30
 
 # ----------------------------------------------------------------------------
 # METRICS & MONITORING

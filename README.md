@@ -115,7 +115,7 @@ What the install script now does by default (production-oriented):
 
 Default Dhi runtime behavior is still:
 - logs -> stdout/journald (`[logging].file` unset)
-- reports -> `./dhi-reports` (`[reporting].output_dir`)
+- reports -> `/var/log/dhi/reports` (`[reporting].output_dir`)
 
 **To start Dhi** (if systemd service was installed):
 

@@ -644,7 +644,7 @@ if command -v systemctl >/dev/null 2>&1; then
   echo "  - health-check timer (dhi-health-check.timer)"
 fi
 echo
-echo "Default runtime behavior: logs -> stdout/journald, reports -> ./dhi-reports"
+echo "Default runtime behavior: logs -> stdout/journald, reports -> ${LOG_ROOT}/reports"
 echo "To use production file paths, set in config:"
 echo "  [logging] file = \"${LOG_ROOT}/dhi.log\""
 echo "  [reporting] output_dir = \"${LOG_ROOT}/reports\""

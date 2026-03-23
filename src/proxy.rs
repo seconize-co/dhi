@@ -199,7 +199,7 @@ impl Default for ProxyConfig {
                 "api.cohere.ai".to_string(),
             ],
             slack_webhook: None,
-            alert_log_path: Some("/tmp/log/dhi/alerts.log".to_string()),
+            alert_log_path: Some("/var/log/dhi/alerts.log".to_string()),
             check_toggles: CheckToggles::default(),
         }
     }
