@@ -512,6 +512,115 @@ impl Default for Alerter {
     }
 }
 
+/// Result of a Slack webhook validation attempt.
+#[derive(Debug, PartialEq)]
+pub enum SlackWebhookValidation {
+    /// URL format is valid and the live test POST returned HTTP 200.
+    Ok,
+    /// URL format is invalid (not a hooks.slack.com URL).
+    InvalidFormat,
+    /// Live test POST was rejected by Slack (status code + message supplied).
+    LiveTestFailed(u16, String),
+    /// Network or transport error during the live test.
+    NetworkError(String),
+}
+
+/// Validate a Slack webhook URL: check the format then send a test POST.
+///
+/// Logs an `info!` on success and `warn!` on any failure so every outcome
+/// is captured in the Dhi log file without blocking startup.
+pub async fn validate_slack_webhook(url: &str) -> SlackWebhookValidation {
+    // --- Format check -----------------------------------------------------------
+    if !url.starts_with("https://hooks.slack.com/") {
+        warn!(
+            slack_webhook_url = url,
+            "Slack webhook URL has unexpected format (expected https://hooks.slack.com/...); \
+             alerts may not be delivered"
+        );
+        return SlackWebhookValidation::InvalidFormat;
+    }
+
+    // --- Live connectivity test -------------------------------------------------
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            warn!(
+                error = %e,
+                "Could not build HTTP client for Slack webhook test; skipping live check"
+            );
+            return SlackWebhookValidation::NetworkError(e.to_string());
+        }
+    };
+
+    let payload = serde_json::json!({
+        "text": "Dhi startup test \u2013 Slack webhook connectivity verified."
+    });
+
+    let response = match client.post(url).json(&payload).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            warn!(
+                error = %e,
+                "Slack webhook live test failed (network error); alerts may not be delivered"
+            );
+            return SlackWebhookValidation::NetworkError(e.to_string());
+        }
+    };
+
+    let status = response.status().as_u16();
+    match status {
+        200 => {
+            info!(
+                slack_webhook_url = url,
+                "Slack webhook validated (HTTP 200); alerts are enabled"
+            );
+            SlackWebhookValidation::Ok
+        }
+        400 => {
+            let reason = "invalid payload or channel not found";
+            warn!(
+                slack_webhook_url = url,
+                http_status = status,
+                reason,
+                "Slack webhook test failed (HTTP 400); check webhook configuration"
+            );
+            SlackWebhookValidation::LiveTestFailed(status, reason.to_string())
+        }
+        403 => {
+            let reason = "webhook URL is invalid or revoked";
+            warn!(
+                slack_webhook_url = url,
+                http_status = status,
+                reason,
+                "Slack webhook test failed (HTTP 403); re-create the webhook in Slack"
+            );
+            SlackWebhookValidation::LiveTestFailed(status, reason.to_string())
+        }
+        404 => {
+            let reason = "webhook not found";
+            warn!(
+                slack_webhook_url = url,
+                http_status = status,
+                reason,
+                "Slack webhook test failed (HTTP 404); webhook may have been deleted"
+            );
+            SlackWebhookValidation::LiveTestFailed(status, reason.to_string())
+        }
+        other => {
+            let reason = format!("unexpected HTTP {other}");
+            warn!(
+                slack_webhook_url = url,
+                http_status = other,
+                "Slack webhook test returned unexpected status; alerts may not be delivered"
+            );
+            SlackWebhookValidation::LiveTestFailed(other, reason)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

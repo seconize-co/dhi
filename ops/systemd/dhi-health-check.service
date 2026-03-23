@@ -1,0 +1,8 @@
+[Unit]
+Description=Dhi health check and guarded restart
+After=network.target dhi.service
+Wants=dhi.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/dhi-health-check --restart-on-fail

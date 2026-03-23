@@ -6,7 +6,7 @@
 
 ## Quick Install (Linux with eBPF)
 
-Dhi uses **eBPF** to intercept SSL/TLS traffic at the kernel level. This provides full visibility into HTTPS content without certificates or proxy configuration.
+Dhi uses **eBPF** to intercept SSL/TLS traffic at the kernel level. This provides full visibility into HTTPS content without certificate injection or client reconfiguration.
 
 ### Quick Install (Release)
 
@@ -27,14 +27,7 @@ The installer automatically:
 ### Verify Installation
 
 ```bash
-# Check binary
-dhi --version
-
-# Check eBPF program
-ls -la /usr/share/dhi/dhi_ssl.bpf.o
-
-# Check kernel version (needs 5.4+)
-uname -r
+sudo ./scripts/install-linux-release.sh --verify-only
 ```
 
 For development/source builds, see [DEVELOPERS.md](DEVELOPERS.md).
@@ -43,91 +36,41 @@ For development/source builds, see [DEVELOPERS.md](DEVELOPERS.md).
 
 ## Running Dhi (eBPF Mode)
 
-**eBPF mode is the primary mode** - it intercepts SSL/TLS traffic at the kernel level, providing full visibility into HTTPS content.
-
-### Production Mode Policy
-
-For Linux production deployments:
-
-- Run eBPF mode as the primary mode.
-- Use proxy mode only as fallback/compatibility (for non-Linux or constrained environments).
-- Run one mode at a time in production; avoid running both simultaneously unless explicitly required and documented.
+**eBPF mode is the primary mode** — intercepts SSL/TLS at the kernel level, full HTTPS content visibility without certificate injection.
 
 ### Start Dhi
 
+The release installer installs and enables the systemd service. To start:
+
 ```bash
-# Start with alerts (requires root for eBPF)
-sudo dhi --config /etc/dhi/dhi.toml --level alert
-
-# With Slack notifications
-sudo dhi --level alert --slack-webhook "https://hooks.slack.com/..."
-
-# Block mode (actively block threats)
-sudo dhi --level block
-
-# Block mode with graceful termination first
-sudo dhi --level block --ebpf-block-action term
-
-# Block mode with log-only decisioning (no process signal)
-sudo dhi --level block --ebpf-block-action none
-
-# Verbose logging
-sudo dhi --level alert -v
+sudo systemctl start dhi
 ```
+
+To run directly (without systemd):
+
+```bash
+sudo dhi --config /etc/dhi/dhi.toml --level alert
+```
+
+Protection levels: `log` (record only) · `alert` (notify) · `block` (enforce).
 
 ### eBPF Block Action
 
-When SSL analysis returns a block decision in block mode, you can choose how Dhi enforces it:
-
-- none: log the block decision only
-- term: send SIGTERM to the process ID that produced the event
-- kill: send SIGKILL to the process ID that produced the event (default)
-
-Set this via CLI with --ebpf-block-action or in configuration:
+When in block mode, set how Dhi enforces a block decision via `--ebpf-block-action` or in config:
 
 ```toml
 [protection]
 level = "block"
-ebpf_block_action = "kill"
+ebpf_block_action = "kill"   # none | term | kill (default)
 ```
 
-For architecture details on how eBPF interception works, see [DEVELOPERS.md](DEVELOPERS.md#architecture-how-ebpf-works).
-For Copilot CLI testing and instrumentation, see [DEVELOPERS.md](DEVELOPERS.md#copilot-cli-ebpf-setup-for-testing).
+- `none` — log decision only
+- `term` — send SIGTERM to the offending process
+- `kill` — send SIGKILL (default)
 
----
+For architecture and eBPF internals, see [DEVELOPERS.md](DEVELOPERS.md#architecture-how-ebpf-works).
 
-## Proxy Mode (Limited - Hostname Only)
-
-> ✅ Supported runtime modes today: **eBPF mode** and **proxy mode**.
->
-> 🔮 **MITM mode is not supported yet** and is a future enhancement.
->
-> ⚠️ **Note**: Proxy mode can only see **hostnames**, not request/response content. HTTPS traffic is encrypted end-to-end through the proxy. Use eBPF mode for full content inspection.
-
-Proxy mode is useful for:
-- macOS/Windows (where eBPF is unavailable)
-- Hostname-level blocking (e.g., block access to certain APIs)
-- Connection logging (which LLMs are being called)
-
-**Default proxy port: 8080** (see `[proxy]` in dhi.toml.example)
-
-```bash
-# Start proxy (default port 8080)
-dhi proxy
-
-# Or override port for testing/specific deployments
-dhi proxy --port 18080
-
-# Configure applications to use proxy
-export HTTP_PROXY=http://127.0.0.1:8080
-export HTTPS_PROXY=http://127.0.0.1:8080
-```
-
-| Proxy Mode Can See | Proxy Mode CANNOT See |
-|-------------------|----------------------|
-| ✅ Hostname (api.openai.com) | ❌ Request body (prompts) |
-| ✅ Connection timing | ❌ Response body (completions) |
-| ✅ Bytes transferred | ❌ Secrets/PII in payload |
+For non-Linux compatibility, see [NON_LINUX_PROXY.md](NON_LINUX_PROXY.md).
 
 ---
 
@@ -181,190 +124,59 @@ sudo systemctl restart dhi
 sudo systemctl status dhi --no-pager
 ```
 
-### Systemctl Portability & Edge Cases
-
-The installer detects platform/init automatically:
-
-- systemd hosts: installs and enables `dhi.service`
-- Alpine/OpenRC hosts: skips systemd and prints OpenRC setup steps
-- other non-systemd hosts: installs binaries/config and prints manual-run guidance
-
-Quick check:
-
-```bash
-command -v systemctl >/dev/null 2>&1 && echo "systemd path" || echo "non-systemd path"
-```
-
-For Alpine/OpenRC, follow the exact post-install instructions printed by the installer.
-
-Reference files in this repository:
-
-- `ops/systemd/dhi.service` (service template)
-- `ops/sysctl/99-dhi-ebpf.conf` (kernel perf settings for eBPF uprobes)
-
----
-
-## Crash Resistance
-
-### Automatic Restart (systemd)
-
-Installer-provided `dhi.service` includes:
-
-```ini
-Restart=always          # Always restart on crash
-RestartPreventExitStatus=73  # Do not loop-restart on singleton lock conflict
-RestartSec=5            # Wait 5 seconds before restart
-StartLimitBurst=5       # Max 5 restarts
-StartLimitIntervalSec=60  # Within 60 seconds
-```
-
-Behavior:
-- Crashes are auto-restarted after 5 seconds
-- Crash loops are capped at 5 restarts per 60 seconds
-- Exit code `73` is not loop-restarted (singleton-lock protection)
-
-Quick verification:
-
-```bash
-systemctl show dhi -p Restart -p RestartSec -p RestartPreventExitStatus -p StartLimitBurst -p StartLimitIntervalSec
-```
-
-### What Happens on Crash
-
-| Mode | Crash Behavior | Recommendation |
-|------|----------------|----------------|
-| **eBPF Mode** | **Fail-open**: Traffic flows normally, no protection | Acceptable - availability preserved |
-| **Proxy Mode** | **Fail-closed**: Apps can't connect | Use eBPF mode, or set up failover |
-
-### Proxy Mode Failover (Optional)
-
-If you must use proxy mode, configure a failover:
-
-**Option 1: PAC File (Proxy Auto-Config)**
-
-Create `proxy.pac`:
-```javascript
-function FindProxyForURL(url, host) {
-    // Try Dhi proxy first, fall back to direct (default port 8080)
-    return "PROXY 127.0.0.1:8080; DIRECT";
-}
-```
-
-**Option 2: Environment Variable Wrapper**
-
-Create `/usr/local/bin/safe-proxy`:
-```bash
-#!/bin/bash
-# Check if Dhi is running on default proxy port 8080
-if nc -z 127.0.0.1 8080 2>/dev/null; then
-    export HTTP_PROXY=http://127.0.0.1:8080
-    export HTTPS_PROXY=http://127.0.0.1:8080
-else
-    echo "WARNING: Dhi proxy not running, proceeding without protection"
-    unset HTTP_PROXY HTTPS_PROXY
-fi
-exec "$@"
-```
-
-Usage: `safe-proxy claude "your prompt"`
-
----
-
 ## Health Checks
 
-### Check Dhi is Running
+The installer sets up an automated health check timer that runs every minute. For a quick manual check:
 
 ```bash
-# Check process
-pgrep -f dhi
-
-# Check systemd status
+# Is Dhi running?
 systemctl is-active dhi
 
-# Check eBPF probes (Linux)
-sudo cat /sys/kernel/debug/tracing/uprobe_events | grep dhi
+# Quick health check (service + endpoint)
+sudo dhi-health-check
 
-# Check default proxy port (proxy mode: 8080)
-nc -z 127.0.0.1 8080 && echo "Proxy OK" || echo "Proxy DOWN"
-
-# Check metrics endpoint (default port: 9090)
-nc -z 127.0.0.1 9090 && echo "Metrics OK" || echo "Metrics DOWN"
+# Check timer status and recent runs
+sudo systemctl status dhi-health-check.timer
+sudo journalctl -u dhi-health-check.service -n 20
 ```
 
-### Health Endpoint
+### Advanced: Health Check Options
 
-Dhi exposes a health endpoint:
+The health check script supports guardrails to prevent restart flapping:
 
 ```bash
-curl http://127.0.0.1:9090/health
-# Returns: {"status": "healthy", "uptime_seconds": 3600}
+# Auto-restart after 3 consecutive failures, with 10-min cooldown between restarts
+sudo dhi-health-check --restart-on-fail
+
+# Run one check immediately via systemd
+sudo systemctl start dhi-health-check.service
 ```
 
-Native CLI check (recommended for manual ops checks):
+Full options:
 
-```bash
-dhi health
-# or
-dhi health --url http://127.0.0.1:9090/health --timeout 5
-```
+| Option | Default | Env var |
+|--------|---------|---------|
+| `--url <url>` | derived from `dhi.toml` | — |
+| `--config <path>` | `/etc/dhi/dhi.toml` | `DHI_CONFIG` |
+| `--health-scheme <value>` | `http` | `DHI_HEALTH_SCHEME` |
+| `--health-path <path>` | `/health` | `DHI_HEALTH_PATH` |
+| `--service <name>` | `dhi` | — |
+| `--timeout <seconds>` | `5` | — |
+| `--failures-before-restart <n>` | `3` | — |
+| `--restart-cooldown <seconds>` | `600` | — |
+| `--state-dir <path>` | `/run/dhi-health-check` | — |
+| `--restart-on-fail` | off | — |
+| `--no-systemd-check` | off | — |
 
-### Agent/session observability endpoint
+The host/port for the derived URL can also be overridden via `DHI_HEALTH_HOST` and `DHI_HEALTH_PORT`.
 
-Use `/api/agents` for framework/session attribution and runtime usage counters:
+### Advanced: Agent/Session Observability
 
 ```bash
 curl -s http://127.0.0.1:9090/api/agents | jq '.total_agents, .total_sessions, .total_tokens, .total_tool_calls'
 ```
 
-Key fields:
-
-- Report: `total_tokens`, `total_tool_calls`
-- Per agent: `id`, `framework`, `pid`, `total_tokens`, `total_tool_calls`
-- Per session: `session_id`, `session_name`, `total_tokens`, `total_tool_calls`
-
-Session naming uses best-effort enrichment with deterministic IDs:
-
-1. Request payload/header names
-2. Environment variables (`DHI_SESSION_NAME`, `COPILOT_SESSION_NAME`, ...)
-3. Copilot disk metadata (`~/.copilot/session-state/*/workspace.yaml`)
-4. tmux session name from tty
-5. Fallback `process@cwd(tty)`
-
-Runtime extraction behavior notes:
-
-- `RUN-*` markers are extracted with boundary-aware parsing over connection buffers (more reliable under fragmented/noisy payloads than simple whitespace tokenization).
-- Token extraction supports common OpenAI and Anthropic usage schemas from both full JSON payloads and SSE `data:` lines.
-- Tool-call extraction supports `tool_calls`, `function_call`, `tools`, and Anthropic `type:"tool_use"` patterns.
-- Session usage attribution is request-scoped: token/tool increments are applied to session IDs extracted from that specific request, not broadcast to all sessions on the agent.
-
-### Automated Health Check Script
-
-Use the provided script:
-
-```bash
-# Basic check (service + /health endpoint)
-chmod +x scripts/dhi-health-check.sh
-./scripts/dhi-health-check.sh
-
-# Auto-restart service when unhealthy
-./scripts/dhi-health-check.sh --restart-on-fail
-```
-
-Cron example:
-
-```bash
-# Check every minute and log output
-* * * * * /path/to/dhi/scripts/dhi-health-check.sh --restart-on-fail >> /var/log/dhi/health-check.log 2>&1
-```
-
-Options:
-- `--url <url>`: override health endpoint URL
-- `--service <name>`: override service name (default: `dhi`)
-- `--timeout <seconds>`: HTTP timeout
-- `--restart-on-fail`: restart service on failure
-- `--no-systemd-check`: skip `systemctl is-active` validation
-
-Note: the script uses native `dhi health` when available and falls back to direct endpoint checks for older binaries.
+Key fields — per agent: `id`, `framework`, `pid`, `total_tokens`, `total_tool_calls`. Per session: `session_id`, `session_name`, `total_tokens`, `total_tool_calls`.
 
 ---
 
@@ -594,6 +406,62 @@ sudo rm -rf /var/log/dhi
 # Reload systemd
 sudo systemctl daemon-reload
 ```
+
+---
+
+## Advanced / Miscellaneous
+
+### Systemctl Portability & Edge Cases
+
+The installer detects platform/init automatically:
+
+- systemd hosts: installs and enables `dhi.service`
+- Alpine/OpenRC hosts: skips systemd and prints OpenRC setup steps
+- other non-systemd hosts: installs binaries/config and prints manual-run guidance
+
+Quick check:
+
+```bash
+command -v systemctl >/dev/null 2>&1 && echo "systemd path" || echo "non-systemd path"
+```
+
+For Alpine/OpenRC, follow the exact post-install instructions printed by the installer.
+
+Reference files in this repository:
+
+- `ops/systemd/dhi.service` (service template)
+- `ops/sysctl/99-dhi-ebpf.conf` (kernel perf settings for eBPF uprobes)
+
+### Crash Resistance
+
+#### Automatic Restart (systemd)
+
+Installer-provided `dhi.service` includes:
+
+```ini
+Restart=always          # Always restart on crash
+RestartPreventExitStatus=73  # Do not loop-restart on singleton lock conflict
+RestartSec=5            # Wait 5 seconds before restart
+StartLimitBurst=5       # Max 5 restarts
+StartLimitIntervalSec=60  # Within 60 seconds
+```
+
+Behavior:
+- Crashes are auto-restarted after 5 seconds
+- Crash loops are capped at 5 restarts per 60 seconds
+- Exit code `73` is not loop-restarted (singleton-lock protection)
+
+Quick verification:
+
+```bash
+systemctl show dhi -p Restart -p RestartSec -p RestartPreventExitStatus -p StartLimitBurst -p StartLimitIntervalSec
+```
+
+#### What Happens on Crash
+
+| Mode | Crash Behavior | Recommendation |
+|------|----------------|----------------|
+| **eBPF Mode** | **Fail-open**: Traffic flows normally, no protection | Acceptable - availability preserved |
 
 ---
 

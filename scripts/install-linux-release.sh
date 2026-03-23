@@ -14,33 +14,55 @@ set -euo pipefail
 #
 # Optional:
 #   DHI_LOG_ROOT=/tmp/log/dhi DHI_VERSION=v1.2.3 ./scripts/install-linux-release.sh
+#   --slack-webhook https://hooks.slack.com/services/YOUR/WEBHOOK/URL
 
 REPO="seconize-co/dhi"
 LOG_ROOT="${DHI_LOG_ROOT:-/var/log/dhi}"
+ENABLE_HEALTH_TIMER="${DHI_ENABLE_HEALTH_TIMER:-1}"
+SLACK_WEBHOOK="${DHI_SLACK_WEBHOOK:-}"
 VERIFY_ONLY=0
 POSITIONAL=()
 
-for arg in "$@"; do
-  case "$arg" in
+while [[ $# -gt 0 ]]; do
+  case "$1" in
     --verify-only)
       VERIFY_ONLY=1
+      shift
+      ;;
+    --slack-webhook)
+      SLACK_WEBHOOK="$2"
+      shift 2
       ;;
     -h|--help)
       echo "Install Dhi from GitHub release artifacts (Linux only)."
       echo
       echo "Usage:"
-      echo "  $0 <version-tag>"
+      echo "  $0 <version-tag> [--slack-webhook <url>]"
       echo "  DHI_VERSION=<version-tag> $0"
       echo "  $0 --verify-only"
       echo
+      echo "Options:"
+      echo "  --slack-webhook <url>   Set Slack webhook URL in /etc/dhi/dhi.toml (optional)"
+      echo
       echo "Examples:"
       echo "  $0 v1.2.3"
+      echo "  $0 v1.2.3 --slack-webhook https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
       echo "  DHI_VERSION=v1.2.3 $0"
       echo "  $0 --verify-only"
       exit 0
       ;;
+    --)
+      shift
+      POSITIONAL+=("$@")
+      break
+      ;;
+    -*)
+      echo "Unknown option: $1" >&2
+      exit 1
+      ;;
     *)
-      POSITIONAL+=("$arg")
+      POSITIONAL+=("$1")
+      shift
       ;;
   esac
 done
@@ -178,6 +200,49 @@ install_systemd_service() {
   return 1
 }
 
+install_health_check_script() {
+  local local_script="scripts/dhi-health-check.sh"
+  local remote_script="https://raw.githubusercontent.com/${REPO}/${VERSION}/scripts/dhi-health-check.sh"
+  local tmp_script="$TMPDIR/dhi-health-check.sh"
+
+  if [[ -f "$local_script" ]]; then
+    sudo install -m 755 "$local_script" /usr/local/bin/dhi-health-check
+    return 0
+  fi
+
+  if curl -fsSL "$remote_script" -o "$tmp_script"; then
+    sudo install -m 755 "$tmp_script" /usr/local/bin/dhi-health-check
+    return 0
+  fi
+
+  echo "WARNING: Could not obtain health-check script (local or remote)."
+  return 1
+}
+
+install_health_systemd_units() {
+  local local_service="ops/systemd/dhi-health-check.service"
+  local local_timer="ops/systemd/dhi-health-check.timer"
+  local remote_service="https://raw.githubusercontent.com/${REPO}/${VERSION}/ops/systemd/dhi-health-check.service"
+  local remote_timer="https://raw.githubusercontent.com/${REPO}/${VERSION}/ops/systemd/dhi-health-check.timer"
+  local tmp_service="$TMPDIR/dhi-health-check.service"
+  local tmp_timer="$TMPDIR/dhi-health-check.timer"
+
+  if [[ -f "$local_service" && -f "$local_timer" ]]; then
+    sudo install -m 644 "$local_service" /etc/systemd/system/dhi-health-check.service
+    sudo install -m 644 "$local_timer" /etc/systemd/system/dhi-health-check.timer
+    return 0
+  fi
+
+  if curl -fsSL "$remote_service" -o "$tmp_service" && curl -fsSL "$remote_timer" -o "$tmp_timer"; then
+    sudo install -m 644 "$tmp_service" /etc/systemd/system/dhi-health-check.service
+    sudo install -m 644 "$tmp_timer" /etc/systemd/system/dhi-health-check.timer
+    return 0
+  fi
+
+  echo "WARNING: Could not obtain health-check systemd units (local or remote)."
+  return 1
+}
+
 install_config_file() {
   if [[ ! -f "$TMPDIR/etc/dhi/dhi.toml.example" ]]; then
     echo "WARNING: Config template not found in release archive."
@@ -301,6 +366,30 @@ run_post_install_verification() {
     else
       verify_warn "Systemd service not enabled: dhi"
     fi
+
+    if [[ -x /usr/local/bin/dhi-health-check ]]; then
+      verify_ok "Health-check script installed: /usr/local/bin/dhi-health-check"
+    else
+      verify_warn "Health-check script missing: /usr/local/bin/dhi-health-check"
+    fi
+
+    if [[ -f /etc/systemd/system/dhi-health-check.service ]]; then
+      verify_ok "Health-check unit installed: /etc/systemd/system/dhi-health-check.service"
+    else
+      verify_warn "Health-check unit missing: /etc/systemd/system/dhi-health-check.service"
+    fi
+
+    if [[ -f /etc/systemd/system/dhi-health-check.timer ]]; then
+      verify_ok "Health-check timer installed: /etc/systemd/system/dhi-health-check.timer"
+    else
+      verify_warn "Health-check timer missing: /etc/systemd/system/dhi-health-check.timer"
+    fi
+
+    if systemctl is-enabled dhi-health-check.timer >/dev/null 2>&1; then
+      verify_ok "Health-check timer enabled: dhi-health-check.timer"
+    else
+      verify_warn "Health-check timer not enabled: dhi-health-check.timer"
+    fi
   else
     if [[ "$OS_ID" == "alpine" ]]; then
       verify_warn "Alpine/OpenRC detected; systemd service registration skipped"
@@ -363,6 +452,87 @@ if install_config_file; then
   echo "Config files installed to /etc/dhi/"
 fi
 
+if [[ -z "$SLACK_WEBHOOK" ]] && [[ -t 0 ]]; then
+  echo
+  echo "Slack alerting (optional)"
+  echo "  Dhi can send security alerts to a Slack channel via an Incoming Webhook."
+  printf "  Enter your Slack webhook URL, or press Enter to skip: "
+  read -r _input_webhook
+  if [[ -n "$_input_webhook" ]]; then
+    SLACK_WEBHOOK="$_input_webhook"
+  else
+    echo "  Skipped. You can set it later in /etc/dhi/dhi.toml under [alerting] slack_webhook."
+  fi
+  unset _input_webhook
+fi
+
+validate_slack_webhook() {
+  local url="$1"
+
+  # Format check: must be a https://hooks.slack.com/ URL
+  if [[ ! "$url" =~ ^https://hooks\.slack\.com/ ]]; then
+    echo "WARNING: Slack webhook URL does not look valid (expected https://hooks.slack.com/...)."
+    return 1
+  fi
+
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "INFO: curl not found; skipping live Slack webhook test."
+    return 0
+  fi
+
+  echo "Testing Slack webhook..."
+  local http_code
+  http_code="$(curl -s -o /dev/null -w '%{http_code}' \
+    -X POST -H 'Content-type: application/json' \
+    --max-time 10 \
+    --data '{"text":"Dhi installation test \u2013 Slack alerting is working."}' \
+    "$url")"
+
+  case "$http_code" in
+    200)
+      echo "Slack webhook test: OK (HTTP 200)"
+      return 0
+      ;;
+    400)
+      echo "WARNING: Slack webhook test failed (HTTP 400 - invalid payload or channel not found)."
+      return 1
+      ;;
+    403)
+      echo "WARNING: Slack webhook test failed (HTTP 403 - webhook URL is invalid or revoked)."
+      return 1
+      ;;
+    404)
+      echo "WARNING: Slack webhook test failed (HTTP 404 - webhook not found)."
+      return 1
+      ;;
+    *)
+      echo "WARNING: Slack webhook test returned unexpected HTTP ${http_code}."
+      return 1
+      ;;
+  esac
+}
+
+if [[ -n "$SLACK_WEBHOOK" ]]; then
+  if validate_slack_webhook "$SLACK_WEBHOOK"; then
+    if [[ -f /etc/dhi/dhi.toml ]]; then
+      if grep -q 'slack_webhook' /etc/dhi/dhi.toml; then
+        sudo sed -i "s|slack_webhook[[:space:]]*=.*|slack_webhook = \"${SLACK_WEBHOOK}\"|" /etc/dhi/dhi.toml
+      else
+        printf '\n[alerting]\nslack_webhook = "%s"\n' "${SLACK_WEBHOOK}" | sudo tee -a /etc/dhi/dhi.toml >/dev/null
+      fi
+      echo "Slack webhook configured in /etc/dhi/dhi.toml"
+    else
+      echo "WARNING: /etc/dhi/dhi.toml not found; could not write Slack webhook."
+      echo "         Set it manually: [alerting] slack_webhook = \"${SLACK_WEBHOOK}\""
+    fi
+  else
+    echo "WARNING: Slack webhook was not saved due to validation failure."
+    echo "         Fix the URL and update /etc/dhi/dhi.toml manually:"
+    echo "           [alerting]"
+    echo "           slack_webhook = \"<your-valid-webhook-url>\""
+  fi
+fi
+
 if install_logrotate_pkg; then
   if install_logrotate_policy; then
     if logrotate -d /etc/logrotate.d/dhi >/dev/null 2>&1; then
@@ -384,6 +554,19 @@ elif install_systemd_service; then
   sudo systemctl enable dhi
   echo "Dhi service installed and enabled."
   echo "Start now with: sudo systemctl start dhi"
+
+  if install_health_check_script && install_health_systemd_units; then
+    sudo systemctl daemon-reload
+    if [[ "$ENABLE_HEALTH_TIMER" == "1" ]]; then
+      sudo systemctl enable --now dhi-health-check.timer
+      echo "Health-check timer installed and enabled (1-minute interval)."
+    else
+      echo "Health-check timer installed but not enabled (DHI_ENABLE_HEALTH_TIMER=${ENABLE_HEALTH_TIMER})."
+      echo "Enable it later with: sudo systemctl enable --now dhi-health-check.timer"
+    fi
+  else
+    echo "WARNING: Health-check automation artifacts were not fully installed."
+  fi
 else
   echo "WARNING: Could not install systemd service."
   echo "         You can still run Dhi manually: sudo dhi --config /etc/dhi/dhi.toml --level alert"
@@ -397,6 +580,8 @@ echo "  - ${LOG_ROOT}"
 echo "  - ${LOG_ROOT}/reports"
 if command -v systemctl >/dev/null 2>&1; then
   echo "  - systemd service (dhi.service)"
+  echo "  - health-check script (/usr/local/bin/dhi-health-check)"
+  echo "  - health-check timer (dhi-health-check.timer)"
 fi
 echo
 echo "Default runtime behavior: logs -> stdout/journald, reports -> ./dhi-reports"
@@ -408,7 +593,18 @@ echo "To start Dhi as a service:"
 echo "  sudo systemctl start dhi"
 echo "  sudo systemctl status dhi"
 echo "  sudo journalctl -u dhi -f"
+echo "To inspect health automation:"
+echo "  sudo systemctl status dhi-health-check.timer"
+echo "  sudo journalctl -u dhi-health-check.service -f"
 echo "To run verification later without reinstalling:"
 echo "  sudo ./scripts/install-linux-release.sh --verify-only"
+if [[ -z "$SLACK_WEBHOOK" ]]; then
+  echo
+  echo "Slack alerting is not configured yet."
+  echo "  To enable it, set slack_webhook in /etc/dhi/dhi.toml:"
+  echo "    [alerting]"
+  echo "    slack_webhook = \"https://hooks.slack.com/services/YOUR/WEBHOOK/URL\""
+  echo "  Or re-run the installer with: --slack-webhook <url>"
+fi
 
 run_post_install_verification

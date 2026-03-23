@@ -5,6 +5,7 @@
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use dhi::agentic::alerting::validate_slack_webhook;
 use dhi::agentic::DhiMetrics;
 use dhi::proxy::ProxyConfig;
 use dhi::{DhiConfig, DhiRuntime, EbpfBlockAction, ProtectionLevel};
@@ -621,14 +622,41 @@ async fn main() -> Result<()> {
 
     let ebpf_block_action = parse_ebpf_block_action(&cli.ebpf_block_action);
 
+    // Minimal TOML shape to extract [alerting] slack_webhook without
+    // requiring a full config struct change.
+    #[derive(serde::Deserialize, Default)]
+    struct TomlAlertingSection {
+        slack_webhook: Option<String>,
+    }
+    #[derive(serde::Deserialize, Default)]
+    struct TomlAlertingWrapper {
+        alerting: Option<TomlAlertingSection>,
+    }
+
     // Build configuration
-    let mut config = if let Some(config_path) = cli.config {
+    let mut config = if let Some(ref config_path) = cli.config {
         // Load from file
-        let content = std::fs::read_to_string(&config_path)?;
+        let content = std::fs::read_to_string(config_path)?;
         toml::from_str(&content)?
     } else {
         DhiConfig::default()
     };
+
+    // Extract Slack webhook from TOML [alerting] section (CLI --slack-webhook takes precedence).
+    let toml_slack_webhook: Option<String> = if let Some(ref config_path) = cli.config {
+        match std::fs::read_to_string(config_path)
+            .ok()
+            .and_then(|c| toml::from_str::<TomlAlertingWrapper>(&c).ok())
+        {
+            Some(wrapper) => wrapper.alerting.and_then(|a| a.slack_webhook),
+            None => None,
+        }
+    } else {
+        None
+    };
+
+    // Resolve: CLI > TOML.
+    let resolved_slack_webhook = cli.slack_webhook.clone().or(toml_slack_webhook);
 
     // Override with CLI args
     config.protection_level = protection_level;
@@ -655,12 +683,15 @@ async fn main() -> Result<()> {
             block_pii,
         }) => {
             let _instance_lock = acquire_instance_lock("proxy", port)?;
+            if let Some(ref url) = resolved_slack_webhook {
+                validate_slack_webhook(url).await;
+            }
             run_proxy(
                 port,
                 protection_level,
                 block_secrets,
                 block_pii,
-                cli.slack_webhook,
+                resolved_slack_webhook,
             )
             .await
         },
@@ -675,7 +706,10 @@ async fn main() -> Result<()> {
         Some(Commands::Health { url, timeout, json }) => run_health(&url, timeout, json).await,
         Some(Commands::Monitor) | None => {
             let _instance_lock = acquire_instance_lock("monitor", cli.port)?;
-            run_monitor(config, cli.port, cli.slack_webhook).await
+            if let Some(ref url) = resolved_slack_webhook {
+                validate_slack_webhook(url).await;
+            }
+            run_monitor(config, cli.port, resolved_slack_webhook).await
         },
     }
     .map_err(|e| {
