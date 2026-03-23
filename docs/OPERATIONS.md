@@ -175,13 +175,18 @@ Proxy mode is useful for:
 - Hostname-level blocking (e.g., block access to certain APIs)
 - Connection logging (which LLMs are being called)
 
+**Default proxy port: 8080** (see `[proxy]` in dhi.toml.example)
+
 ```bash
-# Start proxy
+# Start proxy (default port 8080)
+dhi proxy
+
+# Or override port for testing/specific deployments
 dhi proxy --port 18080
 
-# Configure applications
-export HTTP_PROXY=http://127.0.0.1:18080
-export HTTPS_PROXY=http://127.0.0.1:18080
+# Configure applications to use proxy
+export HTTP_PROXY=http://127.0.0.1:8080
+export HTTPS_PROXY=http://127.0.0.1:8080
 ```
 
 | Proxy Mode Can See | Proxy Mode CANNOT See |
@@ -410,7 +415,7 @@ If you must use proxy mode, configure a failover:
 Create `proxy.pac`:
 ```javascript
 function FindProxyForURL(url, host) {
-    // Try Dhi proxy first, fall back to direct
+    // Try Dhi proxy first, fall back to direct (default port 8080)
     return "PROXY 127.0.0.1:8080; DIRECT";
 }
 ```
@@ -420,10 +425,10 @@ function FindProxyForURL(url, host) {
 Create `/usr/local/bin/safe-proxy`:
 ```bash
 #!/bin/bash
-# Check if Dhi is running
+# Check if Dhi is running on default proxy port 8080
 if nc -z 127.0.0.1 8080 2>/dev/null; then
-    export HTTP_PROXY=http://127.0.0.1:18080
-    export HTTPS_PROXY=http://127.0.0.1:18080
+    export HTTP_PROXY=http://127.0.0.1:8080
+    export HTTPS_PROXY=http://127.0.0.1:8080
 else
     echo "WARNING: Dhi proxy not running, proceeding without protection"
     unset HTTP_PROXY HTTPS_PROXY
@@ -449,8 +454,11 @@ systemctl is-active dhi
 # Check eBPF probes (Linux)
 sudo cat /sys/kernel/debug/tracing/uprobe_events | grep dhi
 
-# Check proxy port (proxy mode)
+# Check default proxy port (proxy mode: 8080)
 nc -z 127.0.0.1 8080 && echo "Proxy OK" || echo "Proxy DOWN"
+
+# Check metrics endpoint (default port: 9090)
+nc -z 127.0.0.1 9090 && echo "Metrics OK" || echo "Metrics DOWN"
 ```
 
 ### Health Endpoint
