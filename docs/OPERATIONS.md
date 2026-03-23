@@ -300,6 +300,14 @@ curl http://127.0.0.1:9090/health
 # Returns: {"status": "healthy", "uptime_seconds": 3600}
 ```
 
+Native CLI check (recommended for manual ops checks):
+
+```bash
+dhi health
+# or
+dhi health --url http://127.0.0.1:9090/health --timeout 5
+```
+
 ### Agent/session observability endpoint
 
 Use `/api/agents` for framework/session attribution and runtime usage counters:
@@ -329,26 +337,34 @@ Runtime extraction behavior notes:
 - Tool-call extraction supports `tool_calls`, `function_call`, `tools`, and Anthropic `type:"tool_use"` patterns.
 - Session usage attribution is request-scoped: token/tool increments are applied to session IDs extracted from that specific request, not broadcast to all sessions on the agent.
 
-### Monitoring Script
+### Automated Health Check Script
 
-Create `/usr/local/bin/dhi-health`:
+Use the provided script:
+
 ```bash
-#!/bin/bash
-if curl -s http://127.0.0.1:9090/health | grep -q healthy; then
-    echo "Dhi: HEALTHY"
-    exit 0
-else
-    echo "Dhi: UNHEALTHY"
-    systemctl restart dhi
-    exit 1
-fi
+# Basic check (service + /health endpoint)
+chmod +x scripts/dhi-health-check.sh
+./scripts/dhi-health-check.sh
+
+# Auto-restart service when unhealthy
+./scripts/dhi-health-check.sh --restart-on-fail
 ```
 
-Add to cron for periodic checks:
+Cron example:
+
 ```bash
-# Check every minute
-* * * * * /usr/local/bin/dhi-health >> /tmp/log/dhi/health.log 2>&1
+# Check every minute and log output
+* * * * * /path/to/dhi/scripts/dhi-health-check.sh --restart-on-fail >> /var/log/dhi/health-check.log 2>&1
 ```
+
+Options:
+- `--url <url>`: override health endpoint URL
+- `--service <name>`: override service name (default: `dhi`)
+- `--timeout <seconds>`: HTTP timeout
+- `--restart-on-fail`: restart service on failure
+- `--no-systemd-check`: skip `systemctl is-active` validation
+
+Note: the script uses native `dhi health` when available and falls back to direct endpoint checks for older binaries.
 
 ---
 

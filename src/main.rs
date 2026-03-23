@@ -12,6 +12,7 @@ use std::fs::{remove_file, OpenOptions};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 use tracing::{info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
@@ -102,6 +103,21 @@ enum Commands {
 
     /// Show detected agents
     Agents,
+
+    /// Check Dhi health endpoint
+    Health {
+        /// Health endpoint URL
+        #[arg(long, default_value = "http://127.0.0.1:9090/health")]
+        url: String,
+
+        /// HTTP timeout in seconds
+        #[arg(long, default_value_t = 5)]
+        timeout: u64,
+
+        /// Print JSON output
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug)]
@@ -499,6 +515,83 @@ async fn run_demo() -> Result<()> {
     Ok(())
 }
 
+async fn run_health(url: &str, timeout_secs: u64, json_output: bool) -> Result<()> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(timeout_secs))
+        .build()?;
+
+    let response = client.get(url).send().await?;
+    let status = response.status();
+    let body = response.text().await?;
+
+    if !status.is_success() {
+        if json_output {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "ok": false,
+                    "url": url,
+                    "http_status": status.as_u16(),
+                    "reason": "non-success http status"
+                })
+            );
+        } else {
+            println!(
+                "UNHEALTHY: endpoint returned HTTP {} ({})",
+                status.as_u16(),
+                url
+            );
+        }
+        return Err(anyhow::anyhow!("health endpoint returned non-success status"));
+    }
+
+    let parsed: serde_json::Value = serde_json::from_str(&body).unwrap_or_else(|_| {
+        serde_json::json!({
+            "raw": body
+        })
+    });
+
+    let healthy = parsed
+        .get("status")
+        .and_then(|v| v.as_str())
+        .map(|s| s.eq_ignore_ascii_case("healthy"))
+        .unwrap_or(false);
+
+    if healthy {
+        if json_output {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "ok": true,
+                    "url": url,
+                    "http_status": status.as_u16(),
+                    "status": "healthy"
+                })
+            );
+        } else {
+            println!("HEALTHY: {}", url);
+        }
+        return Ok(());
+    }
+
+    if json_output {
+        println!(
+            "{}",
+            serde_json::json!({
+                "ok": false,
+                "url": url,
+                "http_status": status.as_u16(),
+                "reason": "unexpected health payload",
+                "payload": parsed
+            })
+        );
+    } else {
+        println!("UNHEALTHY: unexpected health payload from {}", url);
+    }
+
+    Err(anyhow::anyhow!("health endpoint payload was not healthy"))
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -579,6 +672,7 @@ async fn main() -> Result<()> {
             println!("Agents command not yet implemented");
             Ok(())
         },
+        Some(Commands::Health { url, timeout, json }) => run_health(&url, timeout, json).await,
         Some(Commands::Monitor) | None => {
             let _instance_lock = acquire_instance_lock("monitor", cli.port)?;
             run_monitor(config, cli.port, cli.slack_webhook).await
