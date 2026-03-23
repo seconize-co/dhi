@@ -5,7 +5,7 @@
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use dhi::agentic::alerting::validate_slack_webhook;
+use dhi::agentic::validate_slack_webhook;
 use dhi::agentic::DhiMetrics;
 use dhi::proxy::ProxyConfig;
 use dhi::{DhiConfig, DhiRuntime, EbpfBlockAction, ProtectionLevel};
@@ -543,7 +543,9 @@ async fn run_health(url: &str, timeout_secs: u64, json_output: bool) -> Result<(
                 url
             );
         }
-        return Err(anyhow::anyhow!("health endpoint returned non-success status"));
+        return Err(anyhow::anyhow!(
+            "health endpoint returned non-success status"
+        ));
     }
 
     let parsed: serde_json::Value = serde_json::from_str(&body).unwrap_or_else(|_| {

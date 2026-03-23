@@ -69,6 +69,48 @@ impl Alert {
         self.metadata.insert(key.to_string(), value);
         self
     }
+
+    pub fn with_correlation_id(self, correlation_id: &str) -> Self {
+        self.with_metadata("correlation_id", serde_json::json!(correlation_id))
+    }
+
+    pub fn with_session(self, session_id: &str, session_name: Option<&str>) -> Self {
+        let mut alert = self.with_metadata("session_id", serde_json::json!(session_id));
+        if let Some(name) = session_name {
+            alert = alert.with_metadata("session_name", serde_json::json!(name));
+        }
+        alert
+    }
+
+    pub fn with_process(self, process_name: Option<&str>, pid: Option<u32>) -> Self {
+        let mut alert = self;
+        if let Some(name) = process_name {
+            alert = alert.with_metadata("process_name", serde_json::json!(name));
+        }
+        if let Some(id) = pid {
+            alert = alert.with_metadata("pid", serde_json::json!(id));
+        }
+        alert
+    }
+
+    pub fn with_destination(self, hostname: Option<&str>, path: Option<&str>) -> Self {
+        let mut alert = self;
+        if let Some(host) = hostname {
+            alert = alert.with_metadata("destination", serde_json::json!(host));
+        }
+        if let Some(route) = path {
+            alert = alert.with_metadata("path", serde_json::json!(route));
+        }
+        alert
+    }
+
+    pub fn with_action(self, action: &str) -> Self {
+        self.with_metadata("action_taken", serde_json::json!(action))
+    }
+
+    pub fn with_risk_score(self, risk_score: u32) -> Self {
+        self.with_metadata("risk_score", serde_json::json!(risk_score))
+    }
 }
 
 /// Slack message format
@@ -470,6 +512,31 @@ impl Alerter {
         self.send(&alert).await
     }
 
+    /// Alert for budget warning threshold
+    pub async fn alert_budget_warning(
+        &self,
+        agent_id: &str,
+        spent: f64,
+        limit: f64,
+        percent_used: f64,
+    ) -> Result<()> {
+        let alert = Alert::new(
+            AlertSeverity::Warning,
+            "Budget Warning Threshold Reached",
+            &format!(
+                "Agent {} has reached budget warning: ${:.2}/${:.2} ({:.1}%)",
+                agent_id, spent, limit, percent_used
+            ),
+        )
+        .with_agent(agent_id)
+        .with_event_type("budget_warning")
+        .with_metadata("spent", serde_json::json!(spent))
+        .with_metadata("limit", serde_json::json!(limit))
+        .with_metadata("percent_used", serde_json::json!(percent_used));
+
+        self.send(&alert).await
+    }
+
     /// Alert for prompt injection
     pub async fn alert_prompt_injection(&self, agent_id: &str, pattern: &str) -> Result<()> {
         let alert = Alert::new(
@@ -501,6 +568,38 @@ impl Alerter {
         .with_event_type("tool_loop")
         .with_metadata("tool_name", serde_json::json!(tool_name))
         .with_metadata("count", serde_json::json!(count));
+
+        self.send(&alert).await
+    }
+
+    /// Alert for high-risk tool invocation
+    pub async fn alert_tool_risk(
+        &self,
+        agent_id: &str,
+        tool_name: &str,
+        risk_level: &str,
+        risk_score: u32,
+        action: &str,
+    ) -> Result<()> {
+        let severity = if risk_score >= 80 {
+            AlertSeverity::Error
+        } else {
+            AlertSeverity::Warning
+        };
+        let alert = Alert::new(
+            severity,
+            "High-Risk Tool Invocation",
+            &format!(
+                "Agent {} invoked tool '{}' with {} risk (score: {}).",
+                agent_id, tool_name, risk_level, risk_score
+            ),
+        )
+        .with_agent(agent_id)
+        .with_event_type("tool_risk")
+        .with_metadata("tool_name", serde_json::json!(tool_name))
+        .with_metadata("risk_level", serde_json::json!(risk_level))
+        .with_metadata("risk_score", serde_json::json!(risk_score))
+        .with_action(action);
 
         self.send(&alert).await
     }
@@ -552,11 +651,11 @@ pub async fn validate_slack_webhook(url: &str) -> SlackWebhookValidation {
                 "Could not build HTTP client for Slack webhook test; skipping live check"
             );
             return SlackWebhookValidation::NetworkError(e.to_string());
-        }
+        },
     };
 
     let payload = serde_json::json!({
-        "text": "Dhi startup test \u2013 Slack webhook connectivity verified."
+        "text": "Dhi startup test - Slack webhook connectivity verified."
     });
 
     let response = match client.post(url).json(&payload).send().await {
@@ -567,7 +666,7 @@ pub async fn validate_slack_webhook(url: &str) -> SlackWebhookValidation {
                 "Slack webhook live test failed (network error); alerts may not be delivered"
             );
             return SlackWebhookValidation::NetworkError(e.to_string());
-        }
+        },
     };
 
     let status = response.status().as_u16();
@@ -578,7 +677,7 @@ pub async fn validate_slack_webhook(url: &str) -> SlackWebhookValidation {
                 "Slack webhook validated (HTTP 200); alerts are enabled"
             );
             SlackWebhookValidation::Ok
-        }
+        },
         400 => {
             let reason = "invalid payload or channel not found";
             warn!(
@@ -588,7 +687,7 @@ pub async fn validate_slack_webhook(url: &str) -> SlackWebhookValidation {
                 "Slack webhook test failed (HTTP 400); check webhook configuration"
             );
             SlackWebhookValidation::LiveTestFailed(status, reason.to_string())
-        }
+        },
         403 => {
             let reason = "webhook URL is invalid or revoked";
             warn!(
@@ -598,7 +697,7 @@ pub async fn validate_slack_webhook(url: &str) -> SlackWebhookValidation {
                 "Slack webhook test failed (HTTP 403); re-create the webhook in Slack"
             );
             SlackWebhookValidation::LiveTestFailed(status, reason.to_string())
-        }
+        },
         404 => {
             let reason = "webhook not found";
             warn!(
@@ -608,7 +707,7 @@ pub async fn validate_slack_webhook(url: &str) -> SlackWebhookValidation {
                 "Slack webhook test failed (HTTP 404); webhook may have been deleted"
             );
             SlackWebhookValidation::LiveTestFailed(status, reason.to_string())
-        }
+        },
         other => {
             let reason = format!("unexpected HTTP {other}");
             warn!(
@@ -617,7 +716,7 @@ pub async fn validate_slack_webhook(url: &str) -> SlackWebhookValidation {
                 "Slack webhook test returned unexpected status; alerts may not be delivered"
             );
             SlackWebhookValidation::LiveTestFailed(other, reason)
-        }
+        },
     }
 }
 

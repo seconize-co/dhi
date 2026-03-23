@@ -219,7 +219,7 @@ impl DhiProxy {
             secrets_detector: Arc::clone(&self.secrets_detector),
             pii_detector: Arc::clone(&self.pii_detector),
             prompt_security: Arc::clone(&self.prompt_security),
-            _alerter: Arc::clone(&self.alerter),
+            alerter: Arc::clone(&self.alerter),
             metrics: Arc::clone(&self.metrics),
             fingerprinter: Arc::clone(&self.fingerprinter),
         }
@@ -230,7 +230,7 @@ struct ProxyHandlers {
     secrets_detector: Arc<SecretsDetector>,
     pii_detector: Arc<PiiDetector>,
     prompt_security: Arc<PromptSecurityAnalyzer>,
-    _alerter: Arc<Alerter>,
+    alerter: Arc<Alerter>,
     metrics: Arc<RwLock<DhiMetrics>>,
     fingerprinter: Arc<AgentFingerprinter>,
 }
@@ -508,6 +508,20 @@ fn extract_header_map(request: &str) -> HashMap<String, String> {
     headers
 }
 
+fn request_header(headers: &HashMap<String, String>, key: &str) -> Option<String> {
+    headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case(key))
+        .map(|(_, v)| v.clone())
+}
+
+fn extract_correlation_id(headers: &HashMap<String, String>) -> String {
+    request_header(headers, "x-correlation-id")
+        .or_else(|| request_header(headers, "x-request-id"))
+        .or_else(|| request_header(headers, "traceparent"))
+        .unwrap_or_else(|| format!("proxy-{}", chrono::Utc::now().timestamp_millis()))
+}
+
 fn add_alert(alerts: &mut Vec<String>, message: String) {
     if !alerts.iter().any(|a| a == &message) {
         alerts.push(message);
@@ -561,6 +575,13 @@ async fn scan_http_request(
         exe_path: None,
     };
     let fingerprint = handlers.fingerprinter.analyze_request(&request_info);
+    let correlation_id = extract_correlation_id(&request_info.headers);
+    let session_hint = fingerprint.sessions.values().next().cloned();
+    let action = if config.level == ProtectionLevel::Block {
+        "BLOCKED"
+    } else {
+        "ALERTED"
+    };
     let request_text_for_prompt = format!("{}\n{}", request_target, body);
 
     // 1) Auth headers: allow for trusted destinations.
@@ -597,6 +618,28 @@ async fn scan_http_request(
                     &mut reason,
                     "Credentials in auth headers to untrusted destination".to_string(),
                 );
+            }
+            if let Some(secret) = auth_secrets.secrets.first() {
+                let mut alert = crate::agentic::Alert::new(
+                    crate::agentic::AlertSeverity::Critical,
+                    "Credentials in Auth Header to Untrusted Destination",
+                    "Credential-like token detected in authorization headers for an untrusted host.",
+                )
+                .with_agent(&fingerprint.id)
+                .with_event_type("proxy_auth_secret_untrusted")
+                .with_correlation_id(&correlation_id)
+                .with_destination(Some(&request_info.hostname), Some(&request_info.path))
+                .with_process(request_info.process_name.as_deref(), request_info.pid)
+                .with_action(action)
+                .with_metadata("credential_type", serde_json::json!(secret.secret_type))
+                .with_metadata("location", serde_json::json!("auth_headers"));
+                if let Some(session) = session_hint.as_ref() {
+                    alert =
+                        alert.with_session(&session.session_id, session.session_name.as_deref());
+                }
+                if let Err(err) = handlers.alerter.send(&alert).await {
+                    warn!("Failed to dispatch proxy auth-secret alert: {}", err);
+                }
             }
             handlers.fingerprinter.record_security_event(
                 &fingerprint.id,
@@ -637,6 +680,31 @@ async fn scan_http_request(
                     format!("Credentials detected in {}", location_label),
                 );
             }
+            if let Some(secret) = secrets_result.secrets.first() {
+                let mut alert = crate::agentic::Alert::new(
+                    crate::agentic::AlertSeverity::Critical,
+                    "Credential Detected in Request Payload",
+                    &format!(
+                        "Credential-like token found in {} for outbound request.",
+                        location_label
+                    ),
+                )
+                .with_agent(&fingerprint.id)
+                .with_event_type("proxy_secret_detected")
+                .with_correlation_id(&correlation_id)
+                .with_destination(Some(&request_info.hostname), Some(&request_info.path))
+                .with_process(request_info.process_name.as_deref(), request_info.pid)
+                .with_action(action)
+                .with_metadata("credential_type", serde_json::json!(secret.secret_type))
+                .with_metadata("location", serde_json::json!(location_label));
+                if let Some(session) = session_hint.as_ref() {
+                    alert =
+                        alert.with_session(&session.session_id, session.session_name.as_deref());
+                }
+                if let Err(err) = handlers.alerter.send(&alert).await {
+                    warn!("Failed to dispatch proxy secret alert: {}", err);
+                }
+            }
             handlers.fingerprinter.record_security_event(
                 &fingerprint.id,
                 "proxy_secret_detected",
@@ -673,6 +741,33 @@ async fn scan_http_request(
                     format!("High-risk PII detected in {}", location_label),
                 );
             }
+            let pii_types_owned: Vec<String> = pii_result
+                .pii_types
+                .iter()
+                .map(|p| p.pii_type.clone())
+                .collect();
+            if !pii_types_owned.is_empty() {
+                let mut alert = crate::agentic::Alert::new(
+                    crate::agentic::AlertSeverity::Warning,
+                    "PII Detected in Request Payload",
+                    &format!("PII detected in {} for outbound request.", location_label),
+                )
+                .with_agent(&fingerprint.id)
+                .with_event_type("proxy_pii_detected")
+                .with_correlation_id(&correlation_id)
+                .with_destination(Some(&request_info.hostname), Some(&request_info.path))
+                .with_process(request_info.process_name.as_deref(), request_info.pid)
+                .with_action(action)
+                .with_metadata("location", serde_json::json!(location_label))
+                .with_metadata("pii_types", serde_json::json!(pii_types_owned));
+                if let Some(session) = session_hint.as_ref() {
+                    alert =
+                        alert.with_session(&session.session_id, session.session_name.as_deref());
+                }
+                if let Err(err) = handlers.alerter.send(&alert).await {
+                    warn!("Failed to dispatch proxy pii alert: {}", err);
+                }
+            }
             handlers.fingerprinter.record_security_event(
                 &fingerprint.id,
                 "proxy_pii_detected",
@@ -705,6 +800,27 @@ async fn scan_http_request(
             "high",
             "Prompt injection attempt detected",
         );
+        if let Some(finding) = security.findings.first() {
+            let mut alert = crate::agentic::Alert::new(
+                crate::agentic::AlertSeverity::Critical,
+                "Prompt Injection Attempt Detected",
+                "Prompt injection pattern detected in request target/body.",
+            )
+            .with_agent(&fingerprint.id)
+            .with_event_type("proxy_prompt_injection")
+            .with_correlation_id(&correlation_id)
+            .with_destination(Some(&request_info.hostname), Some(&request_info.path))
+            .with_process(request_info.process_name.as_deref(), request_info.pid)
+            .with_action(action)
+            .with_risk_score(security.risk_score)
+            .with_metadata("pattern", serde_json::json!(finding));
+            if let Some(session) = session_hint.as_ref() {
+                alert = alert.with_session(&session.session_id, session.session_name.as_deref());
+            }
+            if let Err(err) = handlers.alerter.send(&alert).await {
+                warn!("Failed to dispatch proxy injection alert: {}", err);
+            }
+        }
     }
 
     ScanResult {
@@ -729,7 +845,7 @@ mod tests {
             secrets_detector: Arc::new(SecretsDetector::new()),
             pii_detector: Arc::new(PiiDetector::new()),
             prompt_security: Arc::new(PromptSecurityAnalyzer::new()),
-            _alerter: Arc::new(Alerter::new(AlertConfig::default())),
+            alerter: Arc::new(Alerter::new(AlertConfig::default())),
             metrics: Arc::new(RwLock::new(DhiMetrics::new())),
             fingerprinter: Arc::new(AgentFingerprinter::new()),
         }

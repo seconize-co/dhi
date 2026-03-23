@@ -63,8 +63,13 @@ Process: python3 (PID 12345)
 Type: openai_api_key
 Destination: api.openai.com
 Action: BLOCKED
+Correlation: proxy-1742553900123
+Session: process-session:12345
 Timestamp: 2026-03-21T10:45:00Z
 ```
+
+Traceability note:
+- Runtime alerts include correlation and context metadata (`correlation_id`, `destination`, `path`, `action_taken`, `session_id`/`session_name` when available, process metadata when available) so operators can map an alert to a concrete request flow.
 
 ---
 

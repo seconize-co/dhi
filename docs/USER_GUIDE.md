@@ -136,6 +136,16 @@ See sample output formats:
 ## 7. Alerting (Slack/Webhook/Email)
 
 Alert transports are configurable under `[alerting]`.
+Alert payloads include traceability metadata for investigation:
+- `correlation_id`
+- `event_type`
+- `destination` and `path` (when request context is available)
+- `action_taken` (`ALERTED`/`BLOCKED`/`ALLOWED`)
+- `session_id` and optional `session_name` (when session extraction succeeds)
+- `process_name`/`pid` (when process context is available)
+
+For runtime/session investigation, continue to use `GET /api/agents` plus monitor logs; there is currently no dedicated `/api/alerts` endpoint.
+
 Recommended rollout:
 1. Start in alert mode.
 2. Tune false positives and trusted paths/hosts.

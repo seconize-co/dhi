@@ -184,6 +184,7 @@ pub struct AgenticRuntime {
     tool_monitor: Arc<ToolMonitor>,
     _mcp_monitor: Arc<McpMonitor>,
     prompt_security: Arc<PromptSecurityAnalyzer>,
+    alerter: Arc<Alerter>,
     fingerprinter: Arc<AgentFingerprinter>,
     memory_protection: Arc<RwLock<MemoryProtection>>,
     events: Arc<RwLock<CircularEventBuffer>>,
@@ -232,6 +233,10 @@ pub struct AgentEvent {
 
 impl AgenticRuntime {
     pub fn new() -> Self {
+        Self::new_with_alert_config(AlertConfig::default())
+    }
+
+    pub fn new_with_alert_config(alert_config: AlertConfig) -> Self {
         Self {
             agents: Arc::new(RwLock::new(HashMap::new())),
             llm_monitor: Arc::new(LlmMonitor::new()),
@@ -239,6 +244,7 @@ impl AgenticRuntime {
             tool_monitor: Arc::new(ToolMonitor::new()),
             _mcp_monitor: Arc::new(McpMonitor::new()),
             prompt_security: Arc::new(PromptSecurityAnalyzer::new()),
+            alerter: Arc::new(Alerter::new(alert_config)),
             fingerprinter: Arc::new(AgentFingerprinter::new()),
             memory_protection: Arc::new(RwLock::new(MemoryProtection::new())),
             events: Arc::new(RwLock::new(CircularEventBuffer::new(MAX_EVENTS))),
@@ -303,10 +309,33 @@ impl AgenticRuntime {
 
         if budget_check.status.is_warning {
             alerts.push("budget_warning".to_string());
+            if let Err(err) = self
+                .alerter
+                .alert_budget_warning(
+                    agent_id,
+                    budget_check.status.daily_spent,
+                    budget_check.status.daily_limit,
+                    budget_check.status.daily_percent_used,
+                )
+                .await
+            {
+                warn!("Failed to dispatch budget warning alert for {agent_id}: {err}");
+            }
         }
         if !budget_check.allowed {
             risk_score += 50;
             alerts.push("budget_exceeded".to_string());
+            if let Err(err) = self
+                .alerter
+                .alert_budget_exceeded(
+                    agent_id,
+                    budget_check.status.daily_spent,
+                    budget_check.status.daily_limit,
+                )
+                .await
+            {
+                warn!("Failed to dispatch budget exceeded alert for {agent_id}: {err}");
+            }
             self.emit_event(
                 AgentEventType::BudgetExceeded,
                 agent_id,
@@ -327,6 +356,15 @@ impl AgenticRuntime {
             if security.injection_detected {
                 risk_score += 40;
                 alerts.push("prompt_injection_detected".to_string());
+                if let Some(finding) = security.findings.first() {
+                    if let Err(err) = self
+                        .alerter
+                        .alert_prompt_injection(agent_id, &finding.pattern)
+                        .await
+                    {
+                        warn!("Failed to dispatch prompt injection alert for {agent_id}: {err}");
+                    }
+                }
                 self.emit_event(
                     AgentEventType::PromptInjectionAttempt,
                     agent_id,
@@ -470,6 +508,23 @@ impl AgenticRuntime {
         } else {
             tracing::Level::INFO
         };
+
+        if risk.risk_score >= 50 {
+            let action = if result.allowed { "ALLOWED" } else { "BLOCKED" };
+            if let Err(err) = self
+                .alerter
+                .alert_tool_risk(
+                    agent_id,
+                    tool_name,
+                    &risk.risk_level,
+                    risk.risk_score,
+                    action,
+                )
+                .await
+            {
+                warn!("Failed to dispatch tool risk alert for {agent_id}: {err}");
+            }
+        }
 
         match log_level {
             tracing::Level::WARN => warn!(
