@@ -1,0 +1,24 @@
+/var/log/dhi/*.log /tmp/log/dhi/*.log {
+    daily
+    rotate 14
+    size 50M
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    create 0640 root adm
+    sharedscripts
+}
+
+/var/log/dhi/reports/*.json /tmp/log/dhi/reports/*.json {
+    weekly
+    rotate 8
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    create 0640 root adm
+    sharedscripts
+}
