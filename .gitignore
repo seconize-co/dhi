@@ -40,3 +40,4 @@ temp/
 
 # eBPF generated artifacts
 bpf/*.bpf.o
+!bpf/dhi_ssl.bpf.o
