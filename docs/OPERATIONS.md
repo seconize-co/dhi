@@ -226,6 +226,12 @@ export DHI_LOG_LEVEL=info
 export DHI_SLACK_WEBHOOK=https://hooks.slack.com/...
 ```
 
+**For detailed feature explanations and tuning guidance**, see [USER_GUIDE.md](USER_GUIDE.md):
+- [Core use cases](USER_GUIDE.md#1-core-use-cases) — what Dhi protects against
+- [Key protections](USER_GUIDE.md#4-key-protections) — secrets, PII, prompt injection, tool control, budget, observability
+- [Alerting strategies](USER_GUIDE.md#7-alerting-slackwebhookemail) — alert tuning from alert → block mode
+- [Configuration anchors](USER_GUIDE.md#9-configuration-anchors) — complete reference of config options
+
 ---
 
 # ADVANCED OPERATIONS
@@ -406,6 +412,8 @@ tar czf dhi-reports-$(date +%Y%m%d).tar.gz /var/log/dhi/reports/
 ---
 
 ## Advanced: Configuration
+
+**Before tuning:** Understand what each section does in [USER_GUIDE.md](USER_GUIDE.md#4-key-protections).
 
 ### Block Mode
 
