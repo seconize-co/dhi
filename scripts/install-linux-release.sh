@@ -20,6 +20,7 @@ REPO="seconize-co/dhi"
 LOG_ROOT="${DHI_LOG_ROOT:-/var/log/dhi}"
 ENABLE_HEALTH_TIMER="${DHI_ENABLE_HEALTH_TIMER:-1}"
 SLACK_WEBHOOK="${DHI_SLACK_WEBHOOK:-}"
+REBUILD_EBPF_MODE="${DHI_REBUILD_EBPF:-auto}" # auto | always | never
 VERIFY_ONLY=0
 POSITIONAL=()
 
@@ -33,6 +34,14 @@ while [[ $# -gt 0 ]]; do
       SLACK_WEBHOOK="$2"
       shift 2
       ;;
+    --rebuild-ebpf)
+      REBUILD_EBPF_MODE="always"
+      shift
+      ;;
+    --no-rebuild-ebpf)
+      REBUILD_EBPF_MODE="never"
+      shift
+      ;;
     -h|--help)
       echo "Install Dhi from GitHub release artifacts (Linux only)."
       echo
@@ -43,10 +52,14 @@ while [[ $# -gt 0 ]]; do
       echo
       echo "Options:"
       echo "  --slack-webhook <url>   Set Slack webhook URL in /etc/dhi/dhi.toml (optional)"
+      echo "  --rebuild-ebpf          Rebuild eBPF object on this host (fail if rebuild fails)"
+      echo "  --no-rebuild-ebpf       Skip host rebuild and keep bundled eBPF object"
       echo
       echo "Examples:"
       echo "  $0 v1.2.3"
       echo "  $0 v1.2.3 --slack-webhook https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+      echo "  $0 v1.2.3 --rebuild-ebpf"
+      echo "  DHI_REBUILD_EBPF=auto $0 v1.2.3"
       echo "  DHI_VERSION=v1.2.3 $0"
       echo "  $0 --verify-only"
       exit 0
@@ -81,6 +94,15 @@ if [[ "$VERIFY_ONLY" -eq 0 && -z "$VERSION" ]]; then
   echo "Or run verification only: $0 --verify-only"
   exit 1
 fi
+
+case "$REBUILD_EBPF_MODE" in
+  auto|always|never) ;;
+  *)
+    echo "Invalid DHI_REBUILD_EBPF value: ${REBUILD_EBPF_MODE}"
+    echo "Expected one of: auto, always, never"
+    exit 1
+    ;;
+esac
 
 if [[ "${OSTYPE:-}" != linux* ]]; then
   echo "This installer supports Linux only."
@@ -241,6 +263,68 @@ install_health_systemd_units() {
 
   echo "WARNING: Could not obtain health-check systemd units (local or remote)."
   return 1
+}
+
+resolve_bpftool_bin() {
+  local bpftool_bin=""
+  bpftool_bin="$(find /usr/lib/linux-tools -type f -name bpftool 2>/dev/null | head -n 1 || true)"
+  if [[ -z "$bpftool_bin" ]]; then
+    bpftool_bin="$(command -v bpftool || true)"
+  fi
+  echo "$bpftool_bin"
+}
+
+target_arch_define() {
+  case "$ARCH" in
+    x86_64) echo "__TARGET_ARCH_x86" ;;
+    aarch64|arm64) echo "__TARGET_ARCH_arm64" ;;
+    *) return 1 ;;
+  esac
+}
+
+rebuild_ebpf_object() {
+  local source_c="$TMPDIR/dhi_ssl.bpf.c"
+  local source_url="https://raw.githubusercontent.com/${REPO}/${VERSION}/bpf/dhi_ssl.bpf.c"
+  local bpftool_bin=""
+  local arch_define=""
+
+  if ! command -v clang >/dev/null 2>&1; then
+    echo "eBPF rebuild skipped: clang not found."
+    return 2
+  fi
+  if [[ ! -f /usr/include/bpf/bpf_helpers.h ]]; then
+    echo "eBPF rebuild skipped: libbpf headers missing (/usr/include/bpf/bpf_helpers.h)."
+    return 2
+  fi
+
+  bpftool_bin="$(resolve_bpftool_bin)"
+  if [[ -z "$bpftool_bin" ]]; then
+    echo "eBPF rebuild skipped: bpftool not found."
+    return 2
+  fi
+  if [[ ! -f /sys/kernel/btf/vmlinux ]]; then
+    echo "eBPF rebuild skipped: /sys/kernel/btf/vmlinux not found."
+    return 2
+  fi
+
+  if [[ -f "bpf/dhi_ssl.bpf.c" ]]; then
+    cp "bpf/dhi_ssl.bpf.c" "$source_c"
+  elif ! curl -fsSL "$source_url" -o "$source_c"; then
+    echo "eBPF rebuild skipped: could not fetch source ${source_url}"
+    return 2
+  fi
+
+  arch_define="$(target_arch_define || true)"
+  if [[ -z "$arch_define" ]]; then
+    echo "eBPF rebuild skipped: unsupported architecture for clang define (${ARCH})."
+    return 2
+  fi
+
+  "$bpftool_bin" btf dump file /sys/kernel/btf/vmlinux format c > "$TMPDIR/vmlinux.h"
+  clang -O2 -target bpf -D"${arch_define}" -I"$TMPDIR" -c "$source_c" -o "$TMPDIR/dhi_ssl.bpf.o"
+  test -s "$TMPDIR/dhi_ssl.bpf.o"
+  sudo install -m 644 "$TMPDIR/dhi_ssl.bpf.o" /usr/share/dhi/dhi_ssl.bpf.o
+  return 0
 }
 
 install_config_file() {
@@ -474,6 +558,19 @@ sudo install -m 755 "$TMPDIR/usr/local/bin/dhi" /usr/local/bin/dhi
 echo "Installing eBPF object to /usr/share/dhi"
 sudo install -d /usr/share/dhi
 sudo install -m 644 "$TMPDIR/usr/share/dhi/dhi_ssl.bpf.o" /usr/share/dhi/dhi_ssl.bpf.o
+
+if [[ "$REBUILD_EBPF_MODE" != "never" ]]; then
+  echo "Attempting host eBPF rebuild (mode=${REBUILD_EBPF_MODE})..."
+  if rebuild_ebpf_object; then
+    echo "Host-built eBPF object installed to /usr/share/dhi/dhi_ssl.bpf.o"
+  else
+    if [[ "$REBUILD_EBPF_MODE" == "always" ]]; then
+      echo "ERROR: eBPF rebuild required but failed."
+      exit 1
+    fi
+    echo "WARNING: Host eBPF rebuild failed; continuing with bundled eBPF object."
+  fi
+fi
 
 echo "Creating production log/report directories at ${LOG_ROOT}"
 sudo install -d "$LOG_ROOT" "$LOG_ROOT/reports"

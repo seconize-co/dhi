@@ -23,9 +23,23 @@ For production Linux deployments, use the release installer:
 curl -sSL https://raw.githubusercontent.com/seconize-co/dhi/main/scripts/install-linux-release.sh | sudo bash
 ```
 
+Optional eBPF install modes:
+
+```bash
+# Auto (default): try host rebuild, fallback to bundled object
+sudo DHI_REBUILD_EBPF=auto ./scripts/install-linux-release.sh v0.1.0-rc.10
+
+# Require host rebuild and fail if rebuild is not possible
+sudo ./scripts/install-linux-release.sh v0.1.0-rc.10 --rebuild-ebpf
+
+# Use bundled release object only
+sudo ./scripts/install-linux-release.sh v0.1.0-rc.10 --no-rebuild-ebpf
+```
+
 The installer automatically:
 - Installs Dhi binary to `/usr/local/bin/dhi`
 - Installs eBPF object to `/usr/share/dhi/dhi_ssl.bpf.o`
+- In `auto` mode, tries to regenerate the eBPF object on host and falls back to bundled object if unavailable
 - Copies config template to `/etc/dhi/dhi.toml` (first install only)
 - Sets up systemd service with proper capabilities
 - Installs a logrotate policy at `/etc/logrotate.d/dhi` when `logrotate` is available

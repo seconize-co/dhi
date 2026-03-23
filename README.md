@@ -84,6 +84,19 @@ Use the install script (downloads the correct Linux artifact for your CPU, insta
 curl -fsSL https://raw.githubusercontent.com/seconize-co/dhi/main/scripts/install-linux-release.sh | bash -s -- v1.0.0
 ```
 
+Hybrid eBPF mode (recommended) keeps the bundled object for fast installs and optionally rebuilds on the host when toolchain/kernel BTF are available:
+
+```bash
+# Auto (default): try host rebuild, fall back to bundled object
+DHI_REBUILD_EBPF=auto ./scripts/install-linux-release.sh v1.0.0
+
+# Require host rebuild (fails install if rebuild fails)
+./scripts/install-linux-release.sh v1.0.0 --rebuild-ebpf
+
+# Never rebuild; always use bundled object
+./scripts/install-linux-release.sh v1.0.0 --no-rebuild-ebpf
+```
+
 For macOS/Windows proxy-mode notes, see [docs/NON_LINUX_PROXY.md](docs/NON_LINUX_PROXY.md).
 
 ### Build & Run (Linux)
