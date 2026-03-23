@@ -36,29 +36,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y clang
-          sudo apt-get install -y "linux-tools-$(uname -r)" "linux-cloud-tools-$(uname -r)" || true
-          sudo apt-get install -y linux-tools-azure linux-cloud-tools-azure || true
 
-      - name: Prepare eBPF object (build or fallback)
+      - name: Build eBPF object
         run: |
-          BPFOOL_BIN="$(find /usr/lib/linux-tools -type f -name bpftool | head -n 1)"
-          if [ -z "$BPFOOL_BIN" ]; then
-            BPFOOL_BIN="$(command -v bpftool || true)"
-          fi
-          BUILT_EBPF=0
-          if [ -n "$BPFOOL_BIN" ]; then
-            echo "Using bpftool: $BPFOOL_BIN"
-            if "$BPFOOL_BIN" btf dump file /sys/kernel/btf/vmlinux format c > bpf/vmlinux.h; then
-              if clang -O2 -target bpf -c bpf/dhi_ssl.bpf.c -o bpf/dhi_ssl.bpf.o; then
-                BUILT_EBPF=1
-              fi
-            fi
-          fi
-          if [ "$BUILT_EBPF" -eq 1 ]; then
-            echo "Built eBPF object in CI."
-          else
-            echo "Falling back to repository eBPF object bpf/dhi_ssl.bpf.o"
-          fi
+          test -s bpf/vmlinux.h
+          clang -O2 -target bpf -c bpf/dhi_ssl.bpf.c -o bpf/dhi_ssl.bpf.o
           test -s bpf/dhi_ssl.bpf.o
 
       - name: Install cross-compilation tools (Linux ARM64)

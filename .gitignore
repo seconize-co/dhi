@@ -39,5 +39,4 @@ temp/
 *.o
 
 # eBPF generated artifacts
-bpf/vmlinux.h
 bpf/*.bpf.o
