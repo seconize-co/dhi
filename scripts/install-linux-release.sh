@@ -129,6 +129,26 @@ install_systemd_service() {
   return 1
 }
 
+install_config_file() {
+  if [[ ! -f "$TMPDIR/etc/dhi/dhi.toml.example" ]]; then
+    echo "WARNING: Config template not found in release archive."
+    return 1
+  fi
+
+  sudo install -d /etc/dhi
+  
+  # Install template
+  sudo install -m 644 "$TMPDIR/etc/dhi/dhi.toml.example" /etc/dhi/dhi.toml.example
+  
+  # Create config only if it doesn't exist (preserve on upgrades)
+  if [[ ! -f /etc/dhi/dhi.toml ]]; then
+    sudo install -m 644 "$TMPDIR/etc/dhi/dhi.toml.example" /etc/dhi/dhi.toml
+    return 0
+  fi
+  
+  return 0
+}
+
 echo "Downloading ${URL}"
 curl -fL "$URL" -o "$TMPDIR/$ASSET"
 
@@ -154,6 +174,10 @@ sudo install -m 644 "$TMPDIR/usr/share/dhi/dhi_ssl.bpf.o" /usr/share/dhi/dhi_ssl
 
 echo "Creating production log/report directories at ${LOG_ROOT}"
 sudo install -d "$LOG_ROOT" "$LOG_ROOT/reports"
+
+if install_config_file; then
+  echo "Config files installed to /etc/dhi/"
+fi
 
 if install_logrotate_pkg; then
   if install_logrotate_policy; then
@@ -185,6 +209,7 @@ fi
 echo "Done. Installed:"
 echo "  - /usr/local/bin/dhi"
 echo "  - /usr/share/dhi/dhi_ssl.bpf.o"
+echo "  - /etc/dhi/dhi.toml (and dhi.toml.example)"
 echo "  - ${LOG_ROOT}"
 echo "  - ${LOG_ROOT}/reports"
 if command -v systemctl >/dev/null 2>&1; then

@@ -50,10 +50,11 @@ jobs:
 
       - name: Package binary (Unix)
         run: |
-          mkdir -p dist/usr/local/bin dist/usr/share/dhi
+          mkdir -p dist/usr/local/bin dist/usr/share/dhi dist/etc/dhi
           cp target/${{ matrix.target }}/release/dhi dist/usr/local/bin/dhi
           cp bpf/dhi_ssl.bpf.o dist/usr/share/dhi/dhi_ssl.bpf.o
-          tar -C dist -czf ${{ matrix.package }} usr
+          cp dhi.toml.example dist/etc/dhi/dhi.toml.example
+          tar -C dist -czf ${{ matrix.package }} usr etc
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
