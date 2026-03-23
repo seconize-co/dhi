@@ -537,6 +537,30 @@ ls -la /usr/share/dhi/dhi_ssl.bpf.o
 sudo -u dhi dhi --config /etc/dhi/dhi.toml 2>&1 | head -20
 ```
 
+**Port Already In Use:**
+
+If the metrics port (default `9090`) is already in use by another process, Dhi will fail to start with an error like `address already in use`.
+
+Solution options:
+
+```bash
+# Option 1: Find and stop the conflicting process
+sudo lsof -i :9090
+# Kill the process using that port
+sudo kill -9 <PID>
+
+# Option 2: Change the metrics port in config
+# Edit /etc/dhi/dhi.toml:
+# [metrics]
+# port = 9091  # Use a different port
+
+# Then restart
+sudo systemctl restart dhi
+
+# Verify
+curl http://127.0.0.1:9091/health
+```
+
 ### eBPF Not Working
 
 If logs show `perf_event_open failed`:
