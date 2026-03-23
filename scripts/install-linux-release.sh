@@ -320,10 +320,22 @@ rebuild_ebpf_object() {
     return 2
   fi
 
-  "$bpftool_bin" btf dump file /sys/kernel/btf/vmlinux format c > "$TMPDIR/vmlinux.h"
-  clang -O2 -target bpf -D"${arch_define}" -I"$TMPDIR" -c "$source_c" -o "$TMPDIR/dhi_ssl.bpf.o"
-  test -s "$TMPDIR/dhi_ssl.bpf.o"
-  sudo install -m 644 "$TMPDIR/dhi_ssl.bpf.o" /usr/share/dhi/dhi_ssl.bpf.o
+  if ! "$bpftool_bin" btf dump file /sys/kernel/btf/vmlinux format c > "$TMPDIR/vmlinux.h"; then
+    echo "eBPF rebuild failed: bpftool BTF dump error."
+    return 1
+  fi
+  if ! clang -O2 -target bpf -D"${arch_define}" -I"$TMPDIR" -c "$source_c" -o "$TMPDIR/dhi_ssl.bpf.o"; then
+    echo "eBPF rebuild failed: clang compilation error."
+    return 1
+  fi
+  if ! test -s "$TMPDIR/dhi_ssl.bpf.o"; then
+    echo "eBPF rebuild failed: output object missing."
+    return 1
+  fi
+  if ! sudo install -m 644 "$TMPDIR/dhi_ssl.bpf.o" /usr/share/dhi/dhi_ssl.bpf.o; then
+    echo "eBPF rebuild failed: could not install rebuilt object."
+    return 1
+  fi
   return 0
 }
 
