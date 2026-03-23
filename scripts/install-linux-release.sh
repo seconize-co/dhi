@@ -16,18 +16,67 @@ set -euo pipefail
 #   DHI_LOG_ROOT=/tmp/log/dhi DHI_VERSION=v1.2.3 ./scripts/install-linux-release.sh
 
 REPO="seconize-co/dhi"
-VERSION="${1:-${DHI_VERSION:-}}"
 LOG_ROOT="${DHI_LOG_ROOT:-/var/log/dhi}"
+VERIFY_ONLY=0
+POSITIONAL=()
 
-if [[ -z "$VERSION" ]]; then
+for arg in "$@"; do
+  case "$arg" in
+    --verify-only)
+      VERIFY_ONLY=1
+      ;;
+    -h|--help)
+      echo "Install Dhi from GitHub release artifacts (Linux only)."
+      echo
+      echo "Usage:"
+      echo "  $0 <version-tag>"
+      echo "  DHI_VERSION=<version-tag> $0"
+      echo "  $0 --verify-only"
+      echo
+      echo "Examples:"
+      echo "  $0 v1.2.3"
+      echo "  DHI_VERSION=v1.2.3 $0"
+      echo "  $0 --verify-only"
+      exit 0
+      ;;
+    *)
+      POSITIONAL+=("$arg")
+      ;;
+  esac
+done
+
+if [[ "${#POSITIONAL[@]}" -gt 1 ]]; then
+  echo "Too many positional arguments."
+  echo "Usage: $0 <version-tag> | $0 --verify-only"
+  exit 1
+fi
+
+VERSION="${POSITIONAL[0]:-${DHI_VERSION:-}}"
+
+if [[ "$VERIFY_ONLY" -eq 0 && -z "$VERSION" ]]; then
   echo "Usage: $0 <version-tag>  (example: $0 v1.2.3)"
   echo "Or set DHI_VERSION=v1.2.3"
+  echo "Or run verification only: $0 --verify-only"
   exit 1
 fi
 
 if [[ "${OSTYPE:-}" != linux* ]]; then
   echo "This installer supports Linux only."
   exit 1
+fi
+
+OS_ID="unknown"
+if [[ -f /etc/os-release ]]; then
+  # shellcheck disable=SC1091
+  . /etc/os-release
+  OS_ID="${ID:-unknown}"
+fi
+
+INIT_MODEL="non-systemd"
+if command -v systemctl >/dev/null 2>&1; then
+  INIT_MODEL="systemd"
+elif [[ "$OS_ID" == "alpine" ]]; then
+  INIT_MODEL="openrc"
 fi
 
 ARCH="$(uname -m)"
@@ -149,6 +198,141 @@ install_config_file() {
   return 0
 }
 
+print_non_systemd_guidance() {
+  if [[ "$OS_ID" == "alpine" ]]; then
+    echo "WARNING: Alpine detected (OpenRC); systemd service registration is skipped."
+    echo "         Configure auto-start with OpenRC local service:"
+    echo "         1) sudo tee /etc/local.d/dhi.start >/dev/null <<'EOF'"
+    echo "            #!/bin/sh"
+    echo "            exec /usr/local/bin/dhi --config /etc/dhi/dhi.toml --level alert"
+    echo "            EOF"
+    echo "         2) sudo chmod +x /etc/local.d/dhi.start"
+    echo "         3) sudo rc-update add local default"
+    echo "         4) sudo rc-service local start"
+    echo "         Logs: check /var/log/messages or your configured Dhi log file."
+  else
+    echo "WARNING: systemd not detected; Dhi service will not be registered."
+    echo "         You can still run Dhi manually: sudo dhi --config /etc/dhi/dhi.toml --level alert"
+  fi
+}
+
+VERIFICATION_FAILURES=0
+VERIFICATION_WARNINGS=0
+
+verify_ok() {
+  echo "[OK]   $1"
+}
+
+verify_warn() {
+  echo "[WARN] $1"
+  VERIFICATION_WARNINGS=$((VERIFICATION_WARNINGS + 1))
+}
+
+verify_fail() {
+  echo "[FAIL] $1"
+  VERIFICATION_FAILURES=$((VERIFICATION_FAILURES + 1))
+}
+
+run_post_install_verification() {
+  echo
+  echo "Post-install verification"
+  echo "-------------------------"
+
+  if [[ -x /usr/local/bin/dhi ]]; then
+    verify_ok "Binary installed: /usr/local/bin/dhi"
+  else
+    verify_fail "Binary missing or not executable: /usr/local/bin/dhi"
+  fi
+
+  if /usr/local/bin/dhi --version >/dev/null 2>&1; then
+    verify_ok "Binary executable check passed (dhi --version)"
+  else
+    verify_fail "Binary executable check failed (dhi --version)"
+  fi
+
+  if [[ -f /usr/share/dhi/dhi_ssl.bpf.o ]]; then
+    verify_ok "eBPF object installed: /usr/share/dhi/dhi_ssl.bpf.o"
+  else
+    verify_fail "eBPF object missing: /usr/share/dhi/dhi_ssl.bpf.o"
+  fi
+
+  if [[ -f /etc/dhi/dhi.toml.example ]]; then
+    verify_ok "Config template installed: /etc/dhi/dhi.toml.example"
+  else
+    verify_warn "Config template missing: /etc/dhi/dhi.toml.example"
+  fi
+
+  if [[ -f /etc/dhi/dhi.toml ]]; then
+    verify_ok "Config file present: /etc/dhi/dhi.toml"
+  else
+    verify_warn "Config file missing: /etc/dhi/dhi.toml"
+  fi
+
+  if [[ -d "$LOG_ROOT" && -d "$LOG_ROOT/reports" ]]; then
+    verify_ok "Log directories ready: ${LOG_ROOT}, ${LOG_ROOT}/reports"
+  else
+    verify_fail "Log directories missing under ${LOG_ROOT}"
+  fi
+
+  if command -v logrotate >/dev/null 2>&1; then
+    if [[ -f /etc/logrotate.d/dhi ]]; then
+      verify_ok "Logrotate policy installed: /etc/logrotate.d/dhi"
+      if logrotate -d /etc/logrotate.d/dhi >/dev/null 2>&1; then
+        verify_ok "Logrotate policy validation passed"
+      else
+        verify_warn "Logrotate policy validation failed"
+      fi
+    else
+      verify_warn "Logrotate installed but policy missing: /etc/logrotate.d/dhi"
+    fi
+  else
+    verify_warn "logrotate not installed"
+  fi
+
+  if command -v systemctl >/dev/null 2>&1; then
+    if [[ -f /etc/systemd/system/dhi.service ]]; then
+      verify_ok "Systemd unit installed: /etc/systemd/system/dhi.service"
+    else
+      verify_warn "Systemd unit missing: /etc/systemd/system/dhi.service"
+    fi
+
+    if systemctl is-enabled dhi >/dev/null 2>&1; then
+      verify_ok "Systemd service enabled: dhi"
+    else
+      verify_warn "Systemd service not enabled: dhi"
+    fi
+  else
+    if [[ "$OS_ID" == "alpine" ]]; then
+      verify_warn "Alpine/OpenRC detected; systemd service registration skipped"
+    else
+      verify_warn "systemd not detected; service registration skipped"
+    fi
+  fi
+
+  echo
+  if [[ "$VERIFICATION_FAILURES" -eq 0 && "$VERIFICATION_WARNINGS" -eq 0 ]]; then
+    echo "Installation verification summary: ALL OK"
+  elif [[ "$VERIFICATION_FAILURES" -eq 0 ]]; then
+    echo "Installation verification summary: OK with ${VERIFICATION_WARNINGS} warning(s)"
+    echo "Review warning messages above for optional improvements."
+  else
+    echo "Installation verification summary: ${VERIFICATION_FAILURES} critical check(s) failed"
+    echo "Please review messages above before using Dhi in production."
+    return 1
+  fi
+
+  return 0
+}
+
+if [[ "$VERIFY_ONLY" -eq 1 ]]; then
+  echo "Detected distro: ${OS_ID} (${INIT_MODEL} path)"
+  echo "Running verification only (no install actions)."
+  run_post_install_verification
+  exit $?
+fi
+
+echo "Detected distro: ${OS_ID} (${INIT_MODEL} path)"
+
 echo "Downloading ${URL}"
 curl -fL "$URL" -o "$TMPDIR/$ASSET"
 
@@ -193,8 +377,7 @@ else
 fi
 
 if ! command -v systemctl >/dev/null 2>&1; then
-  echo "WARNING: systemd not detected; Dhi service will not be registered."
-  echo "         You can still run Dhi manually: sudo dhi --level alert"
+  print_non_systemd_guidance
 elif install_systemd_service; then
   echo "Installing systemd service"
   sudo systemctl daemon-reload
@@ -203,7 +386,7 @@ elif install_systemd_service; then
   echo "Start now with: sudo systemctl start dhi"
 else
   echo "WARNING: Could not install systemd service."
-  echo "         You can still run Dhi manually: sudo dhi --level alert"
+  echo "         You can still run Dhi manually: sudo dhi --config /etc/dhi/dhi.toml --level alert"
 fi
 
 echo "Done. Installed:"
@@ -225,3 +408,7 @@ echo "To start Dhi as a service:"
 echo "  sudo systemctl start dhi"
 echo "  sudo systemctl status dhi"
 echo "  sudo journalctl -u dhi -f"
+echo "To run verification later without reinstalling:"
+echo "  sudo ./scripts/install-linux-release.sh --verify-only"
+
+run_post_install_verification

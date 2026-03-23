@@ -133,67 +133,52 @@ export HTTPS_PROXY=http://127.0.0.1:8080
 
 ## Service Management (systemd)
 
-### Install as Service
-
-Create `/etc/systemd/system/dhi.service` (or copy from `ops/systemd/dhi.service`):
-
-```ini
-[Unit]
-Description=Dhi AI Agent Security
-After=network.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/dhi --config /etc/dhi/dhi.toml --level alert
-Restart=always
-RestartSec=5
-StartLimitIntervalSec=60
-StartLimitBurst=5
-
-# Security hardening
-NoNewPrivileges=false
-ProtectSystem=strict
-ProtectHome=read-only
-PrivateTmp=true
-ProtectKernelTunables=true
-ProtectControlGroups=true
-ProtectKernelModules=true
-LockPersonality=true
-RestrictSUIDSGID=true
-ReadWritePaths=/var/log/dhi
-
-# For eBPF mode (needs capabilities)
-AmbientCapabilities=CAP_BPF CAP_PERFMON CAP_SYS_ADMIN CAP_SYS_PTRACE CAP_NET_ADMIN
-CapabilityBoundingSet=CAP_BPF CAP_PERFMON CAP_SYS_ADMIN CAP_SYS_PTRACE CAP_NET_ADMIN
-
-[Install]
-WantedBy=multi-user.target
-```
+The release installer already installs and enables `dhi.service` on systemd hosts.
+Use this section for day-2 operations.
 
 ### Service Commands
 
 ```bash
-# Enable on boot
-sudo systemctl enable dhi
-
-# Start service
+# Start/stop/restart
 sudo systemctl start dhi
-
-# Stop service
 sudo systemctl stop dhi
-
-# Restart service
 sudo systemctl restart dhi
 
 # Check status
 sudo systemctl status dhi
+
+# Check enabled on boot
+sudo systemctl is-enabled dhi
 
 # View logs
 sudo journalctl -u dhi -f
 
 # View last 100 lines
 sudo journalctl -u dhi -n 100
+```
+
+### Optional: Customize Service Flags
+
+If you need to change runtime flags (for example protection level, verbosity, or config path), use a systemd override:
+
+```bash
+sudo systemctl edit dhi
+```
+
+Example override:
+
+```ini
+[Service]
+ExecStart=
+ExecStart=/usr/local/bin/dhi --config /etc/dhi/dhi.toml --level alert -v
+```
+
+Apply and verify:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart dhi
+sudo systemctl status dhi --no-pager
 ```
 
 ### Systemctl Portability & Edge Cases
@@ -249,67 +234,9 @@ If you deploy on Alpine or another non-systemd system:
 
 3. **Recommended:** Use systemd-enabled distribution (Ubuntu 20.04+, Debian 11+, RHEL 8+) for production deployments. systemd adoption is near-universal for production workloads.
 
-### Auto-start Setup (Verified)
-
-If you want Dhi to start automatically after VM reboot, use this exact setup:
-
-```bash
-# Build and install binary
-cargo build --release
-sudo install -m 755 target/release/dhi /usr/local/bin/dhi
-
-# Runtime directories
-sudo mkdir -p /etc/dhi /var/log/dhi /usr/share/dhi
-sudo cp -n dhi.toml.example /etc/dhi/dhi.toml || true
-
-# Create systemd service
-sudo tee /etc/systemd/system/dhi.service >/dev/null <<'EOF'
-[Unit]
-Description=Dhi AI Agent Security
-After=network.target
-Wants=network-online.target
-StartLimitIntervalSec=60
-StartLimitBurst=5
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/dhi --level alert --ebpf-ssl-only --port 9090
-Restart=always
-RestartPreventExitStatus=73
-RestartSec=5
-WorkingDirectory=/var/log/dhi
-UMask=0027
-ProtectSystem=strict
-ProtectHome=read-only
-PrivateTmp=true
-ProtectKernelTunables=true
-ProtectControlGroups=true
-ProtectKernelModules=true
-LockPersonality=true
-RestrictSUIDSGID=true
-ReadWritePaths=/var/log/dhi
-AmbientCapabilities=CAP_BPF CAP_PERFMON CAP_SYS_ADMIN CAP_SYS_PTRACE CAP_NET_ADMIN
-CapabilityBoundingSet=CAP_BPF CAP_PERFMON CAP_SYS_ADMIN CAP_SYS_PTRACE CAP_NET_ADMIN
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# Enable + start now
-sudo systemctl daemon-reload
-sudo systemctl enable --now dhi
-
-# Verify
-systemctl is-enabled dhi
-systemctl status dhi --no-pager
-curl http://127.0.0.1:9090/health
-```
-
-> Note: `dhi.toml.example` is a template and may not map 1:1 to the runtime config struct in this build. The service above starts Dhi via CLI flags for a reliable boot path.
-
 Reference files in this repository:
 
-- `ops/systemd/dhi.service` (systemd unit)
+- `ops/systemd/dhi.service` (service template)
 - `ops/sysctl/99-dhi-ebpf.conf` (kernel perf settings for eBPF uprobes)
 
 ---
