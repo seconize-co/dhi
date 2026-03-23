@@ -183,56 +183,19 @@ sudo systemctl status dhi --no-pager
 
 ### Systemctl Portability & Edge Cases
 
-**systemd is the standard init system across all major Linux distributions:**
+The installer detects platform/init automatically:
 
-| Distribution | Init System | Status |
-|--------------|------------|--------|
-| Ubuntu, Debian | systemd | ✅ Default (20.04+) |
-| Fedora, RHEL, CentOS, AlmaLinux, Rocky | systemd | ✅ Standard |
-| openSUSE, SLES | systemd | ✅ Default |
-| Arch Linux | systemd | ✅ Standard |
-| Alpine Linux | OpenRC | ⚠️ Minimal distro; systemd optional |
+- systemd hosts: installs and enables `dhi.service`
+- Alpine/OpenRC hosts: skips systemd and prints OpenRC setup steps
+- other non-systemd hosts: installs binaries/config and prints manual-run guidance
 
-**For ~99% of production Linux (AWS, GCP, Azure, on-premises servers), systemd is available.**
-
-#### Check if systemd is available
+Quick check:
 
 ```bash
-# Test if systemd is present
-command -v systemctl >/dev/null 2>&1 && echo "systemd available" || echo "systemd NOT available"
-
-# View init system
-ps -p 1 -o comm=
+command -v systemctl >/dev/null 2>&1 && echo "systemd path" || echo "non-systemd path"
 ```
 
-Expected output: `systemd` or `init` (if using systemd, output is `systemd`).
-
-#### Alpine Linux (OpenRC) - Fallback
-
-If you deploy on Alpine or another non-systemd system:
-
-1. **Install script gracefully skips service setup:**
-   ```
-   WARNING: systemd not detected; Dhi service will not be registered.
-   You can still run Dhi manually: sudo dhi --level alert
-   ```
-
-2. **Manual start on reboot:**
-
-   Create `/etc/local.d/dhi.start`:
-   ```bash
-   #!/bin/sh
-   exec /usr/local/bin/dhi --level alert
-   ```
-
-   Make executable:
-   ```bash
-   sudo chmod +x /etc/local.d/dhi.start
-   ```
-
-   Alternatively, use a simple shell wrapper in your startup scripts or use `supervisord`/`runit` for service management.
-
-3. **Recommended:** Use systemd-enabled distribution (Ubuntu 20.04+, Debian 11+, RHEL 8+) for production deployments. systemd adoption is near-universal for production workloads.
+For Alpine/OpenRC, follow the exact post-install instructions printed by the installer.
 
 Reference files in this repository:
 
@@ -245,7 +208,7 @@ Reference files in this repository:
 
 ### Automatic Restart (systemd)
 
-The systemd service above includes:
+Installer-provided `dhi.service` includes:
 
 ```ini
 Restart=always          # Always restart on crash
@@ -255,10 +218,16 @@ StartLimitBurst=5       # Max 5 restarts
 StartLimitIntervalSec=60  # Within 60 seconds
 ```
 
-This means:
-- If Dhi crashes, it restarts automatically in 5 seconds
-- If it crashes 5 times in 60 seconds, systemd stops trying (likely a config error)
-- If startup exits with code `73` (singleton lock conflict), systemd does **not** loop-restart.
+Behavior:
+- Crashes are auto-restarted after 5 seconds
+- Crash loops are capped at 5 restarts per 60 seconds
+- Exit code `73` is not loop-restarted (singleton-lock protection)
+
+Quick verification:
+
+```bash
+systemctl show dhi -p Restart -p RestartSec -p RestartPreventExitStatus -p StartLimitBurst -p StartLimitIntervalSec
+```
 
 ### What Happens on Crash
 
