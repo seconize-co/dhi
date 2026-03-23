@@ -461,6 +461,9 @@ impl AgentFingerprinter {
             session_extract::extract_run_marker_sessions(body, &mut sessions);
         }
 
+        sessions.sort_by(|a, b| a.session_id.cmp(&b.session_id));
+        sessions.dedup_by(|a, b| a.session_id == b.session_id);
+
         for session in &mut sessions {
             if session.session_name.is_none() {
                 session.session_name = self.derive_session_name(
@@ -1397,5 +1400,55 @@ mod tests {
         };
         let ids = fingerprinter.request_session_ids(&request);
         assert_eq!(ids, vec!["dup-session".to_string()]);
+    }
+
+    #[test]
+    fn test_extract_sessions_trims_and_filters_invalid_ids() {
+        let fingerprinter = AgentFingerprinter::new();
+        let mut headers = HashMap::new();
+        headers.insert("X-Session-Id".to_string(), "  valid-session  ".to_string());
+        headers.insert("Session-Id".to_string(), "   ".to_string());
+
+        let request = RequestInfo {
+            hostname: "api.openai.com".to_string(),
+            path: "/v1/chat/completions".to_string(),
+            method: "POST".to_string(),
+            headers,
+            user_agent: None,
+            body: Some("{\"model\":\"gpt-4\"}".to_string()),
+            process_name: Some("python".to_string()),
+            pid: Some(123),
+            exe_path: None,
+        };
+
+        let ids = fingerprinter.request_session_ids(&request);
+        assert_eq!(ids, vec!["valid-session".to_string()]);
+    }
+
+    #[test]
+    fn test_extract_sessions_caps_run_markers_per_request() {
+        let fingerprinter = AgentFingerprinter::new();
+        let mut parts = Vec::new();
+        for i in 0..80 {
+            parts.push(format!("RUN-TEST-{i}"));
+        }
+        let body = parts.join(" ");
+
+        let request = RequestInfo {
+            hostname: "api.githubcopilot.com".to_string(),
+            path: "/chat/completions".to_string(),
+            method: "POST".to_string(),
+            headers: HashMap::new(),
+            user_agent: Some("copilot-cli/1.0".to_string()),
+            body: Some(body),
+            process_name: Some("MainThread".to_string()),
+            pid: Some(55555),
+            exe_path: Some("/home/test/.local/bin/copilot".to_string()),
+        };
+
+        let ids = fingerprinter.request_session_ids(&request);
+        assert_eq!(ids.len(), 64);
+        assert!(ids.contains(&"RUN-TEST-0".to_string()));
+        assert!(!ids.contains(&"RUN-TEST-79".to_string()));
     }
 }
