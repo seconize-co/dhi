@@ -12,14 +12,14 @@ Dhi is a **security-first runtime protection system** for AI agents. It detects 
 
 AI agents are powerful but introduce **serious security risks**:
 
-| Threat | Impact | Dhi Protection |
-|--------|--------|----------------|
-| 🔓 **Credential Leakage** | API keys exposed in logs/outputs | Real-time detection & blocking |
-| 📤 **Data Exfiltration** | PII/secrets sent to external APIs | Egress scanning & redaction |
-| 💸 **Cost Explosion** | Runaway LLM spending | Budget limits & auto-cutoff |
-| 🔄 **Infinite Loops** | Stuck agents burning tokens | Loop detection & termination |
-| 💉 **Prompt Injection** | Malicious instructions hijack agent | Attack pattern detection |
-| 🔓 **Jailbreaks** | Safety bypasses via social engineering | Jailbreak signature matching |
+| Threat | Impact | Dhi Protection | OWASP LLM Top 10 |
+|--------|--------|----------------|-------------------|
+| 🔓 **Credential Leakage** | API keys exposed in logs/outputs | Real-time detection & blocking | LLM06 Sensitive Information Disclosure |
+| 📤 **Data Exfiltration** | PII/secrets sent to external APIs | Egress scanning & redaction | LLM06 Sensitive Information Disclosure |
+| 💸 **Cost Explosion** | Runaway LLM spending | Budget limits & auto-cutoff | LLM04 Model DoS |
+| 🔄 **Infinite Loops** | Stuck agents burning tokens | Loop detection & termination | LLM04 Model DoS |
+| 💉 **Prompt Injection** | Malicious instructions hijack agent | Attack pattern detection | LLM01 Prompt Injection |
+| 🔓 **Jailbreaks** | Safety bypasses via social engineering | Jailbreak signature matching | LLM01 Prompt Injection |
 
 **Dhi watches everything your agents do and stops threats in real-time.**
 
