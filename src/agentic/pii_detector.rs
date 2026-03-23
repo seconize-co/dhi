@@ -7,6 +7,8 @@ use lazy_static::lazy_static;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
+use super::external_pattern_rules;
+
 /// Maximum input size for scanning (1MB)
 const MAX_SCAN_SIZE: usize = 1024 * 1024;
 
@@ -15,116 +17,142 @@ lazy_static! {
     static ref PII_PATTERNS: Vec<PiiPattern> = vec![
         // Email
         PiiPattern {
-            pii_type: "email",
+            pii_type: "email".to_string(),
             pattern: Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b").unwrap(),
-            severity: "medium",
-            redact_format: "[EMAIL]",
+            severity: "medium".to_string(),
+            redact_format: "[EMAIL]".to_string(),
         },
 
         // Phone numbers (various formats)
         PiiPattern {
-            pii_type: "phone",
+            pii_type: "phone".to_string(),
             pattern: Regex::new(r"\b(?:\+1[-.\s]?)?\(?[0-9]{3}\)?[-.\s]?[0-9]{3}[-.\s]?[0-9]{4}\b").unwrap(),
-            severity: "medium",
-            redact_format: "[PHONE]",
+            severity: "medium".to_string(),
+            redact_format: "[PHONE]".to_string(),
         },
 
         // SSN
         PiiPattern {
-            pii_type: "ssn",
+            pii_type: "ssn".to_string(),
             pattern: Regex::new(r"\b[0-9]{3}[-\s]?[0-9]{2}[-\s]?[0-9]{4}\b").unwrap(),
-            severity: "critical",
-            redact_format: "[SSN]",
+            severity: "critical".to_string(),
+            redact_format: "[SSN]".to_string(),
         },
 
         // Credit card (Visa, Mastercard, Amex, Discover)
         PiiPattern {
-            pii_type: "credit_card",
+            pii_type: "credit_card".to_string(),
             pattern: Regex::new(r"\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|6(?:011|5[0-9]{2})[0-9]{12})\b").unwrap(),
-            severity: "critical",
-            redact_format: "[CREDIT_CARD]",
+            severity: "critical".to_string(),
+            redact_format: "[CREDIT_CARD]".to_string(),
         },
 
         // Date of birth (various formats)
         PiiPattern {
-            pii_type: "dob",
+            pii_type: "dob".to_string(),
             pattern: Regex::new(r"\b(?:0[1-9]|1[0-2])[/-](?:0[1-9]|[12][0-9]|3[01])[/-](?:19|20)[0-9]{2}\b").unwrap(),
-            severity: "medium",
-            redact_format: "[DOB]",
+            severity: "medium".to_string(),
+            redact_format: "[DOB]".to_string(),
         },
 
         // IP Address
         PiiPattern {
-            pii_type: "ip_address",
+            pii_type: "ip_address".to_string(),
             pattern: Regex::new(r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b").unwrap(),
-            severity: "low",
-            redact_format: "[IP]",
+            severity: "low".to_string(),
+            redact_format: "[IP]".to_string(),
         },
 
         // Passport (US format)
         PiiPattern {
-            pii_type: "passport",
+            pii_type: "passport".to_string(),
             pattern: Regex::new(r"\b[A-Z][0-9]{8}\b").unwrap(),
-            severity: "critical",
-            redact_format: "[PASSPORT]",
+            severity: "critical".to_string(),
+            redact_format: "[PASSPORT]".to_string(),
         },
 
         // Driver's License (generic pattern)
         PiiPattern {
-            pii_type: "drivers_license",
+            pii_type: "drivers_license".to_string(),
             pattern: Regex::new(r"(?i)\b(?:DL|driver'?s?\s*license)[:\s#]*[A-Z0-9]{6,12}\b").unwrap(),
-            severity: "high",
-            redact_format: "[DL]",
+            severity: "high".to_string(),
+            redact_format: "[DL]".to_string(),
         },
 
         // Bank Account (generic)
         PiiPattern {
-            pii_type: "bank_account",
+            pii_type: "bank_account".to_string(),
             pattern: Regex::new(r"(?i)\b(?:account|acct)[:\s#]*[0-9]{8,17}\b").unwrap(),
-            severity: "high",
-            redact_format: "[BANK_ACCT]",
+            severity: "high".to_string(),
+            redact_format: "[BANK_ACCT]".to_string(),
         },
 
         // Routing Number
         PiiPattern {
-            pii_type: "routing_number",
+            pii_type: "routing_number".to_string(),
             pattern: Regex::new(r"(?i)\b(?:routing|aba)[:\s#]*[0-9]{9}\b").unwrap(),
-            severity: "high",
-            redact_format: "[ROUTING]",
+            severity: "high".to_string(),
+            redact_format: "[ROUTING]".to_string(),
         },
 
         // Medicare/Medicaid ID
         PiiPattern {
-            pii_type: "medicare_id",
+            pii_type: "medicare_id".to_string(),
             pattern: Regex::new(r"\b[0-9]{3}[-\s]?[0-9]{2}[-\s]?[0-9]{4}[A-Z]?\b").unwrap(),
-            severity: "critical",
-            redact_format: "[MEDICARE]",
+            severity: "critical".to_string(),
+            redact_format: "[MEDICARE]".to_string(),
         },
 
         // Address (street pattern)
         PiiPattern {
-            pii_type: "address",
+            pii_type: "address".to_string(),
             pattern: Regex::new(r"\b\d{1,5}\s+[\w\s]{1,30}(?:street|st|avenue|ave|road|rd|highway|hwy|square|sq|trail|trl|drive|dr|court|ct|park|parkway|pkwy|circle|cir|boulevard|blvd)\b").unwrap(),
-            severity: "medium",
-            redact_format: "[ADDRESS]",
+            severity: "medium".to_string(),
+            redact_format: "[ADDRESS]".to_string(),
         },
 
         // ZIP code
         PiiPattern {
-            pii_type: "zip_code",
+            pii_type: "zip_code".to_string(),
             pattern: Regex::new(r"\b[0-9]{5}(?:-[0-9]{4})?\b").unwrap(),
-            severity: "low",
-            redact_format: "[ZIP]",
+            severity: "low".to_string(),
+            redact_format: "[ZIP]".to_string(),
         },
     ];
 }
 
 /// PII pattern definition
 struct PiiPattern {
-    pii_type: &'static str,
+    pii_type: String,
     pattern: Regex,
-    severity: &'static str,
-    redact_format: &'static str,
+    severity: String,
+    redact_format: String,
+}
+
+fn all_pii_patterns() -> Vec<PiiPattern> {
+    let mut patterns: Vec<PiiPattern> = PII_PATTERNS
+        .iter()
+        .map(|p| PiiPattern {
+            pii_type: p.pii_type.clone(),
+            pattern: p.pattern.clone(),
+            severity: p.severity.clone(),
+            redact_format: p.redact_format.clone(),
+        })
+        .collect();
+
+    if let Some(rules) = external_pattern_rules() {
+        for p in &rules.pii_patterns {
+            if let Ok(regex) = Regex::new(&p.regex) {
+                patterns.push(PiiPattern {
+                    pii_type: p.pii_type.clone(),
+                    pattern: regex,
+                    severity: p.severity.clone(),
+                    redact_format: p.redact_format.clone(),
+                });
+            }
+        }
+    }
+    patterns
 }
 
 /// Detected PII instance
@@ -150,12 +178,14 @@ pub struct PiiDetectionResult {
 pub struct PiiDetector {
     /// Types to ignore
     ignore_types: Vec<String>,
+    patterns: Vec<PiiPattern>,
 }
 
 impl PiiDetector {
     pub fn new() -> Self {
         Self {
             ignore_types: Vec::new(),
+            patterns: all_pii_patterns(),
         }
     }
 
@@ -188,19 +218,19 @@ impl PiiDetector {
             text
         };
 
-        let mut type_counts: std::collections::HashMap<&str, (usize, &str, Vec<String>)> =
+        let mut type_counts: std::collections::HashMap<String, (usize, String, Vec<String>)> =
             std::collections::HashMap::new();
 
-        for pattern in PII_PATTERNS.iter() {
-            if self.ignore_types.contains(&pattern.pii_type.to_string()) {
+        for pattern in &self.patterns {
+            if self.ignore_types.contains(&pattern.pii_type) {
                 continue;
             }
 
             let matches: Vec<_> = pattern.pattern.find_iter(scan_text).collect();
             if !matches.is_empty() {
-                let entry = type_counts.entry(pattern.pii_type).or_insert((
+                let entry = type_counts.entry(pattern.pii_type.clone()).or_insert((
                     0,
-                    pattern.severity,
+                    pattern.severity.clone(),
                     Vec::new(),
                 ));
                 entry.0 += matches.len();
@@ -212,7 +242,7 @@ impl PiiDetector {
             result.pii_found = true;
             result.total_count += count;
 
-            match severity {
+            match severity.as_str() {
                 "critical" => {
                     result.critical_count += count;
                     result.risk_score += count as u32 * 40;
@@ -229,8 +259,8 @@ impl PiiDetector {
             }
 
             result.pii_types.push(DetectedPii {
-                pii_type: pii_type.to_string(),
-                severity: severity.to_string(),
+                pii_type,
+                severity,
                 count,
                 locations,
             });
@@ -244,13 +274,13 @@ impl PiiDetector {
     pub fn redact(&self, text: &str) -> String {
         let mut redacted = text.to_string();
 
-        for pattern in PII_PATTERNS.iter() {
-            if self.ignore_types.contains(&pattern.pii_type.to_string()) {
+        for pattern in &self.patterns {
+            if self.ignore_types.contains(&pattern.pii_type) {
                 continue;
             }
             redacted = pattern
                 .pattern
-                .replace_all(&redacted, pattern.redact_format)
+                .replace_all(&redacted, pattern.redact_format.as_str())
                 .to_string();
         }
 
@@ -267,9 +297,9 @@ impl PiiDetector {
     /// Estimate record count from payload
     pub fn estimate_record_count(&self, text: &str) -> usize {
         // Count potential records based on PII occurrences
-        let email_count = PII_PATTERNS[0].pattern.find_iter(text).count();
-        let phone_count = PII_PATTERNS[1].pattern.find_iter(text).count();
-        let ssn_count = PII_PATTERNS[2].pattern.find_iter(text).count();
+        let email_count = self.patterns[0].pattern.find_iter(text).count();
+        let phone_count = self.patterns[1].pattern.find_iter(text).count();
+        let ssn_count = self.patterns[2].pattern.find_iter(text).count();
 
         // Use the maximum as record estimate
         email_count.max(phone_count).max(ssn_count).max(1)

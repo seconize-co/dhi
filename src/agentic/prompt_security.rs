@@ -7,6 +7,8 @@ use lazy_static::lazy_static;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
+use super::external_pattern_rules;
+
 /// Maximum input size for scanning (1MB)
 const MAX_SCAN_SIZE: usize = 1024 * 1024;
 /// Cap findings per prompt to avoid unbounded result growth on adversarial input.
@@ -90,11 +92,21 @@ pub struct SecurityAnalysis {
 }
 
 /// Prompt security analyzer
-pub struct PromptSecurityAnalyzer;
+pub struct PromptSecurityAnalyzer {
+    extra_injection_patterns: Vec<Regex>,
+    extra_jailbreak_patterns: Vec<Regex>,
+    extra_extraction_patterns: Vec<Regex>,
+    extra_sensitive_patterns: Vec<Regex>,
+}
 
 impl PromptSecurityAnalyzer {
     pub fn new() -> Self {
-        Self
+        Self {
+            extra_injection_patterns: extra_prompt_injection_patterns(),
+            extra_jailbreak_patterns: extra_prompt_jailbreak_patterns(),
+            extra_extraction_patterns: extra_prompt_extraction_patterns(),
+            extra_sensitive_patterns: extra_prompt_sensitive_patterns(),
+        }
     }
 
     /// Analyze text for security issues
@@ -123,7 +135,10 @@ impl PromptSecurityAnalyzer {
         let normalized = normalize_for_detection(scan_text);
 
         // Check for prompt injection
-        for pattern in INJECTION_PATTERNS.iter() {
+        for pattern in INJECTION_PATTERNS
+            .iter()
+            .chain(self.extra_injection_patterns.iter())
+        {
             if pattern.is_match(scan_text) {
                 result.injection_detected = true;
                 result.risk_score += 40;
@@ -153,7 +168,10 @@ impl PromptSecurityAnalyzer {
         }
 
         // Check for jailbreak attempts
-        for pattern in JAILBREAK_PATTERNS.iter() {
+        for pattern in JAILBREAK_PATTERNS
+            .iter()
+            .chain(self.extra_jailbreak_patterns.iter())
+        {
             if pattern.is_match(scan_text) {
                 result.jailbreak_detected = true;
                 result.risk_score += 30;
@@ -183,7 +201,10 @@ impl PromptSecurityAnalyzer {
         }
 
         // Treat extraction attempts as injection, since they attempt policy bypass.
-        for pattern in EXTRACTION_PATTERNS.iter() {
+        for pattern in EXTRACTION_PATTERNS
+            .iter()
+            .chain(self.extra_extraction_patterns.iter())
+        {
             if pattern.is_match(scan_text) {
                 result.injection_detected = true;
                 result.risk_score += 35;
@@ -210,7 +231,10 @@ impl PromptSecurityAnalyzer {
         }
 
         // Check for sensitive data
-        for pattern in SENSITIVE_PATTERNS.iter() {
+        for pattern in SENSITIVE_PATTERNS
+            .iter()
+            .chain(self.extra_sensitive_patterns.iter())
+        {
             let matches: Vec<_> = pattern.find_iter(scan_text).collect();
             if !matches.is_empty() {
                 result.sensitive_data_detected = true;
@@ -229,6 +253,34 @@ impl PromptSecurityAnalyzer {
 
         result
     }
+}
+
+fn compile_prompt_patterns(patterns: &[String]) -> Vec<Regex> {
+    patterns.iter().filter_map(|p| Regex::new(p).ok()).collect()
+}
+
+fn extra_prompt_injection_patterns() -> Vec<Regex> {
+    external_pattern_rules()
+        .map(|r| compile_prompt_patterns(&r.prompt_injection_patterns))
+        .unwrap_or_default()
+}
+
+fn extra_prompt_jailbreak_patterns() -> Vec<Regex> {
+    external_pattern_rules()
+        .map(|r| compile_prompt_patterns(&r.prompt_jailbreak_patterns))
+        .unwrap_or_default()
+}
+
+fn extra_prompt_extraction_patterns() -> Vec<Regex> {
+    external_pattern_rules()
+        .map(|r| compile_prompt_patterns(&r.prompt_extraction_patterns))
+        .unwrap_or_default()
+}
+
+fn extra_prompt_sensitive_patterns() -> Vec<Regex> {
+    external_pattern_rules()
+        .map(|r| compile_prompt_patterns(&r.prompt_sensitive_patterns))
+        .unwrap_or_default()
 }
 
 fn push_finding(

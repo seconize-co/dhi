@@ -92,6 +92,10 @@ Use this when introducing a new detection/blocking capability (not just extra re
 
 Use this when you are increasing coverage (new patterns/signals) for an existing capability.
 
+Note: custom patterns can now be loaded from an external file configured via
+`pattern_rules_path` in `dhi.toml` (see `dhi.patterns.toml.example`). Keep
+high-volume custom regex there instead of expanding main config.
+
 #### 3.1 Add more PII patterns
 
 Files:

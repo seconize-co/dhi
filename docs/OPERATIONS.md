@@ -57,6 +57,14 @@ sudo systemctl start dhi
 
 **First-time workflow:** Start in `alert` mode to observe legitimate traffic for a few days before transitioning to `block` mode. See [Advanced: Block Mode](#advanced-block-mode) for details.
 
+Optional custom rule file (to keep `dhi.toml` small):
+
+```toml
+pattern_rules_path = "dhi.patterns.toml"
+```
+
+Use `dhi.patterns.toml.example` as a template for custom PII/prompt patterns.
+
 ### Optional: Configure Slack Webhook
 
 If you skipped the webhook during install, add it now (otherwise skip this):

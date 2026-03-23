@@ -643,6 +643,18 @@ fn run_report_html(input_path: &str, output_path: Option<&str>, company: &str) -
     Ok(())
 }
 
+fn resolve_rules_path(config_path: &str, rules_path: &str) -> PathBuf {
+    let raw = PathBuf::from(rules_path);
+    if raw.is_absolute() {
+        return raw;
+    }
+    let base = Path::new(config_path)
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    base.join(raw)
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -696,6 +708,7 @@ async fn main() -> Result<()> {
         alerting: Option<TomlAlertingSection>,
         checks: Option<TomlChecksSection>,
         metrics: Option<TomlMetricsSection>,
+        pattern_rules_path: Option<String>,
     }
     #[derive(serde::Deserialize, Default)]
     struct TomlMetricsSection {
@@ -712,55 +725,54 @@ async fn main() -> Result<()> {
         DhiConfig::default()
     };
 
+    let parsed_toml_wrapper: Option<TomlAlertingWrapper> = if let Some(ref config_path) = cli.config
+    {
+        std::fs::read_to_string(config_path)
+            .ok()
+            .and_then(|c| toml::from_str::<TomlAlertingWrapper>(&c).ok())
+    } else {
+        None
+    };
+
+    if let (Some(config_path), Some(wrapper)) = (&cli.config, &parsed_toml_wrapper) {
+        if let Some(rules_path) = &wrapper.pattern_rules_path {
+            let resolved = resolve_rules_path(config_path, rules_path);
+            dhi::agentic::load_external_pattern_rules(&resolved)?;
+            info!(
+                "Loaded external security pattern rules from {}",
+                resolved.display()
+            );
+        }
+    }
+
     // Extract Slack webhook from TOML [alerting] section (CLI --slack-webhook takes precedence).
-    let toml_slack_webhook: Option<String> = if let Some(ref config_path) = cli.config {
-        match std::fs::read_to_string(config_path)
-            .ok()
-            .and_then(|c| toml::from_str::<TomlAlertingWrapper>(&c).ok())
-        {
-            Some(wrapper) => wrapper.alerting.and_then(|a| a.slack_webhook),
-            None => None,
-        }
-    } else {
-        None
-    };
-    let toml_alert_log_path: Option<String> = if let Some(ref config_path) = cli.config {
-        match std::fs::read_to_string(config_path)
-            .ok()
-            .and_then(|c| toml::from_str::<TomlAlertingWrapper>(&c).ok())
-        {
-            Some(wrapper) => wrapper.alerting.and_then(|a| a.alert_log_path),
-            None => None,
-        }
-    } else {
-        None
-    };
+    let toml_slack_webhook: Option<String> = parsed_toml_wrapper.as_ref().and_then(|wrapper| {
+        wrapper
+            .alerting
+            .as_ref()
+            .and_then(|a| a.slack_webhook.clone())
+    });
+    let toml_alert_log_path: Option<String> = parsed_toml_wrapper.as_ref().and_then(|wrapper| {
+        wrapper
+            .alerting
+            .as_ref()
+            .and_then(|a| a.alert_log_path.clone())
+    });
     let (toml_metrics_port, toml_metrics_bind_address): (Option<u16>, Option<String>) =
-        if let Some(ref config_path) = cli.config {
-            match std::fs::read_to_string(config_path)
-                .ok()
-                .and_then(|c| toml::from_str::<TomlAlertingWrapper>(&c).ok())
-            {
-                Some(wrapper) => {
-                    if let Some(metrics) = wrapper.metrics {
-                        (metrics.port, metrics.bind_address)
-                    } else {
-                        (None, None)
-                    }
-                },
-                None => (None, None),
+        if let Some(wrapper) = parsed_toml_wrapper.as_ref() {
+            if let Some(metrics) = wrapper.metrics.as_ref() {
+                (metrics.port, metrics.bind_address.clone())
+            } else {
+                (None, None)
             }
         } else {
             (None, None)
         };
 
-    let check_toggles = if let Some(ref config_path) = cli.config {
-        let parsed = std::fs::read_to_string(config_path)
-            .ok()
-            .and_then(|c| toml::from_str::<TomlAlertingWrapper>(&c).ok());
+    let check_toggles = if cli.config.is_some() {
         let mut toggles = CheckToggles::default();
-        if let Some(wrapper) = parsed {
-            if let Some(checks) = wrapper.checks {
+        if let Some(wrapper) = parsed_toml_wrapper.as_ref() {
+            if let Some(checks) = wrapper.checks.as_ref() {
                 if let Some(v) = checks.detect_secrets {
                     toggles.detect_secrets = v;
                 }
@@ -785,7 +797,7 @@ async fn main() -> Result<()> {
                 if let Some(v) = checks.block_ssrf {
                     toggles.block_ssrf = v;
                 }
-                if let Some(overrides) = checks.use_case_overrides {
+                if let Some(overrides) = checks.use_case_overrides.clone() {
                     toggles.use_case_overrides = overrides;
                 }
             }
@@ -984,5 +996,17 @@ mod tests {
     fn test_resolve_health_url_falls_back_to_cli_port() {
         let url = resolve_health_url(None, None, None, 8088);
         assert_eq!(url, "http://127.0.0.1:8088/health");
+    }
+
+    #[test]
+    fn test_resolve_rules_path_absolute_kept() {
+        let out = resolve_rules_path("/etc/dhi/dhi.toml", "/opt/dhi/rules.toml");
+        assert_eq!(out, PathBuf::from("/opt/dhi/rules.toml"));
+    }
+
+    #[test]
+    fn test_resolve_rules_path_relative_to_config_dir() {
+        let out = resolve_rules_path("/etc/dhi/dhi.toml", "custom-rules.toml");
+        assert_eq!(out, PathBuf::from("/etc/dhi/custom-rules.toml"));
     }
 }

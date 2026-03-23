@@ -9,6 +9,9 @@
 # All settings have sensible defaults. Uncomment and modify as needed.
 # ============================================================================
 
+# Optional external rules file (keeps this main config lightweight)
+# pattern_rules_path = "dhi.patterns.toml"
+
 # ----------------------------------------------------------------------------
 # PROTECTION SETTINGS
 # ----------------------------------------------------------------------------

@@ -1,0 +1,33 @@
+# ============================================================================
+# Dhi External Security Pattern Rules (Optional)
+# ============================================================================
+#
+# Keep custom/organization-specific regex rules here instead of bloating dhi.toml.
+# Reference this file from dhi.toml:
+# pattern_rules_path = "dhi.patterns.toml"
+#
+# If this file is absent or not configured, Dhi uses built-in default patterns.
+# ============================================================================
+
+[pii]
+patterns = [
+  # Example: add employee ID style IDs
+  { pii_type = "employee_id", regex = "\\bEMP-[0-9]{6}\\b", severity = "medium", redact_format = "[EMP_ID]" },
+]
+
+[prompt]
+injection_patterns = [
+  '(?i)ignore\\s+company\\s+policy',
+]
+
+jailbreak_patterns = [
+  '(?i)simulate\\s+an\\s+unrestricted\\s+assistant',
+]
+
+extraction_patterns = [
+  '(?i)dump\\s+the\\s+hidden\\s+instructions',
+]
+
+sensitive_patterns = [
+  '(?i)internal[_-]?token\\s*[=:]\\s*["'']?[A-Za-z0-9_-]{16,}',
+]

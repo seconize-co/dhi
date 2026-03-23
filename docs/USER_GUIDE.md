@@ -131,6 +131,21 @@ Example:
 
 ---
 
+## 2.3 External pattern rules (optional)
+
+To avoid bloating `dhi.toml`, Dhi supports a separate rules file for custom PII and prompt patterns.
+
+In `dhi.toml`:
+
+```toml
+pattern_rules_path = "dhi.patterns.toml"
+```
+
+Use `dhi.patterns.toml.example` as a starting template.  
+If `pattern_rules_path` is not set, built-in defaults are used.
+
+---
+
 ## 3. Alert Details and Enrichment
 
 Every emitted alert includes base fields:
