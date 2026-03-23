@@ -228,6 +228,8 @@ macOS/Windows note: proxy mode only and currently untested. See [docs/NON_LINUX_
 | [Comparison](docs/COMPARISON.md) | How Dhi compares to other tools |
 | [Branding](docs/BRANDING.md) | Brand and positioning assets |
 
+Contributions are welcome for additional security patterns and framework support; see [Developer Guide](docs/DEVELOPER_GUIDE.md).
+
 ## Crash Resistance
 
 | Mode | On Crash | Behavior |
