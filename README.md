@@ -66,6 +66,43 @@ For complete matrices, benchmarks, and tool-by-tool comparisons, see [docs/COMPA
 
 **Production policy**: On Linux, run **eBPF mode as the primary mode**. Proxy mode is a fallback/compatibility mode and is typically used only on platforms where eBPF is unavailable.
 
+### Install from GitHub Releases (No Compile)
+
+Download prebuilt binaries from GitHub Releases instead of building from source.
+
+Linux (amd64):
+
+```bash
+VERSION=v1.0.0
+curl -fL -o dhi-linux-amd64.tar.gz \
+    https://github.com/seconize-co/dhi/releases/download/${VERSION}/dhi-linux-amd64.tar.gz
+tar -xzf dhi-linux-amd64.tar.gz
+chmod +x dhi
+sudo mv dhi /usr/local/bin/dhi
+```
+
+macOS (Apple Silicon):
+
+```bash
+VERSION=v1.0.0
+curl -fL -o dhi-darwin-arm64.tar.gz \
+    https://github.com/seconize-co/dhi/releases/download/${VERSION}/dhi-darwin-arm64.tar.gz
+tar -xzf dhi-darwin-arm64.tar.gz
+chmod +x dhi
+sudo mv dhi /usr/local/bin/dhi
+```
+
+Windows (PowerShell):
+
+```powershell
+$Version = "v1.0.0"
+Invoke-WebRequest -Uri "https://github.com/seconize-co/dhi/releases/download/$Version/dhi-windows-amd64.zip" -OutFile "dhi-windows-amd64.zip"
+Expand-Archive -Path "dhi-windows-amd64.zip" -DestinationPath ".\dhi-bin" -Force
+Move-Item ".\dhi-bin\dhi.exe" "$env:ProgramFiles\dhi.exe" -Force
+```
+
+Use the matching archive for your platform (`dhi-linux-arm64.tar.gz`, `dhi-darwin-amd64.tar.gz`, etc.).
+
 ### Build & Run (Linux)
 
 ```bash
@@ -148,21 +185,21 @@ export HTTPS_PROXY=http://127.0.0.1:18080
 │                     ║    (HTTP Proxy + eBPF SSL)    ║                       │
 │                     ╚═══════════════════════════════╝                       │
 │                                                                             │
-│  ┌────────────────────────────────────────────────────────────────────┐    │
-│  │                      SECURITY SCANNING                             │    │
-│  │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐  │    │
-│  │  │  Secrets    │ │    PII      │ │  Prompt     │ │    Tool     │  │    │
-│  │  │  Detection  │ │  Detection  │ │  Injection  │ │    Risk     │  │    │
-│  │  │  (20+ types)│ │  & Redact   │ │  Detection  │ │  Assessment │  │    │
-│  │  └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘  │    │
-│  │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐  │    │
-│  │  │   Budget    │ │    SSRF     │ │   eBPF SSL  │ │  Jailbreak  │  │    │
-│  │  │   Control   │ │  Protection │ │  Intercept  │ │  Detection  │  │    │
-│  │  └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘  │    │
-│  └────────────────────────────────────────────────────────────────────┘    │
+│  ┌────────────────────────────────────────────────────────────────────┐     │
+│  │                      SECURITY SCANNING                             │     │
+│  │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐   │     │
+│  │  │  Secrets    │ │    PII      │ │  Prompt     │ │    Tool     │   │     │ 
+│  │  │  Detection  │ │  Detection  │ │  Injection  │ │    Risk     │   │     │
+│  │  │  (20+ types)│ │  & Redact   │ │  Detection  │ │  Assessment │   │     │
+│  │  └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘   │     │
+│  │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐   │     │
+│  │  │   Budget    │ │    SSRF     │ │   eBPF SSL  │ │  Jailbreak  │   │     │
+│  │  │   Control   │ │  Protection │ │  Intercept  │ │  Detection  │   │     │
+│  │  └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘   │     │
+│  └────────────────────────────────────────────────────────────────────┘     │
 │                                    │                                        │
 │                    ┌───────────────┼───────────────┐                        │
-│                    │  ✋ BLOCK   │  🚨 ALERT  │  📝 LOG │                   │
+│                    │ ✋ BLOCK  🚨 ALERT 📝 LOG   │                        │
 │                    └───────────────┴───────────────┘                        │
 │                                    │                                        │
 │             ┌──────────────────────┼──────────────────────┐                 │
@@ -175,19 +212,21 @@ export HTTPS_PROXY=http://127.0.0.1:18080
                                           │
 ┌─────────────────────────────────────────┴───────────────────────────────────┐
 │                              AI AGENTS                                      │
-│     ┌──────────────┐    ┌──────────────┐    ┌──────────────┐               │
-│     │ Claude Code  │    │ Copilot CLI  │    │  LangChain   │               │
-│     │              │    │              │    │   CrewAI     │               │
-│     └──────────────┘    └──────────────┘    └──────────────┘               │
+│     ┌──────────────┐    ┌──────────────┐    ┌──────────────┐                │
+│     │ Claude Code  │    │ Copilot CLI  │    │  LangChain   │                │
+│     │              │    │              │    │   CrewAI     │                │
+│     └──────────────┘    └──────────────┘    └──────────────┘                │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 **How it works:**
-1. **AI Agents** configure `HTTP_PROXY=http://127.0.0.1:18080` (or Dhi uses eBPF hooks)
-2. **Dhi intercepts** all traffic to LLM APIs as a security proxy
-3. **Security checks** scan for secrets, PII, prompt injection/jailbreaks, and risky tools
-4. **Action taken**: Block (stop request), Alert (notify + allow), or Log (record only)
-5. **Alerts flow** to Slack, Prometheus metrics, or your SIEM
+1. **Run Dhi in default mode (eBPF on Linux)** with no agent-side proxy configuration.
+2. **Dhi attaches eBPF SSL hooks** and intercepts plaintext traffic at runtime.
+3. **Security checks** scan for secrets, PII, prompt injection/jailbreaks, and risky tools.
+4. **Policy action** is applied as configured: Block (stop), Alert (notify + allow), or Log (record only).
+5. **Telemetry and alerts** are exported to Slack, Prometheus, webhook, or SIEM pipelines.
+
+Optional for macOS/Windows: use proxy mode by setting `HTTP_PROXY`/`HTTPS_PROXY` to Dhi.
 
 ## Documentation
 

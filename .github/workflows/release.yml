@@ -18,19 +18,19 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            name: dhi-linux-amd64
+            package: dhi-linux-amd64.tar.gz
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
-            name: dhi-linux-arm64
+            package: dhi-linux-arm64.tar.gz
           - target: x86_64-apple-darwin
             os: macos-latest
-            name: dhi-darwin-amd64
+            package: dhi-darwin-amd64.tar.gz
           - target: aarch64-apple-darwin
             os: macos-latest
-            name: dhi-darwin-arm64
+            package: dhi-darwin-arm64.tar.gz
           - target: x86_64-pc-windows-msvc
             os: windows-latest
-            name: dhi-windows-amd64.exe
+            package: dhi-windows-amd64.zip
 
     steps:
       - uses: actions/checkout@v4
@@ -50,19 +50,26 @@ jobs:
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Rename binary (Unix)
+      - name: Package binary (Unix)
         if: runner.os != 'Windows'
-        run: mv target/${{ matrix.target }}/release/dhi ${{ matrix.name }}
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/dhi dist/dhi
+          tar -C dist -czf ${{ matrix.package }} dhi
 
-      - name: Rename binary (Windows)
+      - name: Package binary (Windows)
         if: runner.os == 'Windows'
-        run: mv target/${{ matrix.target }}/release/dhi.exe ${{ matrix.name }}
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/dhi.exe" "dist/dhi.exe"
+          Compress-Archive -Path "dist/dhi.exe" -DestinationPath "${{ matrix.package }}" -Force
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.name }}
-          path: ${{ matrix.name }}
+          name: ${{ matrix.package }}
+          path: ${{ matrix.package }}
 
   release:
     name: Create Release
@@ -76,14 +83,15 @@ jobs:
         with:
           path: artifacts
 
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-assets
+          find artifacts -type f -exec cp {} release-assets/ \;
+
       - name: Create checksums
         run: |
-          cd artifacts
-          for dir in */; do
-            cd "$dir"
-            sha256sum * > "../${dir%/}.sha256"
-            cd ..
-          done
+          cd release-assets
+          sha256sum * > SHA256SUMS
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
@@ -92,6 +100,6 @@ jobs:
           prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
           generate_release_notes: true
           files: |
-            artifacts/**/*
+            release-assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
