@@ -155,10 +155,10 @@ export HTTPS_PROXY=http://127.0.0.1:18080
 │  │  │  Detection  │ │  Detection  │ │  Injection  │ │    Risk     │  │    │
 │  │  │  (20+ types)│ │  & Redact   │ │  Detection  │ │  Assessment │  │    │
 │  │  └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘  │    │
-│  │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐                  │    │
-│  │  │   Budget    │ │    SSRF     │ │   eBPF SSL  │                  │    │
-│  │  │   Control   │ │  Protection │ │  Intercept  │                  │    │
-│  │  └─────────────┘ └─────────────┘ └─────────────┘                  │    │
+│  │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐  │    │
+│  │  │   Budget    │ │    SSRF     │ │   eBPF SSL  │ │  Jailbreak  │  │    │
+│  │  │   Control   │ │  Protection │ │  Intercept  │ │  Detection  │  │    │
+│  │  └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘  │    │
 │  └────────────────────────────────────────────────────────────────────┘    │
 │                                    │                                        │
 │                    ┌───────────────┼───────────────┐                        │
@@ -185,7 +185,7 @@ export HTTPS_PROXY=http://127.0.0.1:18080
 **How it works:**
 1. **AI Agents** configure `HTTP_PROXY=http://127.0.0.1:18080` (or Dhi uses eBPF hooks)
 2. **Dhi intercepts** all traffic to LLM APIs as a security proxy
-3. **Security checks** scan for secrets, PII, injections, risky tools
+3. **Security checks** scan for secrets, PII, prompt injection/jailbreaks, and risky tools
 4. **Action taken**: Block (stop request), Alert (notify + allow), or Log (record only)
 5. **Alerts flow** to Slack, Prometheus metrics, or your SIEM
 
