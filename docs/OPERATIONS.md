@@ -514,6 +514,75 @@ systemctl show dhi -p Restart -p RestartSec -p StartLimitBurst -p StartLimitInte
 
 For non-Linux proxy mode, see [NON_LINUX_PROXY.md](NON_LINUX_PROXY.md).
 
+### Production Hardening
+
+Before deploying to production, review the complete security guide: [SECURITY.md](SECURITY.md)
+
+**Quick hardening checklist:**
+
+1. **Protect configuration files**
+   ```bash
+   sudo chmod 600 /etc/dhi/dhi.toml
+   sudo chown dhi:dhi /etc/dhi/dhi.toml
+   ```
+
+2. **Create dedicated service user**
+   ```bash
+   sudo useradd -r -s /bin/false dhi
+   sudo chown -R dhi:dhi /var/log/dhi
+   sudo chown -R dhi:dhi /etc/dhi
+   ```
+
+3. **Enable systemd security hardening**
+
+   The installer provides a hardened systemd service at `ops/systemd/dhi.service`. Key hardening features:
+   - `ProtectSystem=strict` — immutable filesystem
+   - `ProtectHome=read-only` — read-only home
+   - `PrivateTmp=true` — private /tmp
+   - `NoNewPrivileges=true` — prevent privilege escalation
+   - `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6` — network isolation
+   - `CAP_BPF, CAP_PERFMON, CAP_SYS_ADMIN` — minimum eBPF capabilities
+
+   Verify systemd hardening:
+   ```bash
+   sudo systemctl cat dhi.service | grep -E "Protect|Private|NoNew|Restrict|Capability"
+   ```
+
+4. **Enable protection in production**
+
+   Start in `alert` mode for observation, then transition to `block` mode:
+   ```toml
+   [protection]
+   level = "block"
+   ebpf_block_action = "kill"
+   ```
+
+5. **Rotate Slack webhook secrets regularly**
+   ```bash
+   # Update webhook URL in config
+   sudo nano /etc/dhi/dhi.toml
+   # [alerting]
+   # slack_webhook = "https://hooks.slack.com/..."
+   
+   sudo systemctl restart dhi
+   ```
+
+6. **Monitor logs and metrics continuously**
+   ```bash
+   # Real-time alerting
+   sudo journalctl -u dhi -f | grep -E "ERROR|CRITICAL"
+   
+   # Metrics collection (feed to SIEM/monitoring)
+   curl -s http://127.0.0.1:9090/metrics
+   ```
+
+7. **Set up external monitoring**
+   - Monitor Dhi service health from outside the host (node exporter, SIEM)
+   - Alert if `/health` endpoint becomes unreachable
+   - Ensure firewall rules persist even if Dhi stops
+
+For complete production checklist and incident response procedures, see [SECURITY.md](SECURITY.md#production-security-checklist).
+
 ---
 
 ## Troubleshooting
