@@ -40,7 +40,12 @@ jobs:
       - name: Build eBPF object
         run: |
           test -s bpf/vmlinux.h
-          clang -O2 -target bpf -c bpf/dhi_ssl.bpf.c -o bpf/dhi_ssl.bpf.o
+          if [ "${{ matrix.target }}" = "x86_64-unknown-linux-gnu" ]; then
+            CLANG_ARCH_DEFINE="-D__TARGET_ARCH_x86"
+          else
+            CLANG_ARCH_DEFINE="-D__TARGET_ARCH_arm64"
+          fi
+          clang -O2 -target bpf "$CLANG_ARCH_DEFINE" -c bpf/dhi_ssl.bpf.c -o bpf/dhi_ssl.bpf.o
           test -s bpf/dhi_ssl.bpf.o
 
       - name: Install cross-compilation tools (Linux ARM64)
