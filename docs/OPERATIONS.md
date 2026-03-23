@@ -250,7 +250,7 @@ sudo ./scripts/install-linux-release.sh --verify-only
 
 ### Install from Source
 
-For development/custom builds, see [DEVELOPERS.md](DEVELOPERS.md).
+For development/custom builds, see [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md).
 
 ---
 
@@ -457,7 +457,7 @@ ebpf_block_action = "kill"   # none | term | kill (default)
 - `term` — send SIGTERM to offending process
 - `kill` — send SIGKILL (default, immediate termination)
 
-For eBPF internals and architecture, see [DEVELOPERS.md](DEVELOPERS.md#architecture-how-ebpf-works).
+For eBPF internals and architecture, see [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md#architecture-how-ebpf-works).
 
 ### Budget and Alerts
 
@@ -694,7 +694,7 @@ sudo systemctl restart dhi
 
 **Requirements:** Linux 5.4+ kernel, CAP_BPF capability.
 
-See [DEVELOPERS.md](DEVELOPERS.md#ebpf-troubleshooting--deep-debugging) for deep debugging.
+See [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md#ebpf-troubleshooting--deep-debugging) for deep debugging.
 
 ### No Alerts Sent
 

@@ -50,6 +50,8 @@ For complete matrices, benchmarks, and tool-by-tool comparisons, see [docs/COMPA
 | 🐧 **eBPF Monitoring** | Kernel-level syscall tracking (Linux) |
 | 🔒 **HTTPS Interception** | SSL/TLS traffic capture via eBPF uprobes (Linux) |
 
+> Dhi is framework-agnostic for core security controls; framework-specific logic is primarily used in the agent fingerprinting feature.
+
 ### Hardening Features
 
 | Protection | Description |

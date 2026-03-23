@@ -4,6 +4,160 @@
 
 ---
 
+## Framework Support in Dhi
+
+Dhi is framework-agnostic for core controls (detection, policy action, alert transport).
+Framework onboarding is typically fingerprint + tests + docs work, not a core pipeline rewrite.
+
+When to add framework-specific code:
+
+- Add/adjust `AgentFramework` fingerprints in `src/agentic/fingerprint.rs`
+- Add tests proving positive/negative classification behavior
+- Update user-facing framework docs
+- Validate `/api/agents` reports the new framework identity
+
+Use `docs/FRAMEWORK_ONBOARDING_GUIDE.md` as the canonical implementation checklist.
+
+---
+
+## Extension Playbooks
+
+This section is the practical workflow for extending Dhi without breaking existing protections.
+
+### 1) Add support for a new framework
+
+Primary goal: classify the framework correctly while keeping core controls unchanged.
+
+1. Add/extend fingerprint rules in `src/agentic/fingerprint.rs`:
+   - `AgentFramework` enum variant
+   - `name()` and `category()` mappings
+   - `detect_framework()` signals in this order:
+     - process name
+     - user-agent
+     - headers
+     - body markers (last)
+2. Add tests in `src/agentic/fingerprint.rs` for:
+   - positive detections (process/header/body)
+   - negative/noise case (avoid false positives)
+3. Validate runtime identity:
+   - verify `/api/agents` shows expected framework classification
+4. Update docs:
+   - `docs/USER_GUIDE.md` and/or `README.md` framework notes
+
+#### SSL/eBPF compatibility check (required for framework onboarding)
+
+Before marking framework support complete, verify transport compatibility:
+
+1. Identify TLS/runtime behavior:
+   - If the framework uses OpenSSL/BoringSSL/GnuTLS dynamically, existing SSL uprobes usually work.
+   - If it uses Rustls/NSS/custom TLS/static linking, existing SSL capture may miss plaintext.
+2. Validate capture in Linux eBPF mode:
+   - SSL uprobes attach successfully
+   - SSL raw events are emitted
+   - detections and alerts are produced from captured traffic
+3. If capture is missing, extend probe coverage in:
+   - `bpf/dhi_ssl.bpf.c`
+   - `src/ebpf/ssl_hook.rs`
+   - related loader/attach tests under `src/ebpf/`
+
+### 2) Add a new security use case
+
+Use this when introducing a new detection/blocking capability (not just extra regex patterns).
+
+1. Define use-case IDs using existing convention:
+   - `sze.dhi.<domain>.uc01.detect`
+   - `sze.dhi.<domain>.uc02.block` (if blocking is supported)
+2. Wire controls in runtime toggles:
+   - add fields to `CheckToggles` in `src/proxy.rs`
+   - include defaults in `impl Default for CheckToggles`
+   - make sure `enabled(use_case_id, default)` path is used
+3. Wire config parsing:
+   - map TOML `[checks]` values in `src/main.rs`
+   - preserve per-ID override behavior via `use_case_overrides`
+4. Implement detection/block action in the right module:
+   - proxy-path logic in `src/proxy.rs`
+   - agent-runtime logic in `src/agentic/mod.rs` (if applicable)
+5. Emit enriched alerts:
+   - include `use_case_id`
+   - set `action_taken` semantics consistently (`ALERTED`/`BLOCKED`/`ALLOWED`)
+6. Add tests:
+   - detect path
+   - block path
+   - override behavior (type toggle vs per-ID override)
+7. Update docs:
+   - `docs/USER_GUIDE.md` feature-to-ID mapping
+   - `docs/TESTING.md` acceptance scenario coverage
+
+### 3) Extend existing security use cases
+
+Use this when you are increasing coverage (new patterns/signals) for an existing capability.
+
+#### 3.1 Add more PII patterns
+
+Files:
+- `src/agentic/pii_detector.rs`
+- `src/agentic/pii_detector_test.rs` (and/or inline tests)
+
+Guidelines:
+- Add a new `PiiPattern` entry to `PII_PATTERNS` with:
+  - stable `pii_type`
+  - bounded regex
+  - severity (`low|medium|high|critical`)
+  - redact token
+- Keep regex specific enough to reduce false positives.
+- Verify both detection and redaction behavior.
+- Ensure result scoring still behaves as intended (`risk_score` capped and severity-weighted).
+
+#### 3.2 Add more prompt-injection/jailbreak patterns
+
+Files:
+- `src/agentic/prompt_security.rs`
+- `src/agentic/prompt_security_test.rs` (and/or inline tests)
+
+Guidelines:
+- Add patterns to the appropriate list:
+  - `INJECTION_PATTERNS`
+  - `JAILBREAK_PATTERNS`
+  - `EXTRACTION_PATTERNS`
+- Prefer high-signal patterns; avoid broad terms that trigger on benign prompts.
+- Include obfuscated/spacing variants where relevant.
+- Keep finding volume bounded (respect current finding caps and input-size limits).
+
+#### 3.3 Add more risky tools / tool-risk signals
+
+Files:
+- `src/agentic/tool_monitor.rs`
+- `src/agentic/tool_monitor_test.rs` (and/or inline tests)
+
+Guidelines:
+- Update appropriate sets:
+  - `HIGH_RISK_TOOLS`
+  - `SENSITIVE_PATHS`
+  - injection/command patterns
+  - deny/allow baseline logic if policy requires it
+- Verify risk score/risk-level behavior remains consistent.
+- Add tests for both positive and negative cases to avoid over-blocking.
+
+### 4) Validation checklist for extension changes
+
+Run at minimum:
+
+```bash
+cargo fmt --all
+cargo test --all-features --quiet
+cargo clippy --all-targets --all-features -- -D warnings -D clippy::unwrap_used -D clippy::expect_used
+```
+
+If reporting or runtime behavior changed, also run:
+
+```bash
+bash scripts/reporting-e2e.sh --skip-live-endpoints
+```
+
+For framework additions, include evidence from `/api/agents` and alert output in PR notes.
+
+---
+
 ## Quick Start: Build from Source
 
 For development and testing:

@@ -180,3 +180,34 @@ Enrichment metadata (when available):
 2. Review enriched alerts and tune noisy use-case IDs with overrides.
 3. Enable block behavior incrementally for mature use cases.
 4. Keep alert traceability fields (`use_case_id`, `correlation_id`, `session_id`) mandatory in triage workflow.
+
+---
+
+## 6. Framework Support Model
+
+Dhi’s core protection controls are **framework-agnostic**:
+
+- secrets/PII/prompt/tool-risk detection
+- policy actions (log/alert/block)
+- alert transport and enrichment
+
+These protections apply at runtime traffic/process layers, not by framework plugin.
+
+### 6.1 What is framework-specific
+
+Framework-specific logic is mainly used for **classification and enrichment**:
+
+- framework identity in `/api/agents` (for example, Copilot CLI, Claude Code, LangChain)
+- session naming/context hints
+- additional fingerprinting metadata
+
+If a framework is unrecognized, Dhi still protects traffic; it may appear as `Unknown` until fingerprint rules are added.
+
+### 6.2 Currently tested/observed frameworks
+
+- GitHub Copilot CLI
+- Claude Code
+- LangChain-style workflows
+- SDK-driven OpenAI/Anthropic traffic paths
+
+For adding a new framework fingerprint, see `DEVELOPER_GUIDE.md` and `FRAMEWORK_ONBOARDING_GUIDE.md`.
