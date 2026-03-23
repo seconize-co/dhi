@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Seconize | Dhi Daily Security Report</title>
+  <style>
+    :root {
+      --brand-primary: #1e3a5f;
+      --brand-slate: #0f172a;
+      --brand-accent: #f59e0b;
+      --brand-teal: #22d3ee;
+      --brand-critical: #ef4444;
+      --bg: #f3f6fa;
+      --card: #ffffff;
+      --ink: #1f2937;
+      --muted: #64748b;
+      --border: #dbe3ed;
+      --high: #dc2626;
+      --medium: #d97706;
+      --low: #2563eb;
+      --ok: #0f766e;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      color: var(--ink);
+      background: radial-gradient(circle at top right, #dce8f6 0%, #f3f6fa 38%, #eff5fb 100%);
+    }
+    .page {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 22px 20px 84px;
+    }
+    .header-card {
+      background: linear-gradient(135deg, var(--brand-slate), var(--brand-primary));
+      border: 1px solid #1a3353;
+      border-radius: 14px;
+      box-shadow: 0 14px 28px rgba(15, 23, 42, 0.22);
+      overflow: hidden;
+    }
+    .header-top {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      padding: 18px 20px 10px;
+      color: #e2e8f0;
+    }
+    .branding-header {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      margin-left: auto;
+    }
+    .logo {
+      height: 28px;
+      width: auto;
+      filter: brightness(0) invert(1);
+      opacity: 0.95;
+    }
+    .header {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .header-left {
+      padding: 0 20px 16px;
+      border-left: 6px solid var(--brand-accent);
+    }
+    .header-left h1 {
+      margin: 0;
+      color: #ffffff;
+      font-size: 22px;
+      letter-spacing: 0.15px;
+    }
+    .header-left p {
+      margin: 7px 0 0;
+      font-size: 13px;
+      color: #c9d8ea;
+    }
+    .header-right {
+      text-align: right;
+      padding: 0 20px 16px;
+      font-size: 12px;
+      color: #cbd5e1;
+    }
+    .tagline {
+      display: inline-block;
+      margin-top: 8px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(34, 211, 238, 0.45);
+      color: #9ee8f5;
+      font-size: 11px;
+      letter-spacing: 0.2px;
+    }
+    .section {
+      margin-top: 18px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      box-shadow: 0 6px 18px rgba(30, 58, 95, 0.06);
+    }
+    .section h2 {
+      margin: 0 0 12px;
+      font-size: 18px;
+      color: var(--brand-primary);
+    }
+    .meta {
+      color: var(--muted);
+      font-size: 13px;
+      margin-top: 6px;
+    }
+    .summary-grid {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      margin-top: 12px;
+    }
+    .metric {
+      background: linear-gradient(180deg, #f8fbff, #f2f7fd);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px;
+    }
+    .metric .value {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--brand-primary);
+    }
+    .metric .label {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+    .bullets {
+      margin: 8px 0 0 18px;
+      padding: 0;
+      line-height: 1.5;
+    }
+    .bullets li { margin-bottom: 5px; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+      font-size: 13px;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 8px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: #eef3f9;
+      font-weight: 600;
+      color: var(--brand-primary);
+    }
+    .severity {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 2px 8px;
+      color: #fff;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+    .severity.critical { background: var(--brand-critical); }
+    .severity.high { background: var(--high); }
+    .severity.medium { background: var(--medium); }
+    .severity.low { background: var(--low); }
+    .severity.info { background: var(--ok); }
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
+    }
+    .footer {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: #fff;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 16px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    @media (max-width: 760px) {
+      .header-right {
+        text-align: left;
+      }
+      .branding-header {
+        width: 100%;
+        justify-content: flex-start;
+      }
+      th, td {
+        padding: 7px 8px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <section class="header-card">
+      <div class="header-top">
+        <div class="branding-header">
+          <img class="logo" src="https://seconize.co/wp-content/uploads/2024/04/SECONIZE_LOGO_Transparent_-700x125-1.png" alt="Seconize Logo" />
+        </div>
+      </div>
+      <div class="header">
+        <div class="header-left">
+          <h1>Seconize — Dhi Daily Security Report</h1>
+          <p>Executive Summary and Human-Readable Alert Listing</p>
+          <div class="tagline">Runtime Security for AI Agents</div>
+        </div>
+        <div class="header-right">
+          <div>Generated: <span id="generated-at">2026-03-21T08:00:00Z</span></div>
+          <div>Source JSON: <span class="mono">examples/sample-report-daily.json</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Executive Summary</h2>
+      <p id="summary-text" class="meta">Loading summary...</p>
+      <div id="summary-grid" class="summary-grid"></div>
+      <ul id="summary-bullets" class="bullets"></ul>
+    </section>
+
+    <section class="section">
+      <h2>All Alerts (Human Readable)</h2>
+      <p class="meta">This section is rendered from embedded JSON arrays (secrets/PII/prompt/tool events).</p>
+      <table>
+        <thead>
+          <tr>
+            <th style="width: 120px;">Time</th>
+            <th style="width: 100px;">Severity</th>
+            <th style="width: 130px;">Category</th>
+            <th style="width: 140px;">Agent</th>
+            <th>Alert Detail</th>
+            <th style="width: 90px;">Action</th>
+          </tr>
+        </thead>
+        <tbody id="alerts-table-body"></tbody>
+      </table>
+    </section>
+  </div>
+
+  <section class="footer">
+    <div>Confidential</div>
+    <div>Seconize</div>
+    <div>Dhi Runtime Security Report</div>
+  </section>
+
+  <script id="daily-report-json" type="application/json">{
+  "alerts_by_severity": {
+    "critical": 3,
+    "high": 8,
+    "low": 3,
+    "medium": 9
+  },
+  "alerts_by_type": {
+    "budget_exceeded": 2,
+    "credential_leak": 3,
+    "dangerous_tool": 7,
+    "jailbreak_attempt": 2,
+    "pii_detected": 5,
+    "prompt_injection": 4
+  },
+  "cost_breakdown": {
+    "by_agent": {
+      "agent-001": 15.23,
+      "agent-002": 5.12,
+      "agent-003": 18.42,
+      "agent-004": 2.1,
+      "agent-005": 2.0
+    },
+    "by_model": {
+      "claude-3-haiku": 2.1,
+      "claude-3-sonnet": 10.22,
+      "command-r": 2.1,
+      "gpt-4": 22.15,
+      "gpt-4o": 6.3
+    },
+    "by_provider": {
+      "anthropic": 12.32,
+      "cohere": 2.1,
+      "openai": 28.45
+    }
+  },
+  "dangerous_tool_calls": [
+    {
+      "action": "blocked",
+      "agent_id": "agent-003",
+      "args": {
+        "command": "cat /etc/passwd"
+      },
+      "risk_score": 95,
+      "timestamp": "2026-03-20T13:45:12Z",
+      "tool": "shell_execute"
+    },
+    {
+      "action": "blocked",
+      "agent_id": "agent-005",
+      "args": {
+        "path": "~/.ssh/authorized_keys"
+      },
+      "risk_score": 98,
+      "timestamp": "2026-03-20T17:32:45Z",
+      "tool": "file_write"
+    }
+  ],
+  "efficiency_metrics": {
+    "duplicate_prompts": 45,
+    "efficiency_score": 78,
+    "estimated_waste_usd": 4.56,
+    "similar_prompts": 123,
+    "tool_loops_detected": 3
+  },
+  "generated_at": "2026-03-21T08:00:00Z",
+  "injection_attempts": [
+    {
+      "action": "blocked",
+      "agent_id": "agent-003",
+      "attack_type": "prompt_injection",
+      "pattern": "ignore previous instructions",
+      "risk_score": 92,
+      "timestamp": "2026-03-20T10:15:33Z"
+    },
+    {
+      "action": "alerted",
+      "agent_id": "agent-001",
+      "attack_type": "jailbreak",
+      "pattern": "DAN mode",
+      "risk_score": 88,
+      "timestamp": "2026-03-20T15:22:18Z"
+    }
+  ],
+  "period": {
+    "end": "2026-03-21T00:00:00Z",
+    "start": "2026-03-20T00:00:00Z"
+  },
+  "pii_detected": [
+    {
+      "action": "redacted",
+      "agent_id": "agent-002",
+      "count": 3,
+      "location": "llm_prompt",
+      "pii_type": "email",
+      "timestamp": "2026-03-20T09:12:44Z"
+    },
+    {
+      "action": "blocked",
+      "agent_id": "agent-003",
+      "count": 1,
+      "location": "llm_response",
+      "pii_type": "ssn",
+      "timestamp": "2026-03-20T11:34:21Z"
+    }
+  ],
+  "recommendations": [
+    "Agent 'agent-003' has high risk score (78) - review tool permissions",
+    "45 duplicate prompts detected - consider implementing caching",
+    "3 tool loops detected - review agent logic for infinite loops",
+    "Secrets detected in responses - enable response filtering"
+  ],
+  "report_type": "security_summary",
+  "secrets_detected": [
+    {
+      "action": "blocked",
+      "agent_id": "agent-003",
+      "location": "llm_response",
+      "masked_value": "sk-proj-****...****",
+      "secret_type": "openai_api_key",
+      "timestamp": "2026-03-20T14:23:15Z"
+    },
+    {
+      "action": "alerted",
+      "agent_id": "agent-001",
+      "location": "tool_input",
+      "masked_value": "AKIA****...****",
+      "secret_type": "aws_access_key",
+      "timestamp": "2026-03-20T16:45:32Z"
+    }
+  ],
+  "summary": {
+    "total_agents": 5,
+    "total_alerts": 23,
+    "total_blocks": 7,
+    "total_cost_usd": 42.87,
+    "total_llm_calls": 1247,
+    "total_tool_calls": 892
+  },
+  "top_risk_agents": [
+    {
+      "agent_id": "agent-003",
+      "alerts": 12,
+      "blocks": 4,
+      "cost_usd": 18.42,
+      "framework": "langchain",
+      "llm_calls": 342,
+      "risk_score": 78,
+      "tool_calls": 289
+    },
+    {
+      "agent_id": "agent-001",
+      "alerts": 6,
+      "blocks": 2,
+      "cost_usd": 15.23,
+      "framework": "crewai",
+      "llm_calls": 521,
+      "risk_score": 45,
+      "tool_calls": 312
+    }
+  ]
+}</script>
+  <script>
+    function num(v) {
+      if (typeof v === 'number') return v;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : 0;
+    }
+    function esc(v) {
+      if (v === null || v === undefined) return '';
+      return String(v)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;');
+    }
+    function severityFor(category, action, score) {
+      const c = String(category || '').toLowerCase();
+      const a = String(action || '').toLowerCase();
+      if (a === 'blocked') return 'critical';
+      if (c.includes('secret')) return 'critical';
+      if (c.includes('injection') || c.includes('tool')) return num(score) >= 90 ? 'critical' : 'high';
+      if (c.includes('pii')) return 'medium';
+      return 'low';
+    }
+    function summaryMetric(label, value) {
+      return `<div class="metric"><div class="value">${esc(value)}</div><div class="label">${esc(label)}</div></div>`;
+    }
+    function actionUpper(v) {
+      const a = String(v || 'alerted').toUpperCase();
+      return a;
+    }
+    function pushAlert(out, row) {
+      out.push(row);
+    }
+
+    const report = JSON.parse(document.getElementById('daily-report-json').textContent);
+    const summary = report.summary || {};
+    const totalAlerts = num(summary.total_alerts);
+    const totalBlocks = num(summary.total_blocks);
+    const totalCalls = num(summary.total_llm_calls) + num(summary.total_tool_calls);
+    const blockedPct = totalAlerts > 0 ? ((totalBlocks / totalAlerts) * 100).toFixed(1) : '0.0';
+
+    document.getElementById('summary-text').textContent =
+      `Observed ${num(summary.total_agents)} agents, ${num(summary.total_llm_calls)} LLM calls, and ${num(summary.total_tool_calls)} tool calls in this period.`;
+    document.getElementById('summary-grid').innerHTML =
+      summaryMetric('Total Alerts', totalAlerts) +
+      summaryMetric('Total Blocks', totalBlocks) +
+      summaryMetric('Block Rate', `${blockedPct}%`) +
+      summaryMetric('Total Calls', totalCalls) +
+      summaryMetric('Total Cost (USD)', num(summary.total_cost_usd).toFixed(2));
+
+    const bullets = [];
+    if (num(summary.total_blocks) > 0) {
+      bullets.push(`Blocking controls actively prevented ${num(summary.total_blocks)} high-risk events.`);
+    }
+    if (num(summary.total_alerts) > 0) {
+      bullets.push(`Alerting generated ${num(summary.total_alerts)} actionable detections for review.`);
+    }
+    const topTypes = report.alerts_by_type ? Object.entries(report.alerts_by_type).sort((a,b) => num(b[1]) - num(a[1])).slice(0,3) : [];
+    if (topTypes.length > 0) {
+      bullets.push(`Top alert types: ${topTypes.map(([k,v]) => `${k} (${v})`).join(', ')}.`);
+    }
+    if (Array.isArray(report.recommendations) && report.recommendations.length > 0) {
+      bullets.push(`Primary recommendation: ${report.recommendations[0]}`);
+    }
+    document.getElementById('summary-bullets').innerHTML =
+      bullets.map(b => `<li>${esc(b)}</li>`).join('');
+
+    const rows = [];
+    for (const s of (report.secrets_detected || [])) {
+      pushAlert(rows, {
+        ts: s.timestamp || '',
+        category: 'Secrets',
+        agent: s.agent_id || '-',
+        detail: `${s.secret_type || 'secret'} detected in ${s.location || 'unknown location'}${s.masked_value ? ` (masked: ${s.masked_value})` : ''}`,
+        action: actionUpper(s.action),
+        severity: severityFor('secrets', s.action, 100)
+      });
+    }
+    for (const p of (report.pii_detected || [])) {
+      pushAlert(rows, {
+        ts: p.timestamp || '',
+        category: 'PII',
+        agent: p.agent_id || '-',
+        detail: `${p.pii_type || 'pii'} detected in ${p.location || 'unknown location'} (count: ${num(p.count)})`,
+        action: actionUpper(p.action),
+        severity: severityFor('pii', p.action, 60)
+      });
+    }
+    for (const i of (report.injection_attempts || [])) {
+      pushAlert(rows, {
+        ts: i.timestamp || '',
+        category: 'Prompt',
+        agent: i.agent_id || '-',
+        detail: `${i.attack_type || 'prompt attack'} pattern '${i.pattern || 'unknown'}' (risk: ${num(i.risk_score)})`,
+        action: actionUpper(i.action),
+        severity: severityFor('injection', i.action, i.risk_score)
+      });
+    }
+    for (const t of (report.dangerous_tool_calls || [])) {
+      const args = t.args ? JSON.stringify(t.args) : '';
+      pushAlert(rows, {
+        ts: t.timestamp || '',
+        category: 'Tool Risk',
+        agent: t.agent_id || '-',
+        detail: `${t.tool || 'tool'} invoked with args ${args} (risk: ${num(t.risk_score)})`,
+        action: actionUpper(t.action),
+        severity: severityFor('tool', t.action, t.risk_score)
+      });
+    }
+    rows.sort((a, b) => (a.ts < b.ts ? 1 : -1));
+
+    const tbody = document.getElementById('alerts-table-body');
+    if (rows.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="6">No detailed alert events found in source JSON.</td></tr>`;
+    } else {
+      tbody.innerHTML = rows.map(r => `
+        <tr>
+          <td class="mono">${esc(r.ts)}</td>
+          <td><span class="severity ${esc(r.severity)}">${esc(r.severity)}</span></td>
+          <td>${esc(r.category)}</td>
+          <td class="mono">${esc(r.agent)}</td>
+          <td>${esc(r.detail)}</td>
+          <td>${esc(r.action)}</td>
+        </tr>
+      `).join('');
+    }
+  </script>
+</body>
+</html>
