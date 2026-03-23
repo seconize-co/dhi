@@ -86,9 +86,9 @@ if [[ "${#POSITIONAL[@]}" -gt 1 ]]; then
   exit 1
 fi
 
-VERSION="${POSITIONAL[0]:-${DHI_VERSION:-}}"
+RELEASE_VERSION="${POSITIONAL[0]:-${DHI_VERSION:-}}"
 
-if [[ "$VERIFY_ONLY" -eq 0 && -z "$VERSION" ]]; then
+if [[ "$VERIFY_ONLY" -eq 0 && -z "$RELEASE_VERSION" ]]; then
   echo "Usage: $0 <version-tag>  (example: $0 v1.2.3)"
   echo "Or set DHI_VERSION=v1.2.3"
   echo "Or run verification only: $0 --verify-only"
@@ -134,7 +134,7 @@ case "$ARCH" in
     ;;
 esac
 
-URL="https://github.com/${REPO}/releases/download/${VERSION}/${ASSET}"
+URL="https://github.com/${REPO}/releases/download/${RELEASE_VERSION}/${ASSET}"
 TMPDIR="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR"' EXIT
 
@@ -166,7 +166,7 @@ install_logrotate_pkg() {
 
 install_logrotate_policy() {
   local local_policy="ops/logrotate/dhi"
-  local remote_policy="https://raw.githubusercontent.com/${REPO}/${VERSION}/ops/logrotate/dhi"
+  local remote_policy="https://raw.githubusercontent.com/${REPO}/${RELEASE_VERSION}/ops/logrotate/dhi"
   local tmp_policy="$TMPDIR/dhi.logrotate"
 
   if [[ -f "$local_policy" ]]; then
@@ -205,7 +205,7 @@ check_rotation_scheduler() {
 
 install_systemd_service() {
   local local_service="ops/systemd/dhi.service"
-  local remote_service="https://raw.githubusercontent.com/${REPO}/${VERSION}/ops/systemd/dhi.service"
+  local remote_service="https://raw.githubusercontent.com/${REPO}/${RELEASE_VERSION}/ops/systemd/dhi.service"
   local tmp_service="$TMPDIR/dhi.service"
 
   if [[ -f "$local_service" ]]; then
@@ -224,7 +224,7 @@ install_systemd_service() {
 
 install_health_check_script() {
   local local_script="scripts/dhi-health-check.sh"
-  local remote_script="https://raw.githubusercontent.com/${REPO}/${VERSION}/scripts/dhi-health-check.sh"
+  local remote_script="https://raw.githubusercontent.com/${REPO}/${RELEASE_VERSION}/scripts/dhi-health-check.sh"
   local tmp_script="$TMPDIR/dhi-health-check.sh"
 
   if [[ -f "$local_script" ]]; then
@@ -244,8 +244,8 @@ install_health_check_script() {
 install_health_systemd_units() {
   local local_service="ops/systemd/dhi-health-check.service"
   local local_timer="ops/systemd/dhi-health-check.timer"
-  local remote_service="https://raw.githubusercontent.com/${REPO}/${VERSION}/ops/systemd/dhi-health-check.service"
-  local remote_timer="https://raw.githubusercontent.com/${REPO}/${VERSION}/ops/systemd/dhi-health-check.timer"
+  local remote_service="https://raw.githubusercontent.com/${REPO}/${RELEASE_VERSION}/ops/systemd/dhi-health-check.service"
+  local remote_timer="https://raw.githubusercontent.com/${REPO}/${RELEASE_VERSION}/ops/systemd/dhi-health-check.timer"
   local tmp_service="$TMPDIR/dhi-health-check.service"
   local tmp_timer="$TMPDIR/dhi-health-check.timer"
 
@@ -284,7 +284,7 @@ target_arch_define() {
 
 rebuild_ebpf_object() {
   local source_c="$TMPDIR/dhi_ssl.bpf.c"
-  local source_url="https://raw.githubusercontent.com/${REPO}/${VERSION}/bpf/dhi_ssl.bpf.c"
+  local source_url="https://raw.githubusercontent.com/${REPO}/${RELEASE_VERSION}/bpf/dhi_ssl.bpf.c"
   local bpftool_bin=""
   local arch_define=""
 
@@ -344,7 +344,7 @@ install_config_file() {
   elif [[ -f "dhi.patterns.toml.example" ]]; then
     sudo install -m 644 "dhi.patterns.toml.example" /etc/dhi/dhi.patterns.toml.example
   else
-    local remote_patterns="https://raw.githubusercontent.com/${REPO}/${VERSION}/dhi.patterns.toml.example"
+    local remote_patterns="https://raw.githubusercontent.com/${REPO}/${RELEASE_VERSION}/dhi.patterns.toml.example"
     if ! curl -fsSL "$remote_patterns" -o "$TMPDIR/dhi.patterns.toml.example"; then
       echo "WARNING: Could not obtain dhi.patterns.toml.example (archive/local/remote)."
     else
