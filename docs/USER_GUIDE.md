@@ -1,173 +1,182 @@
-# Dhi User Guide
+# Dhi User Guide (Features and Controls)
 
-This guide consolidates end-user product usage previously spread across integration, feature, and CTO-facing docs.
+This guide is focused on **what Dhi does at runtime**, what each feature means, and how to control behavior using config toggles and use-case IDs.
 
-For day-2 operations, see [OPERATIONS.md](OPERATIONS.md).
-For validation and release readiness, see [TESTING.md](TESTING.md).
-For security model and hardening posture, see [SECURITY.md](SECURITY.md).
-
----
-
-## 1. Core Use Cases
-
-Dhi addresses six primary runtime security concerns:
-1. Credential leakage prevention
-2. PII exfiltration prevention
-3. Cost control and budget enforcement
-4. Dangerous tool call control
-5. Prompt injection/jailbreak detection
-6. Observability for agent activity
+For deployment/runbook topics, see `OPERATIONS.md`.
+For test procedures and acceptance coverage, see `TESTING.md`.
 
 ---
 
-## 2. Modes and Platform Fit
+## 1. Core Runtime Features
 
-| Mode | Best platform | Visibility | Recommended use |
-|------|---------------|------------|-----------------|
-| eBPF mode | Linux | Full SSL plaintext at runtime | Primary production mode |
-| Proxy mode | macOS/Windows fallback | Hostname-level only for HTTPS | Compatibility and basic controls |
+### 1.1 Secrets detection and blocking
 
-Production recommendation:
-- Run eBPF mode as primary on Linux.
-- Run one mode at a time unless you have a specific, documented reason.
+- Detects high-risk credentials in requests/responses (API keys, tokens, private keys, JWT-like material).
+- In `alert` mode: emits alerts.
+- In `block` mode: can actively block based on toggles.
+
+Use-case IDs:
+- `sze.dhi.secrets.uc01.detect`
+- `sze.dhi.secrets.uc02.block`
+
+### 1.2 PII detection and blocking
+
+- Detects PII indicators (email/phone/SSN/card-like patterns, etc.).
+- Can alert-only or block depending on protection mode and toggles.
+
+Use-case IDs:
+- `sze.dhi.pii.uc01.detect`
+- `sze.dhi.pii.uc02.block`
+
+### 1.3 Prompt attack detection
+
+- Detects prompt injection/jailbreak style payloads.
+- Emits enriched runtime alerts and can block in configured paths.
+
+Use-case IDs:
+- `sze.dhi.prompt.uc01.detect`
+- `sze.dhi.prompt.uc02.block`
+- `sze.dhi.prompt.uc03.jailbreak_detect`
+
+### 1.4 SSRF guardrails (proxy path)
+
+- Identifies suspicious/private/internal destinations in CONNECT and request routing.
+- Supports detect vs block controls.
+
+Use-case IDs:
+- `sze.dhi.ssrf.uc01.detect`
+- `sze.dhi.ssrf.uc02.block`
+
+### 1.5 Tool risk monitoring and blocking
+
+- Scores tool invocations for risk and flags dangerous patterns.
+- In blocking posture, high-risk tool use can be denied.
+
+Use-case IDs:
+- `sze.dhi.tools.uc01.detect`
+- `sze.dhi.tools.uc02.block`
+
+### 1.6 Budget controls
+
+- Tracks token/cost spend and raises warning/exceeded signals.
+- Supports enforcement behavior when limits are crossed.
+
+Use-case IDs:
+- `sze.dhi.budget.uc01.detect`
+- `sze.dhi.budget.uc02.block`
+
+### 1.7 Alerting and traceability
+
+- Sends alerts via local JSONL log, Slack webhook, and/or generic webhook.
+- Adds correlation/session/process/destination/action metadata for investigations.
+
+Use-case IDs:
+- `sze.dhi.alerts.uc01.dispatch`
+- `sze.dhi.alerts.uc02.traceability`
+
+### 1.8 Metrics and runtime observability
+
+- Exposes runtime and agent/session counters for monitoring and troubleshooting.
+
+Use-case IDs:
+- `sze.dhi.metrics.uc01.observe`
+
+### 1.9 Trusted-host allow behavior
+
+- Supports trusted-host controls to reduce false positives on known-safe paths.
+
+Use-case IDs:
+- `sze.dhi.auth.uc01.trusted-host-allow`
 
 ---
 
-## 3. Quick Start
+## 2. Enable/Disable Behavior with `[checks]`
 
-### Linux eBPF mode (primary)
+Dhi supports hybrid toggles:
 
-```bash
-cargo build --release
-cd bpf
-clang -O2 -target bpf -c dhi_ssl.bpf.c -o dhi_ssl.bpf.o
-sudo mkdir -p /usr/share/dhi
-sudo cp dhi_ssl.bpf.o /usr/share/dhi/
-cd ..
+- **Type-level toggles** for broad behavior.
+- **Use-case overrides** for precise per-ID control.
 
-sudo ./target/release/dhi --level alert
-# or
-sudo ./target/release/dhi --level block --ebpf-block-action term
+Configuration section:
+
+```toml
+[checks]
+detect_secrets = true
+block_secrets = true
+detect_pii = true
+block_pii = false
+detect_prompt_injection = true
+block_prompt_injection = true
+detect_ssrf = true
+block_ssrf = true
+
+use_case_overrides = { "sze.dhi.secrets.uc02.block" = false, "sze.dhi.ssrf.uc02.block" = true }
 ```
 
-### Proxy mode (fallback)
+### 2.1 How precedence works
 
-```bash
-./target/release/dhi proxy --port 18080 --block-secrets --block-pii
-export HTTP_PROXY=http://127.0.0.1:18080
-export HTTPS_PROXY=http://127.0.0.1:18080
-```
+1. Type-level flag sets default behavior.
+2. If `use_case_overrides` includes that exact use-case ID, override wins.
 
----
+Example:
+- `block_secrets = true`
+- `use_case_overrides["sze.dhi.secrets.uc02.block"] = false`
+- Result: secrets can still be detected, but block action for that use case is disabled.
 
-## 4. Key Protections
+### 2.2 Practical toggle patterns
 
-### Secrets and credentials
-- Detects common key/token types (OpenAI, AWS, GitHub, Stripe, private keys, JWT patterns).
-- Block mode actively prevents risky egress.
-
-### PII protection
-- Detects sensitive personal data (SSN, card-like patterns, phones, emails, addresses).
-- Supports redaction/block workflows depending on mode and policy.
-
-### Prompt attack detection
-- Detects prompt injection, jailbreak, and prompt extraction patterns.
-
-### Tool risk control
-- Risk-scores tool calls and flags/blocks high-risk patterns.
-
-### Budget controls
-- Tracks usage and cost signals and can enforce limits.
-
-### Agent observability
-- Tracks calls, events, and exposure through API stats and Prometheus metrics.
+- **Detect-only rollout**: keep `detect_* = true`, set `block_* = false`.
+- **Selective block**: enable all block toggles, then disable specific use-case IDs that are noisy.
+- **Targeted hardening**: keep coarse blocks off, enable only key per-use-case blocks through overrides.
 
 ---
 
-## 5. Agent and Framework Coverage
+## 3. Alert Details and Enrichment
 
-Dhi is provider/framework agnostic at runtime and supports common coding assistants and agent stacks, including:
-- Claude Code
-- GitHub Copilot CLI
-- LangChain/CrewAI style toolchains
-- SDK-driven OpenAI/Anthropic workflows
+Every emitted alert includes base fields:
 
----
-
-## 6. Reporting and Metrics
-
-### Metrics endpoints
-- `GET /metrics`
-- `GET /health`
-- `GET /ready`
-- `GET /api/stats`
-- `GET /api/agents`
-
-### Agent/session report fields (`/api/agents`)
-
-The agents report now includes runtime usage counters at multiple levels:
-
-- Report-level: `total_tokens`, `total_tool_calls`
-- Agent-level: `total_tokens`, `total_tool_calls`
-- Session-level: `total_tokens`, `total_tool_calls`, `session_name`
-
-For multi-terminal Copilot runs, sessions are separated by deterministic process-session IDs (e.g. `copilot-process:<pid>`), with `session_name` populated via best-effort enrichment.
-
-Runtime extraction details:
-
-- `RUN-*` marker extraction is boundary-aware and resilient to fragmented buffer capture.
-- Token extraction works with full JSON payloads and SSE `data:` JSON lines.
-- Tool extraction covers `tool_calls`, `function_call`, `tools`, and `type:"tool_use"` patterns.
-- Session token/tool usage is attributed only to sessions detected on that request.
-
-### Reporting output
-- Reporting directory is configurable in `dhi.toml` under `[reporting].output_dir`.
-- Typical paths:
-- `/tmp/log/dhi/reports` for dev/test
-- `/var/log/dhi/reports` for hardened production hosts
-- Choose one log/report root per environment (dev/test or production), not both.
-
-See sample output formats:
-- `examples/sample-report-daily.json`
-- `examples/sample-report-agents.json`
-
----
-
-## 7. Alerting (Slack/Webhook/Email)
-
-Alert transports are configurable under `[alerting]`.
-Alert payloads include traceability metadata for investigation:
-- `correlation_id`
+- `severity`
+- `title`
+- `message`
 - `event_type`
-- `destination` and `path` (when request context is available)
-- `action_taken` (`ALERTED`/`BLOCKED`/`ALLOWED`)
-- `session_id` and optional `session_name` (when session extraction succeeds)
-- `process_name`/`pid` (when process context is available)
+- `timestamp`
+- optional `agent_id`
 
-For runtime/session investigation, continue to use `GET /api/agents` plus monitor logs; there is currently no dedicated `/api/alerts` endpoint.
+Enrichment metadata (when available):
 
-Recommended rollout:
-1. Start in alert mode.
-2. Tune false positives and trusted paths/hosts.
-3. Move to block mode once confidence is high.
+- `use_case_id`
+- `correlation_id`
+- `session_id`, optional `session_name`
+- `process_name`, `pid`
+- `destination`, `path`
+- `action_taken` (`ALERTED`, `BLOCKED`, `ALLOWED`)
+- `risk_score`
 
----
+### 3.1 Transport behavior
 
-## 8. Testing and Validation
-
-Use these harnesses:
-- `scripts/security-e2e.sh` for deterministic regression and endpoint checks
-- `scripts/copilot-cli-e2e.sh` for Copilot CLI/eBPF scenario validation
-- `scripts/reporting-e2e.sh` for reporting schema/artifact checks (Slack excluded)
-
-Full acceptance flow is defined in [TESTING.md](TESTING.md).
+- **Local log** (`alert_log_path`): append-only JSONL records of full alert payload.
+- **Slack webhook**: metadata is sent as attachment fields.
+- **Generic webhook**: full alert JSON (including metadata) is posted.
 
 ---
 
-## 9. Configuration Anchors
+## 4. Feature-to-ID Reference
 
-Primary configuration sources:
-- `dhi.toml.example`
-- `.env.example`
+- Secrets: `sze.dhi.secrets.uc01.detect`, `sze.dhi.secrets.uc02.block`
+- PII: `sze.dhi.pii.uc01.detect`, `sze.dhi.pii.uc02.block`
+- Prompt security: `sze.dhi.prompt.uc01.detect`, `sze.dhi.prompt.uc02.block`, `sze.dhi.prompt.uc03.jailbreak_detect`
+- SSRF: `sze.dhi.ssrf.uc01.detect`, `sze.dhi.ssrf.uc02.block`
+- Tool risk: `sze.dhi.tools.uc01.detect`, `sze.dhi.tools.uc02.block`
+- Budget: `sze.dhi.budget.uc01.detect`, `sze.dhi.budget.uc02.block`
+- Alerting: `sze.dhi.alerts.uc01.dispatch`, `sze.dhi.alerts.uc02.traceability`
+- Metrics: `sze.dhi.metrics.uc01.observe`
+- Trusted-host behavior: `sze.dhi.auth.uc01.trusted-host-allow`
 
-These files are normative for key names/defaults; docs should follow them.
+---
+
+## 5. Recommended Usage Strategy
+
+1. Start with detect/alert posture.
+2. Review enriched alerts and tune noisy use-case IDs with overrides.
+3. Enable block behavior incrementally for mature use cases.
+4. Keep alert traceability fields (`use_case_id`, `correlation_id`, `session_id`) mandatory in triage workflow.
