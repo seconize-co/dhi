@@ -945,10 +945,14 @@ What it validates:
 1. Sample report schema contracts:
 - `examples/sample-report-daily.json`
 - `examples/sample-report-agents.json`
+- `examples/sample-report-daily-testing-alerts.json`
 2. Runtime report artifacts in configured output directory (if present, or required in strict mode).
 3. Reporting endpoints and schema:
 - `/api/stats` status and required counters
 - `/metrics` status and expected Dhi metric keys
+4. HTML daily report generation from JSON:
+- `dhi report-html --input <daily.json> --output <daily.html>`
+- rendered sections include `Executive Summary` and `All Alerts (Human Readable)`.
 
 Config inputs:
 1. Schema vectors: `scripts/report-test-vectors.json`

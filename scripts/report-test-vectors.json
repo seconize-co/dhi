@@ -47,6 +47,29 @@
         "total_tokens",
         "estimated_cost_usd"
       ]
+    },
+    {
+      "id": "sample-daily-testing-alerts-schema",
+      "file": "examples/sample-report-daily-testing-alerts.json",
+      "report_type": "security_summary",
+      "required_top_level": [
+        "report_type",
+        "generated_at",
+        "summary",
+        "alerts_by_severity",
+        "alerts_by_type",
+        "cost_breakdown",
+        "recommendations",
+        "testing_traceability"
+      ],
+      "required_summary_keys": [
+        "total_agents",
+        "total_llm_calls",
+        "total_tool_calls",
+        "total_cost_usd",
+        "total_alerts",
+        "total_blocks"
+      ]
     }
   ]
 }
