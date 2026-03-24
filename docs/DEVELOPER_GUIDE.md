@@ -594,6 +594,38 @@ Verify Copilot target was discovered:
 grep -aE 'Found runtime SSL target|Attached uprobe_ssl.*copilot' /tmp/log/dhi/dhi.log
 ```
 
+### Copilot regression guardrails (required before merge)
+
+When modifying any of the following:
+- `src/ebpf/ssl_hook.rs`
+- `src/ebpf/linux.rs`
+- `bpf/dhi_ssl.bpf.c`
+- `.github/workflows/release.yml`
+
+run these checks before merge:
+
+1. Ensure runtime target discovery still includes live procfs executable paths for Copilot-like processes:
+   - `/proc/<pid>/exe` coverage must remain intact.
+   - Do not rely only on static binary paths from env/config.
+
+2. Validate Copilot capture with counters, not just logs:
+```bash
+curl -s http://127.0.0.1:9090/api/stats
+```
+Expected non-zero movement during Copilot traffic:
+- `ssl_events`
+- `ssl_events_copilot`
+- `alerts` (for risky vectors)
+
+3. Run the Copilot harness at least once in alert mode:
+```bash
+scripts/copilot-cli-e2e.sh --mode alert
+```
+
+4. If release workflow changed, ensure release artifact path remains valid:
+- bundled object: `/usr/share/dhi/dhi_ssl.bpf.o`
+- release packaging must not ship an empty/missing object
+
 ---
 
 ## Contributing

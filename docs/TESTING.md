@@ -914,6 +914,11 @@ scripts/copilot-cli-e2e.sh --mode alert \
 ```bash
 export DHI_SSL_EXTRA_TARGETS=/home/<user>/.local/bin/copilot
 ```
+7. Regression guard assertion for Copilot capture:
+   - During harness execution, verify `/api/stats` reflects non-zero deltas in:
+     - `ssl_events`
+     - `ssl_events_copilot`
+   - If these remain flat while other traffic is present, treat as a release blocker for Copilot path.
 
 ---
 

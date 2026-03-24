@@ -35,9 +35,13 @@ When adding a framework, verify whether existing SSL capture still applies:
    - Existing SSL uprobes may not capture payload.
    - You may need new probes/symbol targets in `bpf/dhi_ssl.bpf.c` and loader/attach logic in `src/ebpf/ssl_hook.rs`.
 3. Validate in Linux eBPF mode:
-   - SSL probes attach successfully.
-   - SSL raw events are emitted.
-   - Framework classification is correct in `/api/agents`.
+    - SSL probes attach successfully.
+    - SSL raw events are emitted.
+    - Framework classification is correct in `/api/agents`.
+4. For Copilot CLI compatibility specifically:
+   - Confirm runtime discovery still handles live executable mappings via `/proc/<pid>/exe`.
+   - Avoid assuming static binary paths are stable across updates/reinstalls.
+   - Validate `/api/stats` deltas for `ssl_events` and `ssl_events_copilot` with Copilot traffic.
 
 ## Detection Rule Design Notes
 

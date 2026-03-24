@@ -790,6 +790,33 @@ sudo systemctl restart dhi
 
 **Requirements:** Linux 5.4+ kernel, CAP_BPF capability.
 
+### Copilot traffic not being captured (Linux eBPF)
+
+If general SSL events exist but Copilot-specific events are missing:
+
+1. Check runtime counters first:
+```bash
+curl -s http://127.0.0.1:9090/api/stats
+```
+Review:
+- `ssl_events`
+- `ssl_events_copilot`
+- `ssl_probe_attached_total`
+
+2. Ensure runtime target discovery includes live executable mappings:
+- Dhi should discover/attach against live `/proc/<pid>/exe` targets for active Copilot processes.
+- Static path-only targeting may fail when process inodes are replaced/deleted by updates.
+
+3. Re-run Copilot harness for confirmation:
+```bash
+scripts/copilot-cli-e2e.sh --mode alert
+```
+
+4. If needed, add explicit fallback target:
+```bash
+export DHI_SSL_EXTRA_TARGETS=/home/<user>/.local/bin/copilot
+```
+
 See [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md#ebpf-troubleshooting--deep-debugging) for deep debugging.
 
 ### No Alerts Sent
