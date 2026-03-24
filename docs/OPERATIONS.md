@@ -817,6 +817,24 @@ scripts/copilot-cli-e2e.sh --mode alert
 export DHI_SSL_EXTRA_TARGETS=/home/<user>/.local/bin/copilot
 ```
 
+If Dhi runs under systemd, use a service override instead of a shell export:
+
+```bash
+sudo systemctl edit dhi
+```
+
+```ini
+[Service]
+Environment=DHI_SSL_EXTRA_TARGETS=/home/<user>/.local/bin/copilot
+```
+
+Then reload and restart:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart dhi
+```
+
 See [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md#ebpf-troubleshooting--deep-debugging) for deep debugging.
 
 ### No Alerts Sent
