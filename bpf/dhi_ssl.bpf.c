@@ -109,8 +109,15 @@ static __always_inline int submit_ssl_event(struct ssl_event *scratch, void *buf
     __u32 to_read = len < CAPTURE_CHUNK_SIZE ? len : CAPTURE_CHUNK_SIZE;
     event->data_len = to_read;
 
+    // For large outbound writes, capture from the end of the buffer where prompt/content
+    // payload is commonly located (headers and framing are typically at the front).
+    void *read_ptr = buf;
+    if (len > CAPTURE_CHUNK_SIZE && scratch->direction == SSL_WRITE) {
+        read_ptr = (void *)((char *)buf + (len - CAPTURE_CHUNK_SIZE));
+    }
+
     // Read data from userspace (bounded read)
-    if (bpf_probe_read_user(event->data, to_read, buf) < 0) {
+    if (bpf_probe_read_user(event->data, to_read, read_ptr) < 0) {
         bpf_ringbuf_discard(event, 0);
         return 0;
     }

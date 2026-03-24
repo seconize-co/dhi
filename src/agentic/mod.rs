@@ -270,6 +270,10 @@ impl AgenticRuntime {
         Arc::clone(&self.fingerprinter)
     }
 
+    pub async fn emit_external_alert(&self, alert: Alert) -> Result<()> {
+        self.alerter.send(&alert).await
+    }
+
     pub fn configure_max_budget_usd(&self, max_budget_usd: f64) {
         self.budget_controller.set_global_limit(BudgetLimit {
             daily_usd: max_budget_usd,

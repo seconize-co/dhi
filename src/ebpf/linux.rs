@@ -72,6 +72,24 @@ struct RawSslEventHeader {
 
 const SSL_EVENT_MAX_DATA_SIZE: usize = 16384;
 
+fn process_looks_like_copilot(pid: u32, comm_lower: &str) -> Option<bool> {
+    if comm_lower.contains("copilot") || comm_lower.contains("mainthread") {
+        return Some(true);
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let exe_path = std::path::PathBuf::from(format!("/proc/{pid}/exe"));
+        if let Ok(target) = std::fs::read_link(exe_path) {
+            let exe = target.to_string_lossy().to_ascii_lowercase();
+            return Some(exe.contains("copilot") || exe.contains("npm-loader"));
+        }
+        return None;
+    }
+    #[allow(unreachable_code)]
+    Some(false)
+}
+
 /// Start the eBPF monitor
 pub async fn start_monitor(runtime: &crate::DhiRuntime) -> Result<()> {
     info!("Starting eBPF monitor on Linux");
@@ -92,6 +110,7 @@ pub async fn start_monitor(runtime: &crate::DhiRuntime) -> Result<()> {
 
     // Start SSL/TLS interception
     tokio::spawn(start_ssl_monitor(
+        runtime.agentic.clone(),
         runtime.agentic.fingerprinter(),
         runtime.stats.clone(),
         protection_level,
@@ -154,6 +173,7 @@ pub async fn start_monitor(runtime: &crate::DhiRuntime) -> Result<()> {
 
 /// Start SSL/TLS traffic monitoring
 async fn start_ssl_monitor(
+    agentic: std::sync::Arc<crate::agentic::AgenticRuntime>,
     fingerprinter: std::sync::Arc<crate::agentic::AgentFingerprinter>,
     runtime_stats: std::sync::Arc<tokio::sync::RwLock<crate::RuntimeStats>>,
     protection_level: crate::ProtectionLevel,
@@ -181,29 +201,72 @@ async fn start_ssl_monitor(
     };
 
     // Start the tracer and attach SSL probes.
-    let attached = match tracer.start(&mut bpf).await {
-        Ok(n) => n,
+    let attach_stats = match tracer.start(&mut bpf).await {
+        Ok(stats) => stats,
         Err(e) => {
             warn!("Failed to start SSL tracer: {}", e);
             return;
         },
     };
-    if attached == 0 {
+    {
+        let mut stats = runtime_stats.write().await;
+        stats.ssl_probe_targets_total = attach_stats.targets_total;
+        stats.ssl_probe_targets_with_attached = attach_stats.targets_with_attached;
+        stats.ssl_probe_attempts_total = attach_stats.attempts_total;
+        stats.ssl_probe_attached_total = attach_stats.attached_total;
+        stats.ssl_probe_failed_total = attach_stats.failed_total;
+    }
+    info!(
+        "SSL probe attach summary: targets={} attached_targets={} attempts={} attached={} failed={}",
+        attach_stats.targets_total,
+        attach_stats.targets_with_attached,
+        attach_stats.attempts_total,
+        attach_stats.attached_total,
+        attach_stats.failed_total
+    );
+    if attach_stats.attached_total == 0 {
         warn!("No SSL uprobes were attached. SSL tracing disabled.");
         return;
     }
 
     // Process analyzed SSL events.
+    let runtime_stats_for_outcome = runtime_stats.clone();
     tokio::spawn(async move {
         while let Some(event) = rx.recv().await {
             match process_ssl_event_with_outcome(&event, &monitor).await {
                 Ok(outcome) => {
                     if outcome.risk_score > 0 {
-                        let mut stats = runtime_stats.write().await;
+                        let mut stats = runtime_stats_for_outcome.write().await;
                         stats.total_alerts = stats.total_alerts.saturating_add(1);
+                        let severity = if outcome.risk_score >= 90 {
+                            crate::agentic::AlertSeverity::Critical
+                        } else if outcome.risk_score >= 70 {
+                            crate::agentic::AlertSeverity::Warning
+                        } else {
+                            crate::agentic::AlertSeverity::Info
+                        };
+                        let mut alert = crate::agentic::Alert::new(
+                            severity,
+                            "SSL traffic risk detected",
+                            &format!(
+                                "SSL risk detected for process {} (pid={})",
+                                event.comm, event.pid
+                            ),
+                        )
+                        .with_event_type("ssl_risk_detected")
+                        .with_process(Some(&event.comm), Some(event.pid))
+                        .with_risk_score(outcome.risk_score);
+                        if outcome.blocked {
+                            alert = alert.with_action("BLOCKED");
+                        } else {
+                            alert = alert.with_action("ALERTED");
+                        }
+                        if let Err(e) = agentic.emit_external_alert(alert).await {
+                            warn!("Failed to persist SSL alert to alert pipeline: {}", e);
+                        }
                     }
                     if outcome.blocked {
-                        let mut stats = runtime_stats.write().await;
+                        let mut stats = runtime_stats_for_outcome.write().await;
                         stats.total_blocks = stats.total_blocks.saturating_add(1);
                     }
                     if outcome.blocked {
@@ -238,6 +301,7 @@ async fn start_ssl_monitor(
     };
 
     info!("SSL/TLS interception active - monitoring encrypted traffic");
+    let runtime_stats_for_ring = runtime_stats.clone();
 
     loop {
         if let Some(event_data) = ssl_ring_buf.next() {
@@ -275,18 +339,44 @@ async fn start_ssl_monitor(
                 "SSL raw event received: pid={} tid={} dir={} data_len={}",
                 raw.pid, raw.tid, raw.direction, raw.data_len
             );
+            {
+                let mut stats = runtime_stats_for_ring.write().await;
+                stats.ssl_events_total = stats.ssl_events_total.saturating_add(1);
+            }
             let comm_str = std::str::from_utf8(&raw.comm)
                 .unwrap_or("")
                 .trim_end_matches('\0')
                 .to_ascii_lowercase();
-            if comm_str.contains("copilot") || comm_str.contains("mainthread") {
-                info!(
-                    "[COPILOT RAW EVENT] pid={} tid={} dir={} data_len={}",
-                    raw.pid, raw.tid, raw.direction, raw.data_len
-                );
+            let is_copilot_like = process_looks_like_copilot(raw.pid, &comm_str);
+            if matches!(is_copilot_like, Some(true)) {
+                {
+                    let mut stats = runtime_stats_for_ring.write().await;
+                    stats.ssl_events_copilot_total =
+                        stats.ssl_events_copilot_total.saturating_add(1);
+                }
+                if !comm_str.contains("copilot") && !comm_str.contains("mainthread") {
+                    let mut stats = runtime_stats_for_ring.write().await;
+                    stats.ssl_events_copilot_by_exe_total =
+                        stats.ssl_events_copilot_by_exe_total.saturating_add(1);
+                }
+                if comm_str.contains("copilot") || comm_str.contains("mainthread") {
+                    info!(
+                        "[COPILOT RAW EVENT] pid={} tid={} dir={} data_len={}",
+                        raw.pid, raw.tid, raw.direction, raw.data_len
+                    );
+                }
+            } else if is_copilot_like.is_none() {
+                let mut stats = runtime_stats_for_ring.write().await;
+                stats.ssl_events_exe_resolve_failures =
+                    stats.ssl_events_exe_resolve_failures.saturating_add(1);
             }
 
             if let Err(e) = tracer.monitor().process_raw_event(&raw).await {
+                {
+                    let mut stats = runtime_stats_for_ring.write().await;
+                    stats.ssl_events_parse_errors =
+                        stats.ssl_events_parse_errors.saturating_add(1);
+                }
                 debug!("Failed to process raw SSL event: {}", e);
             }
         } else {

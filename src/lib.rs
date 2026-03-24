@@ -154,6 +154,16 @@ pub struct RuntimeStats {
     pub total_events: u64,
     pub total_alerts: u64,
     pub total_blocks: u64,
+    pub ssl_probe_targets_total: u64,
+    pub ssl_probe_targets_with_attached: u64,
+    pub ssl_probe_attempts_total: u64,
+    pub ssl_probe_attached_total: u64,
+    pub ssl_probe_failed_total: u64,
+    pub ssl_events_total: u64,
+    pub ssl_events_copilot_total: u64,
+    pub ssl_events_copilot_by_exe_total: u64,
+    pub ssl_events_exe_resolve_failures: u64,
+    pub ssl_events_parse_errors: u64,
     pub events_per_second: f64,
 }
 
