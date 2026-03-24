@@ -494,7 +494,9 @@ impl SslMonitor {
             let connections = self.connections.read().await;
             if let Some(conn) = connections.get(&event.ssl_ptr) {
                 let primary = match event.direction {
-                    SslDirection::Write if !conn.write_buffer.is_empty() => conn.write_buffer.clone(),
+                    SslDirection::Write if !conn.write_buffer.is_empty() => {
+                        conn.write_buffer.clone()
+                    },
                     SslDirection::Read if !conn.read_buffer.is_empty() => conn.read_buffer.clone(),
                     _ => event.data.clone(),
                 };
@@ -534,7 +536,9 @@ impl SslMonitor {
         if !result.has_secrets {
             let compact = text.replace('\0', "");
             let compact_combined = combined_text.replace('\0', "");
-            if AWS_KEY_FALLBACK_RE.is_match(&compact) || AWS_KEY_FALLBACK_RE.is_match(&compact_combined) {
+            if AWS_KEY_FALLBACK_RE.is_match(&compact)
+                || AWS_KEY_FALLBACK_RE.is_match(&compact_combined)
+            {
                 result.has_secrets = true;
                 result.secrets_detected = vec!["aws_access_key".to_string()];
                 result.risk_score = result.risk_score.max(95);
@@ -700,8 +704,12 @@ impl SslTracer {
                 lib.path.display()
             );
             let target_stats = self.attach_probes(bpf, lib).await?;
-            stats.attempts_total = stats.attempts_total.saturating_add(target_stats.attempts_total);
-            stats.attached_total = stats.attached_total.saturating_add(target_stats.attached_total);
+            stats.attempts_total = stats
+                .attempts_total
+                .saturating_add(target_stats.attempts_total);
+            stats.attached_total = stats
+                .attached_total
+                .saturating_add(target_stats.attached_total);
             stats.failed_total = stats.failed_total.saturating_add(target_stats.failed_total);
             if target_stats.attached_total > 0 {
                 stats.targets_with_attached = stats.targets_with_attached.saturating_add(1);

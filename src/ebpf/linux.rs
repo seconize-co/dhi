@@ -16,7 +16,8 @@ use super::{EbpfEventType, FileEvent, NetworkEvent};
 /// eBPF program candidates (ordered by preference).
 /// Current release artifacts install `dhi_ssl.bpf.o`, while legacy installs may still use
 /// `dhi.bpf.o`.
-const BPF_PROGRAM_PATH_CANDIDATES: [&str; 2] = ["/usr/share/dhi/dhi_ssl.bpf.o", "/usr/share/dhi/dhi.bpf.o"];
+const BPF_PROGRAM_PATH_CANDIDATES: [&str; 2] =
+    ["/usr/share/dhi/dhi_ssl.bpf.o", "/usr/share/dhi/dhi.bpf.o"];
 
 fn resolve_bpf_program_path_from_candidates<'a>(candidates: &'a [&'a str]) -> Option<&'a str> {
     candidates
@@ -374,8 +375,7 @@ async fn start_ssl_monitor(
             if let Err(e) = tracer.monitor().process_raw_event(&raw).await {
                 {
                     let mut stats = runtime_stats_for_ring.write().await;
-                    stats.ssl_events_parse_errors =
-                        stats.ssl_events_parse_errors.saturating_add(1);
+                    stats.ssl_events_parse_errors = stats.ssl_events_parse_errors.saturating_add(1);
                 }
                 debug!("Failed to process raw SSL event: {}", e);
             }
