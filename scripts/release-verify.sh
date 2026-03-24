@@ -395,6 +395,7 @@ verify_release_integrity() {
 runtime_health_checks() {
   command -v curl >/dev/null 2>&1 || { echo "Missing dependency: curl"; return 1; }
   command -v systemctl >/dev/null 2>&1 || { echo "systemctl not found"; return 1; }
+  command -v date >/dev/null 2>&1 || { echo "Missing dependency: date"; return 1; }
 
   if [[ -f /etc/dhi/dhi.toml ]]; then
     if ! run_with_sudo /usr/local/bin/dhi --config /etc/dhi/dhi.toml --check >/dev/null 2>&1; then
@@ -404,6 +405,8 @@ runtime_health_checks() {
     fi
   fi
 
+  local startup_probe_since
+  startup_probe_since="$(date --iso-8601=seconds)"
   run_with_sudo systemctl restart dhi
   sleep 2
 
@@ -440,6 +443,15 @@ runtime_health_checks() {
     RUNTIME_FAILURE_REASON="stats endpoint unreachable on port ${port}"
     return 1
   fi
+
+  local journal_tail
+  journal_tail="$(run_with_sudo journalctl -u dhi --since "$startup_probe_since" --no-pager 2>/dev/null || true)"
+  if grep -q "Failed to load BPF object for SSL tracing" <<<"$journal_tail"; then
+    RUNTIME_FAILURE_REASON="runtime journal reports SSL BPF object load failure"
+    echo "Runtime readiness failed: ${RUNTIME_FAILURE_REASON}"
+    return 1
+  fi
+
   RUNTIME_AVAILABLE=1
   RUNTIME_FAILURE_REASON=""
 }

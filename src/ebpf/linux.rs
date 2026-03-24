@@ -6,15 +6,28 @@ use anyhow::{Context, Result};
 use aya::maps::RingBuf;
 use aya::programs::TracePoint;
 use aya::Bpf;
+use std::path::Path;
 use std::process::Command;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use super::{EbpfEventType, FileEvent, NetworkEvent};
 
-/// eBPF program bytes (would be compiled separately)
-/// For now, we'll create a runtime that can load pre-compiled BPF
-const BPF_PROGRAM_PATH: &str = "/usr/share/dhi/dhi.bpf.o";
+/// eBPF program candidates (ordered by preference).
+/// Current release artifacts install `dhi_ssl.bpf.o`, while legacy installs may still use
+/// `dhi.bpf.o`.
+const BPF_PROGRAM_PATH_CANDIDATES: [&str; 2] = ["/usr/share/dhi/dhi_ssl.bpf.o", "/usr/share/dhi/dhi.bpf.o"];
+
+fn resolve_bpf_program_path_from_candidates<'a>(candidates: &'a [&'a str]) -> Option<&'a str> {
+    candidates
+        .iter()
+        .copied()
+        .find(|candidate| Path::new(candidate).exists())
+}
+
+fn resolve_bpf_program_path() -> Option<&'static str> {
+    resolve_bpf_program_path_from_candidates(&BPF_PROGRAM_PATH_CANDIDATES)
+}
 
 /// Event received from eBPF
 #[repr(C)]
@@ -69,23 +82,25 @@ pub async fn start_monitor(runtime: &crate::DhiRuntime) -> Result<()> {
     let block_action = config.ebpf_block_action;
     drop(config);
 
+    let Some(bpf_program_path) = resolve_bpf_program_path() else {
+        warn!(
+            "BPF program not found in any expected path ({}). Running in simulation mode.",
+            BPF_PROGRAM_PATH_CANDIDATES.join(", ")
+        );
+        return start_simulation_mode(runtime).await;
+    };
+
     // Start SSL/TLS interception
     tokio::spawn(start_ssl_monitor(
         runtime.agentic.fingerprinter(),
         runtime.stats.clone(),
         protection_level,
         block_action,
+        bpf_program_path,
     ));
 
     // Check if BPF program exists for syscall monitoring
-    let bpf_path = std::path::Path::new(BPF_PROGRAM_PATH);
-    if !bpf_path.exists() {
-        warn!(
-            "BPF program not found at {}. Running in simulation mode.",
-            BPF_PROGRAM_PATH
-        );
-        return start_simulation_mode(runtime).await;
-    }
+    let bpf_path = Path::new(bpf_program_path);
 
     // Load BPF program
     let mut bpf = Bpf::load_file(bpf_path).context("Failed to load BPF program")?;
@@ -96,7 +111,7 @@ pub async fn start_monitor(runtime: &crate::DhiRuntime) -> Result<()> {
     if attached_tracepoints == 0 {
         info!(
             "No syscall tracepoint programs found in {}. Running in SSL-only eBPF mode.",
-            BPF_PROGRAM_PATH
+            bpf_program_path
         );
         return Ok(());
     }
@@ -108,7 +123,7 @@ pub async fn start_monitor(runtime: &crate::DhiRuntime) -> Result<()> {
     let Some(events_map) = bpf.take_map("events") else {
         warn!(
             "No 'events' map found in {}. Syscall monitoring disabled; SSL monitoring remains active.",
-            BPF_PROGRAM_PATH
+            bpf_program_path
         );
         return Ok(());
     };
@@ -143,6 +158,7 @@ async fn start_ssl_monitor(
     runtime_stats: std::sync::Arc<tokio::sync::RwLock<crate::RuntimeStats>>,
     protection_level: crate::ProtectionLevel,
     block_action: crate::EbpfBlockAction,
+    bpf_program_path: &'static str,
 ) {
     use super::ssl_hook::{process_ssl_event_with_outcome, RawSslEvent, SslEvent, SslTracer};
     use tokio::sync::mpsc;
@@ -153,12 +169,12 @@ async fn start_ssl_monitor(
     let tracer = SslTracer::new(tx, protection_level, fingerprinter);
     let monitor = tracer.monitor();
 
-    let mut bpf = match Bpf::load_file(BPF_PROGRAM_PATH) {
+    let mut bpf = match Bpf::load_file(bpf_program_path) {
         Ok(bpf) => bpf,
         Err(e) => {
             warn!(
                 "Failed to load BPF object for SSL tracing ({}): {}",
-                BPF_PROGRAM_PATH, e
+                bpf_program_path, e
             );
             return;
         },
@@ -629,5 +645,40 @@ mod tests {
     fn test_enforce_block_action_none_is_non_fatal() {
         let result = enforce_block_action(std::process::id(), crate::EbpfBlockAction::None);
         assert!(result.is_ok(), "none action should not attempt signaling");
+    }
+
+    #[test]
+    fn test_resolve_bpf_program_path_prefers_first_existing_candidate() {
+        let unique = format!(
+            "dhi-bpf-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time should be monotonic")
+                .as_nanos()
+        );
+        let root = std::env::temp_dir().join(unique);
+        std::fs::create_dir_all(&root).expect("temp dir must be created");
+
+        let first = root.join("dhi_ssl.bpf.o");
+        let second = root.join("dhi.bpf.o");
+        std::fs::write(&first, b"first").expect("first candidate should be writable");
+        std::fs::write(&second, b"second").expect("second candidate should be writable");
+
+        let first_str = first.to_string_lossy().into_owned();
+        let second_str = second.to_string_lossy().into_owned();
+        let candidates = [first_str.as_str(), second_str.as_str()];
+        let resolved = resolve_bpf_program_path_from_candidates(&candidates);
+
+        assert_eq!(resolved, Some(first_str.as_str()));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_resolve_bpf_program_path_returns_none_when_missing() {
+        let candidates = ["/definitely/not/present/a.o", "/definitely/not/present/b.o"];
+        let resolved = resolve_bpf_program_path_from_candidates(&candidates);
+        assert_eq!(resolved, None);
     }
 }
