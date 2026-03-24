@@ -34,7 +34,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             clang llvm linux-headers-generic \
-            linux-tools-common linux-tools-generic linux-tools-azure linux-cloud-tools-azure
+            linux-tools-common linux-tools-generic || true
 
       - name: Rebuild bundled eBPF object
         run: |
@@ -44,12 +44,13 @@ jobs:
               BPFTOOL_BIN="$(command -v bpftool)"
             fi
           fi
-          if [ -z "$BPFTOOL_BIN" ]; then
-            echo "bpftool not found after dependency install" >&2
-            exit 1
+          if [ -n "$BPFTOOL_BIN" ] && [ -r /sys/kernel/btf/vmlinux ]; then
+            "$BPFTOOL_BIN" btf dump file /sys/kernel/btf/vmlinux format c > bpf/vmlinux.h
+            clang -O2 -g -target bpf -I bpf -c bpf/dhi_ssl.bpf.c -o bpf/dhi_ssl.bpf.o
+            echo "Rebuilt eBPF object with host BTF."
+          else
+            echo "bpftool/BTF unavailable on runner; using bundled eBPF object from repo."
           fi
-          "$BPFTOOL_BIN" btf dump file /sys/kernel/btf/vmlinux format c > bpf/vmlinux.h
-          clang -O2 -g -target bpf -I bpf -c bpf/dhi_ssl.bpf.c -o bpf/dhi_ssl.bpf.o
           test -s bpf/dhi_ssl.bpf.o
 
       - name: Build
