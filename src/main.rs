@@ -18,6 +18,46 @@ use std::time::Duration;
 use tracing::{info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
+#[derive(serde::Deserialize, Default)]
+struct TomlAlertingSection {
+    slack_webhook: Option<String>,
+    alert_log_path: Option<String>,
+}
+
+#[derive(serde::Deserialize, Default)]
+struct TomlChecksSection {
+    detect_secrets: Option<bool>,
+    block_secrets: Option<bool>,
+    detect_pii: Option<bool>,
+    block_pii: Option<bool>,
+    detect_prompt_injection: Option<bool>,
+    block_prompt_injection: Option<bool>,
+    detect_ssrf: Option<bool>,
+    block_ssrf: Option<bool>,
+    use_case_overrides: Option<std::collections::HashMap<String, bool>>,
+}
+
+#[derive(serde::Deserialize, Default)]
+struct TomlMetricsSection {
+    port: Option<u16>,
+    bind_address: Option<String>,
+}
+
+#[derive(serde::Deserialize, Default)]
+struct TomlProtectionSection {
+    level: Option<ProtectionLevel>,
+}
+
+#[derive(serde::Deserialize, Default)]
+struct TomlConfigWrapper {
+    alerting: Option<TomlAlertingSection>,
+    checks: Option<TomlChecksSection>,
+    metrics: Option<TomlMetricsSection>,
+    protection: Option<TomlProtectionSection>,
+    protection_level: Option<ProtectionLevel>,
+    pattern_rules_path: Option<String>,
+}
+
 /// Dhi - Runtime Intelligence & Protection System for AI Agents
 #[derive(Parser)]
 #[command(name = "dhi")]
@@ -29,8 +69,8 @@ struct Cli {
     command: Option<Commands>,
 
     /// Protection level
-    #[arg(short, long, default_value = "alert")]
-    level: String,
+    #[arg(short, long)]
+    level: Option<String>,
 
     /// Whitelist IP address (can be used multiple times)
     #[arg(long = "whitelist-ip")]
@@ -246,6 +286,39 @@ fn parse_ebpf_block_action(value: &str) -> EbpfBlockAction {
             EbpfBlockAction::Kill
         },
     }
+}
+
+fn parse_config_compat(content: &str) -> (DhiConfig, Option<TomlConfigWrapper>) {
+    let mut config = DhiConfig::default();
+
+    match toml::from_str::<DhiConfig>(content) {
+        Ok(cfg) => {
+            config = cfg;
+        },
+        Err(e) => {
+            warn!(
+                "Config is not in legacy flat format ({}); using defaults + supported section values",
+                e
+            );
+        },
+    }
+
+    let wrapper = toml::from_str::<TomlConfigWrapper>(content).ok();
+    if let Some(w) = wrapper.as_ref() {
+        if let Some(level) = w
+            .protection
+            .as_ref()
+            .and_then(|p| p.level)
+            .or(w.protection_level)
+        {
+            config.protection_level = level;
+        }
+        if let Some(alert_log_path) = w.alerting.as_ref().and_then(|a| a.alert_log_path.clone()) {
+            config.alert_log_path = Some(alert_log_path);
+        }
+    }
+
+    (config, wrapper)
 }
 
 fn print_banner(level: &ProtectionLevel) {
@@ -675,16 +748,20 @@ async fn main() -> Result<()> {
         .finish();
     tracing::subscriber::set_global_default(subscriber)?;
 
-    // Parse protection level
-    let protection_level = match cli.level.to_lowercase().as_str() {
-        "log" => ProtectionLevel::Log,
-        "alert" => ProtectionLevel::Alert,
-        "block" => ProtectionLevel::Block,
-        _ => {
-            warn!("Unknown protection level '{}', using 'alert'", cli.level);
-            ProtectionLevel::Alert
-        },
-    };
+    let cli_protection_level = cli.level.as_ref().and_then(|value| {
+        Some(match value.to_lowercase().as_str() {
+            "log" => ProtectionLevel::Log,
+            "alert" => ProtectionLevel::Alert,
+            "block" => ProtectionLevel::Block,
+            _ => {
+                warn!(
+                    "Unknown protection level '{}', ignoring CLI override",
+                    value
+                );
+                return None;
+            },
+        })
+    });
 
     let ebpf_block_action = parse_ebpf_block_action(&cli.ebpf_block_action);
 
@@ -692,6 +769,7 @@ async fn main() -> Result<()> {
         if let Some(ref config_path) = cli.config {
             let content = std::fs::read_to_string(config_path)?;
             let _: toml::Value = toml::from_str(&content)?;
+            let _ = parse_config_compat(&content);
             println!("Config OK: {}", config_path);
         } else {
             println!("Config OK: defaults");
@@ -699,66 +777,18 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    // Minimal TOML shape to extract [alerting] slack_webhook without
-    // requiring a full config struct change.
-    #[derive(serde::Deserialize, Default)]
-    struct TomlAlertingSection {
-        slack_webhook: Option<String>,
-        alert_log_path: Option<String>,
-    }
-    #[derive(serde::Deserialize, Default)]
-    struct TomlChecksSection {
-        detect_secrets: Option<bool>,
-        block_secrets: Option<bool>,
-        detect_pii: Option<bool>,
-        block_pii: Option<bool>,
-        detect_prompt_injection: Option<bool>,
-        block_prompt_injection: Option<bool>,
-        detect_ssrf: Option<bool>,
-        block_ssrf: Option<bool>,
-        use_case_overrides: Option<std::collections::HashMap<String, bool>>,
-    }
-    #[derive(serde::Deserialize, Default)]
-    struct TomlAlertingWrapper {
-        alerting: Option<TomlAlertingSection>,
-        checks: Option<TomlChecksSection>,
-        metrics: Option<TomlMetricsSection>,
-        pattern_rules_path: Option<String>,
-    }
-    #[derive(serde::Deserialize, Default)]
-    struct TomlMetricsSection {
-        port: Option<u16>,
-        bind_address: Option<String>,
-    }
-
     // Build configuration.
     // The shipped dhi.toml is section-oriented and may include fields outside DhiConfig,
     // so parsing into DhiConfig can fail. Keep startup resilient by falling back to defaults
     // and then applying supported values from wrapper sections below.
     let mut config = DhiConfig::default();
+    let mut parsed_toml_wrapper: Option<TomlConfigWrapper> = None;
     if let Some(ref config_path) = cli.config {
         let content = std::fs::read_to_string(config_path)?;
-        match toml::from_str::<DhiConfig>(&content) {
-            Ok(cfg) => {
-                config = cfg;
-            },
-            Err(e) => {
-                warn!(
-                    "Config file '{}' is not in legacy flat format ({}); using defaults + supported section values",
-                    config_path, e
-                );
-            },
-        }
+        let (parsed_config, wrapper) = parse_config_compat(&content);
+        config = parsed_config;
+        parsed_toml_wrapper = wrapper;
     }
-
-    let parsed_toml_wrapper: Option<TomlAlertingWrapper> = if let Some(ref config_path) = cli.config
-    {
-        std::fs::read_to_string(config_path)
-            .ok()
-            .and_then(|c| toml::from_str::<TomlAlertingWrapper>(&c).ok())
-    } else {
-        None
-    };
 
     if let (Some(config_path), Some(wrapper)) = (&cli.config, &parsed_toml_wrapper) {
         if let Some(rules_path) = &wrapper.pattern_rules_path {
@@ -835,12 +865,10 @@ async fn main() -> Result<()> {
 
     // Resolve: CLI > TOML.
     let resolved_slack_webhook = cli.slack_webhook.clone().or(toml_slack_webhook);
-    if toml_alert_log_path.is_some() {
-        config.alert_log_path = toml_alert_log_path.clone();
-    }
-
     // Override with CLI args
-    config.protection_level = protection_level;
+    if let Some(level) = cli_protection_level {
+        config.protection_level = level;
+    }
     if !cli.whitelist_ips.is_empty() {
         config.whitelist_ips.extend(cli.whitelist_ips);
     }
@@ -869,7 +897,7 @@ async fn main() -> Result<()> {
             }
             run_proxy(
                 port,
-                protection_level,
+                config.protection_level,
                 block_secrets,
                 block_pii,
                 resolved_slack_webhook,
@@ -1035,5 +1063,55 @@ mod tests {
     fn test_resolve_rules_path_relative_to_config_dir() {
         let out = resolve_rules_path("/etc/dhi/dhi.toml", "custom-rules.toml");
         assert_eq!(out, PathBuf::from("/etc/dhi/custom-rules.toml"));
+    }
+
+    #[test]
+    fn test_parse_config_compat_sectioned_protection_level() {
+        let toml = r#"
+[protection]
+level = "block"
+
+[metrics]
+port = 9191
+"#;
+        let (cfg, wrapper) = parse_config_compat(toml);
+        assert_eq!(cfg.protection_level, ProtectionLevel::Block);
+        let metrics_port = wrapper
+            .as_ref()
+            .and_then(|w| w.metrics.as_ref())
+            .and_then(|m| m.port);
+        assert_eq!(metrics_port, Some(9191));
+    }
+
+    #[test]
+    fn test_parse_config_compat_flat_protection_level() {
+        let toml = r#"
+protection_level = "log"
+"#;
+        let (cfg, wrapper) = parse_config_compat(toml);
+        assert_eq!(cfg.protection_level, ProtectionLevel::Log);
+        assert!(wrapper.is_some());
+    }
+
+    #[test]
+    fn test_parse_config_compat_cli_override_precedence() {
+        let toml = r#"
+[protection]
+level = "alert"
+"#;
+        let (mut cfg, _) = parse_config_compat(toml);
+        let cli_override = Some("block".to_string());
+        let parsed_cli = cli_override.as_ref().and_then(|value| {
+            Some(match value.to_lowercase().as_str() {
+                "log" => ProtectionLevel::Log,
+                "alert" => ProtectionLevel::Alert,
+                "block" => ProtectionLevel::Block,
+                _ => return None,
+            })
+        });
+        if let Some(level) = parsed_cli {
+            cfg.protection_level = level;
+        }
+        assert_eq!(cfg.protection_level, ProtectionLevel::Block);
     }
 }

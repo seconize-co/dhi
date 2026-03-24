@@ -33,6 +33,7 @@ PASS_STEPS=0
 FAIL_STEPS=0
 SKIP_STEPS=0
 RUNTIME_AVAILABLE=0
+RUNTIME_FAILURE_REASON=""
 
 usage() {
   cat <<'EOF'
@@ -386,10 +387,22 @@ runtime_health_checks() {
   command -v curl >/dev/null 2>&1 || { echo "Missing dependency: curl"; return 1; }
   command -v systemctl >/dev/null 2>&1 || { echo "systemctl not found"; return 1; }
 
+  if [[ -f /etc/dhi/dhi.toml ]]; then
+    if ! run_with_sudo /usr/local/bin/dhi --config /etc/dhi/dhi.toml --check >/dev/null 2>&1; then
+      RUNTIME_FAILURE_REASON="config check failed (/usr/local/bin/dhi --config /etc/dhi/dhi.toml --check)"
+      echo "Runtime readiness failed: ${RUNTIME_FAILURE_REASON}"
+      return 1
+    fi
+  fi
+
   run_with_sudo systemctl restart dhi
   sleep 2
 
-  run_with_sudo systemctl is-active --quiet dhi
+  if ! run_with_sudo systemctl is-active --quiet dhi; then
+    RUNTIME_FAILURE_REASON="systemd service dhi is not active"
+    echo "Runtime readiness failed: ${RUNTIME_FAILURE_REASON}"
+    return 1
+  fi
   local port=""
   if discover_active_runtime_port; then
     port="$STATUS_PORT"
@@ -402,11 +415,24 @@ runtime_health_checks() {
   STATUS_PORT="$port"
   log "Runtime port detected: $port"
 
-  curl -fsS "http://127.0.0.1:${port}/health" >/dev/null
-  curl -fsS "http://127.0.0.1:${port}/ready" >/dev/null
-  curl -fsS "http://127.0.0.1:${port}/metrics" >/dev/null
-  curl -fsS "http://127.0.0.1:${port}/api/stats" >/dev/null
+  if ! curl -fsS "http://127.0.0.1:${port}/health" >/dev/null; then
+    RUNTIME_FAILURE_REASON="health endpoint unreachable on port ${port}"
+    return 1
+  fi
+  if ! curl -fsS "http://127.0.0.1:${port}/ready" >/dev/null; then
+    RUNTIME_FAILURE_REASON="ready endpoint unreachable on port ${port}"
+    return 1
+  fi
+  if ! curl -fsS "http://127.0.0.1:${port}/metrics" >/dev/null; then
+    RUNTIME_FAILURE_REASON="metrics endpoint unreachable on port ${port}"
+    return 1
+  fi
+  if ! curl -fsS "http://127.0.0.1:${port}/api/stats" >/dev/null; then
+    RUNTIME_FAILURE_REASON="stats endpoint unreachable on port ${port}"
+    return 1
+  fi
   RUNTIME_AVAILABLE=1
+  RUNTIME_FAILURE_REASON=""
 }
 
 collect_runtime_failure_context() {
@@ -614,6 +640,14 @@ if [[ "$RUN_RUNTIME_CHECKS" -eq 1 ]]; then
   fi
 fi
 
+if [[ "$RUN_REPORTING" -eq 1 ]]; then
+  if [[ "$RUNTIME_AVAILABLE" -eq 1 || "$REPORT_SKIP_LIVE_ENDPOINTS" -eq 1 ]]; then
+    run_step "reporting-e2e" run_reporting_harness || true
+  else
+    skip_step "reporting-e2e" "runtime unavailable: ${RUNTIME_FAILURE_REASON:-unknown}"
+  fi
+fi
+
 if [[ "$RUN_SECURITY" -eq 1 ]]; then
   run_step "pause-dhi-service" pause_managed_service_for_harness || true
   run_step "clear-stale-lock" clear_stale_instance_lock || true
@@ -621,19 +655,11 @@ if [[ "$RUN_SECURITY" -eq 1 ]]; then
   run_step "resume-dhi-service" resume_managed_service_if_needed || true
 fi
 
-if [[ "$RUN_REPORTING" -eq 1 ]]; then
-  if [[ "$RUNTIME_AVAILABLE" -eq 1 || "$REPORT_SKIP_LIVE_ENDPOINTS" -eq 1 ]]; then
-    run_step "reporting-e2e" run_reporting_harness || true
-  else
-    skip_step "reporting-e2e" "runtime unavailable after health checks"
-  fi
-fi
-
 if [[ "$RUN_COPILOT" -eq 1 ]]; then
   if [[ "$RUNTIME_AVAILABLE" -eq 1 ]]; then
     run_step "copilot-e2e-${COPILOT_MODE}" run_copilot_harness || true
   else
-    skip_step "copilot-e2e-${COPILOT_MODE}" "runtime unavailable after health checks"
+    skip_step "copilot-e2e-${COPILOT_MODE}" "runtime unavailable: ${RUNTIME_FAILURE_REASON:-unknown}"
   fi
 fi
 
