@@ -163,7 +163,7 @@ acquire_lock() {
   mkdir -p "$STATE_DIR"
 
   if mkdir "$lock_dir" 2>/dev/null; then
-    trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT
+    trap "rmdir \"$lock_dir\" 2>/dev/null || true" EXIT
     return 0
   fi
 

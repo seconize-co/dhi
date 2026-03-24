@@ -412,6 +412,23 @@ verify_fail() {
   VERIFICATION_FAILURES=$((VERIFICATION_FAILURES + 1))
 }
 
+verify_rotation_scheduler() {
+  if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files | grep -q '^logrotate.timer'; then
+    if systemctl is-enabled logrotate.timer >/dev/null 2>&1 || systemctl is-active logrotate.timer >/dev/null 2>&1; then
+      verify_ok "logrotate scheduler: systemd timer is enabled/active"
+    else
+      verify_warn "logrotate.timer exists but is not enabled/active"
+    fi
+    return
+  fi
+
+  if [[ -x /etc/cron.daily/logrotate ]]; then
+    verify_ok "logrotate scheduler: cron.daily script present"
+  else
+    verify_warn "No logrotate scheduler detected (systemd timer or cron.daily)"
+  fi
+}
+
 run_post_install_verification() {
   echo
   echo "Post-install verification"
@@ -473,6 +490,7 @@ run_post_install_verification() {
       else
         verify_warn "Logrotate policy validation failed"
       fi
+      verify_rotation_scheduler
     else
       verify_warn "Logrotate installed but policy missing: /etc/logrotate.d/dhi"
     fi

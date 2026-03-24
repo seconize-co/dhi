@@ -162,6 +162,33 @@ For framework additions, include evidence from `/api/agents` and alert output in
 
 ---
 
+## Release Verification Workflow (Default Full Gate)
+
+Use the release verification orchestrator before RC/GA cuts:
+
+```bash
+scripts/release-verify.sh --release-tag v0.1.0-rc.12
+```
+
+Default behavior is **full verification**, including:
+1. Release integrity (`SHA256SUMS`) when release tag is provided
+2. Installer + `--verify-only`
+3. Runtime health endpoints
+4. Security E2E harness
+5. Reporting E2E harness
+6. Copilot CLI E2E harness
+7. Uninstall/reinstall validation cycle
+
+For quick local developer iteration, use:
+
+```bash
+scripts/release-verify.sh --quick
+```
+
+`--quick` skips integrity/install/uninstall/Copilot steps and runs a faster security path. Use full mode for release decisions.
+
+---
+
 ## Quick Start: Build from Source
 
 For development and testing:

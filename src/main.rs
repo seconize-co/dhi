@@ -56,6 +56,10 @@ struct Cli {
     #[arg(short, long)]
     config: Option<String>,
 
+    /// Validate configuration and exit
+    #[arg(long)]
+    check: bool,
+
     /// Enable verbose logging
     #[arg(short, long)]
     verbose: bool,
@@ -684,6 +688,17 @@ async fn main() -> Result<()> {
 
     let ebpf_block_action = parse_ebpf_block_action(&cli.ebpf_block_action);
 
+    if cli.check {
+        if let Some(ref config_path) = cli.config {
+            let content = std::fs::read_to_string(config_path)?;
+            let _: toml::Value = toml::from_str(&content)?;
+            println!("Config OK: {}", config_path);
+        } else {
+            println!("Config OK: defaults");
+        }
+        return Ok(());
+    }
+
     // Minimal TOML shape to extract [alerting] slack_webhook without
     // requiring a full config struct change.
     #[derive(serde::Deserialize, Default)]
@@ -716,14 +731,25 @@ async fn main() -> Result<()> {
         bind_address: Option<String>,
     }
 
-    // Build configuration
-    let mut config = if let Some(ref config_path) = cli.config {
-        // Load from file
+    // Build configuration.
+    // The shipped dhi.toml is section-oriented and may include fields outside DhiConfig,
+    // so parsing into DhiConfig can fail. Keep startup resilient by falling back to defaults
+    // and then applying supported values from wrapper sections below.
+    let mut config = DhiConfig::default();
+    if let Some(ref config_path) = cli.config {
         let content = std::fs::read_to_string(config_path)?;
-        toml::from_str(&content)?
-    } else {
-        DhiConfig::default()
-    };
+        match toml::from_str::<DhiConfig>(&content) {
+            Ok(cfg) => {
+                config = cfg;
+            },
+            Err(e) => {
+                warn!(
+                    "Config file '{}' is not in legacy flat format ({}); using defaults + supported section values",
+                    config_path, e
+                );
+            },
+        }
+    }
 
     let parsed_toml_wrapper: Option<TomlAlertingWrapper> = if let Some(ref config_path) = cli.config
     {
@@ -875,11 +901,12 @@ async fn main() -> Result<()> {
             company,
         }) => run_report_html(&input, output.as_deref(), &company),
         Some(Commands::Monitor) | None => {
-            let _instance_lock = acquire_instance_lock("monitor", cli.port)?;
+            let monitor_port = toml_metrics_port.unwrap_or(cli.port);
+            let _instance_lock = acquire_instance_lock("monitor", monitor_port)?;
             if let Some(ref url) = resolved_slack_webhook {
                 validate_slack_webhook(url).await;
             }
-            run_monitor(config, cli.port, resolved_slack_webhook).await
+            run_monitor(config, monitor_port, resolved_slack_webhook).await
         },
     }
     .map_err(|e| {

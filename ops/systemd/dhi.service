@@ -7,7 +7,7 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/dhi --level alert --ebpf-ssl-only --port 9090
+ExecStart=/usr/local/bin/dhi --config /etc/dhi/dhi.toml
 Restart=always
 RestartPreventExitStatus=73
 RestartSec=5

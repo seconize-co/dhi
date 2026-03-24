@@ -960,3 +960,44 @@ Config inputs:
 
 Scope note:
 - Slack/webhook payload integration is intentionally excluded from this harness.
+
+---
+
+## 17. Repeatable Pre-release Gate (RC/GA)
+
+Use the consolidated gate script to run a repeatable release verification flow that reuses existing harnesses and installer checks.
+By default, this runs the **full RC/GA gate**:
+
+```bash
+scripts/release-verify.sh --release-tag v0.1.0-rc.12
+```
+
+What it orchestrates:
+1. Release integrity checks (artifact + `SHA256SUMS`) when `--release-tag` is provided.
+2. Installer run + `--verify-only` checks.
+3. Runtime health smoke checks (`/health`, `/ready`, `/metrics`, `/api/stats`).
+4. Security regression via `scripts/security-e2e.sh`.
+5. Reporting regression via `scripts/reporting-e2e.sh`.
+6. Copilot/eBPF checks via `scripts/copilot-cli-e2e.sh` (default enabled).
+7. Uninstall/reinstall cleanup validation cycle (default enabled).
+
+Artifacts:
+- The script writes logs and machine-readable summaries to `/tmp/dhi-release-verify-<timestamp>/`:
+  - `summary.md`
+  - `summary.json`
+  - `logs/*.log`
+
+Useful examples:
+
+```bash
+# Fast local run (quick profile)
+scripts/release-verify.sh --quick
+
+# Full gate with release artifacts
+scripts/release-verify.sh --release-tag v0.1.0-rc.12
+
+# Full gate, but skip Copilot if unavailable in environment
+scripts/release-verify.sh --release-tag v0.1.0-rc.12 --without-copilot
+```
+
+`--quick` is intended for fast local iteration. It skips release-integrity/install/uninstall cycle and Copilot path, and runs security harness with build/quality gate skips for speed.
