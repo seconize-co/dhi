@@ -356,7 +356,8 @@ async fn handle_connect(
         .enabled(UC_SSRF_BLOCK, config.check_toggles.block_ssrf);
     if detect_ssrf {
         if let Err(ssrf_err) = validate_host(&host, port) {
-            let use_case = if config.level == ProtectionLevel::Block && block_ssrf {
+            let enforce_ssrf_block = block_ssrf;
+            let use_case = if enforce_ssrf_block {
                 "sze.dhi.ssrf.uc02.block"
             } else {
                 "sze.dhi.ssrf.uc01.detect"
@@ -369,7 +370,7 @@ async fn handle_connect(
             .with_event_type("proxy_ssrf_detected")
             .with_use_case_id(use_case)
             .with_destination(Some(&host), Some(target))
-            .with_action(if config.level == ProtectionLevel::Block && block_ssrf {
+            .with_action(if enforce_ssrf_block {
                 "BLOCKED"
             } else {
                 "ALERTED"
@@ -378,7 +379,7 @@ async fn handle_connect(
             if let Err(err) = _handlers.alerter.send(&alert).await {
                 warn!("Failed to dispatch proxy ssrf alert: {}", err);
             }
-            if config.level == ProtectionLevel::Block && block_ssrf {
+            if enforce_ssrf_block {
                 warn!("[BLOCKED] {}", ssrf_err);
                 let response = format!("HTTP/1.1 403 Forbidden\r\n\r\n{}\n", ssrf_err);
                 client.write_all(response.as_bytes()).await?;

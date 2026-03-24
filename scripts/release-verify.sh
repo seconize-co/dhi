@@ -31,6 +31,8 @@ DHI_SERVICE_WAS_ACTIVE=0
 TOTAL_STEPS=0
 PASS_STEPS=0
 FAIL_STEPS=0
+SKIP_STEPS=0
+RUNTIME_AVAILABLE=0
 
 usage() {
   cat <<'EOF'
@@ -219,6 +221,13 @@ step_fail() {
   fi
 }
 
+step_skip() {
+  local name="$1"
+  local reason="$2"
+  SKIP_STEPS=$((SKIP_STEPS + 1))
+  printf "SKIP\t%s\t%s\n" "$name" "$reason" >> "$ARTIFACTS_DIR/results.tsv"
+}
+
 run_step() {
   local step_name="$1"
   shift
@@ -234,6 +243,14 @@ run_step() {
 
   step_fail "$step_name"
   return 1
+}
+
+skip_step() {
+  local step_name="$1"
+  local reason="$2"
+  TOTAL_STEPS=$((TOTAL_STEPS + 1))
+  log "STEP ${TOTAL_STEPS}: ${step_name} (skipped: ${reason})"
+  step_skip "$step_name" "$reason"
 }
 
 run_with_sudo() {
@@ -389,6 +406,14 @@ runtime_health_checks() {
   curl -fsS "http://127.0.0.1:${port}/ready" >/dev/null
   curl -fsS "http://127.0.0.1:${port}/metrics" >/dev/null
   curl -fsS "http://127.0.0.1:${port}/api/stats" >/dev/null
+  RUNTIME_AVAILABLE=1
+}
+
+collect_runtime_failure_context() {
+  if command -v systemctl >/dev/null 2>&1; then
+    run_with_sudo systemctl status dhi --no-pager -n 40 || true
+    run_with_sudo journalctl -u dhi --no-pager -n 80 || true
+  fi
 }
 
 run_security_harness() {
@@ -509,6 +534,7 @@ write_summary() {
 - Total steps: ${TOTAL_STEPS}
 - Passed: ${PASS_STEPS}
 - Failed: ${FAIL_STEPS}
+- Skipped: ${SKIP_STEPS}
 - Artifacts: \`${ARTIFACTS_DIR}\`
 - Release tag: \`${RELEASE_TAG:-not-specified}\`
 
@@ -519,7 +545,7 @@ $(cat "$ARTIFACTS_DIR/results.tsv" 2>/dev/null || true)
 \`\`\`
 EOF
 
-  python3 - "$ARTIFACTS_DIR" "$final_status" "$TOTAL_STEPS" "$PASS_STEPS" "$FAIL_STEPS" "${RELEASE_TAG:-}" <<'PY'
+  python3 - "$ARTIFACTS_DIR" "$final_status" "$TOTAL_STEPS" "$PASS_STEPS" "$FAIL_STEPS" "$SKIP_STEPS" "${RELEASE_TAG:-}" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -529,7 +555,8 @@ status = sys.argv[2]
 total = int(sys.argv[3])
 passed = int(sys.argv[4])
 failed = int(sys.argv[5])
-release_tag = sys.argv[6]
+skipped = int(sys.argv[6])
+release_tag = sys.argv[7]
 
 steps = []
 results_file = artifacts_dir / "results.tsv"
@@ -537,15 +564,19 @@ if results_file.exists():
     for line in results_file.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
-        parts = line.split("\t", 1)
-        if len(parts) == 2:
-            steps.append({"status": parts[0], "step": parts[1]})
+        parts = line.split("\t")
+        if len(parts) >= 2:
+            item = {"status": parts[0], "step": parts[1]}
+            if len(parts) >= 3:
+                item["reason"] = parts[2]
+            steps.append(item)
 
 payload = {
     "status": status,
     "total_steps": total,
     "passed_steps": passed,
     "failed_steps": failed,
+    "skipped_steps": skipped,
     "release_tag": release_tag or None,
     "steps": steps,
 }
@@ -578,6 +609,9 @@ fi
 
 if [[ "$RUN_RUNTIME_CHECKS" -eq 1 ]]; then
   run_step "runtime-health-checks" runtime_health_checks || true
+  if [[ "$RUNTIME_AVAILABLE" -eq 0 ]]; then
+    run_step "runtime-failure-context" collect_runtime_failure_context || true
+  fi
 fi
 
 if [[ "$RUN_SECURITY" -eq 1 ]]; then
@@ -588,11 +622,19 @@ if [[ "$RUN_SECURITY" -eq 1 ]]; then
 fi
 
 if [[ "$RUN_REPORTING" -eq 1 ]]; then
-  run_step "reporting-e2e" run_reporting_harness || true
+  if [[ "$RUNTIME_AVAILABLE" -eq 1 || "$REPORT_SKIP_LIVE_ENDPOINTS" -eq 1 ]]; then
+    run_step "reporting-e2e" run_reporting_harness || true
+  else
+    skip_step "reporting-e2e" "runtime unavailable after health checks"
+  fi
 fi
 
 if [[ "$RUN_COPILOT" -eq 1 ]]; then
-  run_step "copilot-e2e-${COPILOT_MODE}" run_copilot_harness || true
+  if [[ "$RUNTIME_AVAILABLE" -eq 1 ]]; then
+    run_step "copilot-e2e-${COPILOT_MODE}" run_copilot_harness || true
+  else
+    skip_step "copilot-e2e-${COPILOT_MODE}" "runtime unavailable after health checks"
+  fi
 fi
 
 if [[ "$RUN_UNINSTALL_CYCLE" -eq 1 ]]; then
