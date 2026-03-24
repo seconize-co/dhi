@@ -232,6 +232,7 @@ macOS/Windows note: proxy mode only and currently untested. See [docs/NON_LINUX_
 
 | Document | Description |
 |----------|-------------|
+| [Project Website (GitHub Pages)](docs/index.html) | Intro page for problem, capabilities, use cases, and install path |
 | [Operations Guide](docs/OPERATIONS.md) | **Start here** - Install, start, stop, troubleshoot |
 | [User Guide](docs/USER_GUIDE.md) | Consolidated usage, modes, protections, integrations, reporting |
 | [CTO Guide](docs/CTO_GUIDE.md) | Executive-ready security narrative for blog/announcement reuse |
@@ -242,6 +243,13 @@ macOS/Windows note: proxy mode only and currently untested. See [docs/NON_LINUX_
 | [Branding](docs/BRANDING.md) | Brand and positioning assets |
 
 Contributions are welcome for additional security patterns and framework support; see [Developer Guide](docs/DEVELOPER_GUIDE.md).
+
+### Host the static website on GitHub Pages
+
+1. In your GitHub repository, open **Settings -> Pages**.
+2. Under **Build and deployment**, set **Source** to **Deploy from a branch**.
+3. Select branch **`main`** and folder **`/docs`**.
+4. Save, then open your Pages URL after deployment.
 
 ## Crash Resistance
 

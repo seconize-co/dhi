@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dhi | Runtime Security for AI Agents</title>
+  <meta name="description" content="Dhi introduces runtime security for AI agents: detect, alert, and block credential leaks, PII exposure, prompt injection, and runaway costs.">
+  <link rel="stylesheet" href="./site.css">
+</head>
+<body>
+  <header class="hero">
+    <div class="container">
+      <p class="eyebrow">Seconize Dhi</p>
+      <h1>Runtime Security for AI Agents</h1>
+      <p class="lead">
+        Dhi protects AI agents in real time with kernel + application visibility.
+        It helps teams detect and stop secrets leaks, data exfiltration, prompt injection, and budget abuse.
+      </p>
+      <div class="actions">
+        <a class="btn primary" href="#next-steps">Install and Try</a>
+        <a class="btn" href="../README.md">Technical README</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <section id="problem">
+      <h2>Problem Statement</h2>
+      <p>
+        AI agents can call tools, access credentials, and transmit sensitive data over network APIs.
+        Traditional app-layer controls miss runtime behavior, while incident response often comes too late.
+      </p>
+      <ul>
+        <li>Credential leaks in prompts, logs, or outbound requests</li>
+        <li>PII exfiltration through model/tool interactions</li>
+        <li>Prompt injection and jailbreak attempts</li>
+        <li>Unbounded token spend and runaway loops</li>
+      </ul>
+    </section>
+
+    <section id="capabilities">
+      <h2>Core Capabilities</h2>
+      <div class="grid">
+        <article class="card">
+          <h3>Secrets + PII Detection</h3>
+          <p>Pattern and policy-driven detection for sensitive data exposure with configurable actions.</p>
+        </article>
+        <article class="card">
+          <h3>Prompt Attack Defense</h3>
+          <p>Detection of prompt injection and jailbreak signatures across agent traffic and interactions.</p>
+        </article>
+        <article class="card">
+          <h3>Budget and Abuse Controls</h3>
+          <p>Controls for spend ceilings, suspicious usage spikes, and noisy automation loops.</p>
+        </article>
+        <article class="card">
+          <h3>Linux eBPF SSL Visibility</h3>
+          <p>HTTPS runtime inspection via eBPF SSL hooks on Linux, without MITM CA certificates.</p>
+        </article>
+        <article class="card">
+          <h3>Policy Enforcement</h3>
+          <p>Run in <code>log</code>, <code>alert</code>, or <code>block</code> mode with operational safeguards.</p>
+        </article>
+        <article class="card">
+          <h3>Ops Integrations</h3>
+          <p>Prometheus metrics, webhook/Slack alerting, and operational reports for security teams.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="use-cases">
+      <h2>Use Cases</h2>
+      <div class="grid">
+        <article class="card">
+          <h3>Secure AI Coding Assistants</h3>
+          <p>Monitor and control outbound interactions from coding agents in developer environments.</p>
+        </article>
+        <article class="card">
+          <h3>Production Agent Guardrails</h3>
+          <p>Apply organization policy to autonomous workflows handling customer or regulated data.</p>
+        </article>
+        <article class="card">
+          <h3>Compliance Evidence</h3>
+          <p>Generate alerts and reports that support incident investigations and audit requirements.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="next-steps">
+      <h2>Next Steps: Install and Try</h2>
+      <ol>
+        <li>Install from GitHub Releases (Linux):
+          <pre><code>curl -fsSL https://raw.githubusercontent.com/seconize-co/dhi/main/scripts/install-linux-release.sh | bash -s -- v0.1.3</code></pre>
+        </li>
+        <li>Start Dhi:
+          <pre><code>sudo systemctl start dhi
+sudo systemctl status dhi</code></pre>
+        </li>
+        <li>Validate runtime endpoints:
+          <pre><code>curl -s http://127.0.0.1:9090/health
+curl -s http://127.0.0.1:9090/api/stats | jq .</code></pre>
+        </li>
+        <li>Run guided checks:
+          <ul>
+            <li><a href="./TESTING.md">Testing Guide</a></li>
+            <li><a href="./OPERATIONS.md">Operations Guide</a></li>
+            <li><a href="./USER_GUIDE.md">User Guide</a></li>
+          </ul>
+        </li>
+      </ol>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="container">
+      <p>Built by <a href="https://seconize.co">Seconize</a> • <a href="../LICENSE">MIT License</a> • <a href="https://github.com/seconize-co/dhi">GitHub Repository</a></p>
+    </div>
+  </footer>
+</body>
+</html>
