@@ -522,6 +522,14 @@ Pass criteria:
 - `use_case_id` exists on emitted alerts.
 - runtime-origin alerts also include session trace fields when context is available (`session_id`, optional `session_name`, `correlation_id`, process metadata).
 - transport payload formatting preserves enrichment fields: Slack attachment fields and generic webhook JSON both carry `use_case_id` and trace metadata.
+- SSL/eBPF runtime alerts (`event_type=ssl_risk_detected`) include the same traceability fields as proxy-origin alerts:
+  - top-level `agent_id`
+  - metadata `session_id` (when derivable), optional `session_name`
+  - metadata `process_name`, `pid`, `risk_score`, `action_taken`
+- Secret diagnostics in alert metadata are safe for tuning:
+  - `secret_types` and `secret_evidence_redacted` are present
+  - raw secret values are **not** persisted in alert metadata/log payloads.
+- Injection diagnostics in SSL alerts include `injection_indicators` for outbound detections and should not trigger on inbound assistant-policy text alone.
 
 ---
 

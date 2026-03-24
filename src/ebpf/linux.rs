@@ -254,9 +254,43 @@ async fn start_ssl_monitor(
                                 event.comm, event.pid
                             ),
                         )
+                        .with_agent(&outcome.agent_id)
                         .with_event_type("ssl_risk_detected")
                         .with_process(Some(&event.comm), Some(event.pid))
                         .with_risk_score(outcome.risk_score);
+                        if let Some(session_id) = outcome.session_id.as_deref() {
+                            alert = alert.with_session(session_id, outcome.session_name.as_deref());
+                        }
+                        if !outcome.secret_types.is_empty() {
+                            alert = alert.with_metadata(
+                                "secret_types",
+                                serde_json::json!(outcome.secret_types),
+                            );
+                        }
+                        if !outcome.secret_evidence.is_empty() {
+                            alert = alert.with_metadata(
+                                "secret_evidence_redacted",
+                                serde_json::json!(outcome.secret_evidence),
+                            );
+                        }
+                        if !outcome.pii_types.is_empty() {
+                            alert = alert
+                                .with_metadata("pii_types", serde_json::json!(outcome.pii_types));
+                        }
+                        if outcome.injection_detected {
+                            alert =
+                                alert.with_metadata("injection_detected", serde_json::json!(true));
+                        }
+                        if outcome.jailbreak_detected {
+                            alert =
+                                alert.with_metadata("jailbreak_detected", serde_json::json!(true));
+                        }
+                        if !outcome.injection_indicators.is_empty() {
+                            alert = alert.with_metadata(
+                                "injection_indicators",
+                                serde_json::json!(outcome.injection_indicators),
+                            );
+                        }
                         if outcome.blocked {
                             alert = alert.with_action("BLOCKED");
                         } else {

@@ -211,6 +211,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_ssl_monitor_does_not_flag_inbound_instruction_text_as_injection() {
+        let (tx, _rx) = mpsc::channel(100);
+        let monitor = SslMonitor::new(tx, crate::ProtectionLevel::Alert);
+
+        // Simulate inbound assistant/policy text that resembles instructions.
+        let event = SslEvent {
+            pid: 1234,
+            tid: 1234,
+            uid: 1000,
+            comm: "python".to_string(),
+            direction: SslDirection::Read,
+            data: br#"You are an assistant. Ignore previous instructions only as an example in this documentation."#.to_vec(),
+            total_len: 95,
+            timestamp_ns: 0,
+            ssl_ptr: 0x12345679,
+        };
+
+        let result = monitor.analyze_event(&event).await;
+
+        assert!(
+            !result.injection_detected,
+            "Inbound instructional text should not be treated as active injection"
+        );
+    }
+
+    #[tokio::test]
     async fn test_ssl_monitor_detect_llm_traffic() {
         let (tx, _rx) = mpsc::channel(100);
         let monitor = SslMonitor::new(tx, crate::ProtectionLevel::Alert);
