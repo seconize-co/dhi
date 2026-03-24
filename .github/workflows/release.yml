@@ -33,13 +33,16 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            clang llvm linux-headers-generic linux-tools-common linux-tools-generic
+            clang llvm linux-headers-generic \
+            linux-tools-common linux-tools-generic linux-tools-azure linux-cloud-tools-azure
 
       - name: Rebuild bundled eBPF object
         run: |
-          BPFTOOL_BIN="$(command -v bpftool || true)"
-          if [ -z "$BPFTOOL_BIN" ]; then
-            BPFTOOL_BIN="$(ls /usr/lib/linux-tools/*/bpftool 2>/dev/null | head -n1 || true)"
+          BPFTOOL_BIN="$(find /usr/lib/linux-tools -type f -name bpftool 2>/dev/null | head -n1 || true)"
+          if [ -z "$BPFTOOL_BIN" ] && command -v bpftool >/dev/null 2>&1; then
+            if bpftool version >/dev/null 2>&1; then
+              BPFTOOL_BIN="$(command -v bpftool)"
+            fi
           fi
           if [ -z "$BPFTOOL_BIN" ]; then
             echo "bpftool not found after dependency install" >&2
