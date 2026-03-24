@@ -62,7 +62,7 @@ struct TomlConfigWrapper {
 #[derive(Parser)]
 #[command(name = "dhi")]
 #[command(author = "Seconize <hello@seconize.co>")]
-#[command(version = "0.1.0")]
+#[command(version)]
 #[command(about = "धी - Kernel-level runtime protection for AI agents", long_about = None)]
 struct Cli {
     #[command(subcommand)]

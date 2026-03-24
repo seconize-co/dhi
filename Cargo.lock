@@ -526,7 +526,7 @@ dependencies = [
 
 [[package]]
 name = "dhi"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "aya 0.12.0",
