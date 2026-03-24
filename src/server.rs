@@ -133,12 +133,35 @@ async fn route_request(
                 .get();
             let alerts = stats.total_alerts;
             let blocked = stats.total_blocks;
+            let ssl_probe_targets_total = stats.ssl_probe_targets_total;
+            let ssl_probe_targets_with_attached = stats.ssl_probe_targets_with_attached;
+            let ssl_probe_attempts_total = stats.ssl_probe_attempts_total;
+            let ssl_probe_attached_total = stats.ssl_probe_attached_total;
+            let ssl_probe_failed_total = stats.ssl_probe_failed_total;
+            let ssl_events = stats.ssl_events_total;
+            let ssl_events_copilot = stats.ssl_events_copilot_total;
+            let ssl_events_copilot_by_exe = stats.ssl_events_copilot_by_exe_total;
+            let ssl_events_exe_resolve_failures = stats.ssl_events_exe_resolve_failures;
+            let ssl_events_parse_errors = stats.ssl_events_parse_errors;
             (
                 "200 OK",
                 "application/json",
                 format!(
-                    r#"{{"llm_calls":{},"tool_calls":{},"alerts":{},"blocked":{}}}"#,
-                    llm_calls, tool_calls, alerts, blocked
+                    r#"{{"llm_calls":{},"tool_calls":{},"alerts":{},"blocked":{},"ssl_probe_targets_total":{},"ssl_probe_targets_with_attached":{},"ssl_probe_attempts_total":{},"ssl_probe_attached_total":{},"ssl_probe_failed_total":{},"ssl_events":{},"ssl_events_copilot":{},"ssl_events_copilot_by_exe":{},"ssl_events_exe_resolve_failures":{},"ssl_events_parse_errors":{}}}"#,
+                    llm_calls,
+                    tool_calls,
+                    alerts,
+                    blocked,
+                    ssl_probe_targets_total,
+                    ssl_probe_targets_with_attached,
+                    ssl_probe_attempts_total,
+                    ssl_probe_attached_total,
+                    ssl_probe_failed_total,
+                    ssl_events,
+                    ssl_events_copilot,
+                    ssl_events_copilot_by_exe,
+                    ssl_events_exe_resolve_failures,
+                    ssl_events_parse_errors
                 ),
             )
         },

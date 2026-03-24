@@ -29,8 +29,16 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Verify bundled eBPF object
-        run: test -s bpf/dhi_ssl.bpf.o
+      - name: Install eBPF build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang llvm bpftool linux-headers-generic
+
+      - name: Rebuild bundled eBPF object
+        run: |
+          bpftool btf dump file /sys/kernel/btf/vmlinux format c > bpf/vmlinux.h
+          clang -O2 -g -target bpf -I bpf -c bpf/dhi_ssl.bpf.c -o bpf/dhi_ssl.bpf.o
+          test -s bpf/dhi_ssl.bpf.o
 
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}

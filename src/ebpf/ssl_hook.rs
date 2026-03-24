@@ -8,7 +8,9 @@
 use anyhow::Result;
 use aya::programs::{ProgramError, UProbe};
 use aya::Bpf;
+use lazy_static::lazy_static;
 use object::{Object, ObjectSection, ObjectSymbol};
+use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -270,9 +272,11 @@ fn discover_runtime_ssl_targets() -> Vec<PathBuf> {
                 let Ok(exe_path) = std::fs::read_link(exe_link) else {
                     continue;
                 };
+                let mut is_deleted_exe = false;
                 let mut normalized = exe_path.clone();
                 if let Some(exe_str) = exe_path.to_str() {
                     if let Some(stripped) = exe_str.strip_suffix(" (deleted)") {
+                        is_deleted_exe = true;
                         normalized = PathBuf::from(stripped);
                     }
                 }
@@ -281,6 +285,14 @@ fn discover_runtime_ssl_targets() -> Vec<PathBuf> {
                     continue;
                 };
                 if file_name == "copilot" {
+                    // Always include the live procfs executable path so we can bind to the
+                    // currently running inode even when the on-disk path is inaccessible.
+                    add_target(entry.path().join("exe"));
+                    // If the executable was replaced on disk, `/proc/<pid>/exe` still points
+                    // to the running inode. Attach to that live path as well.
+                    if is_deleted_exe {
+                        add_target(entry.path().join("exe"));
+                    }
                     add_target(normalized);
                 }
             }
@@ -355,6 +367,21 @@ pub struct SslConnectionInfo {
 }
 
 const ANALYSIS_BUFFER_LIMIT: usize = 4096;
+
+lazy_static! {
+    static ref AWS_KEY_FALLBACK_RE: Regex = match Regex::new(r"AKIA[0-9A-Z]{16}") {
+        Ok(re) => re,
+        Err(err) => panic!("invalid AWS key fallback regex: {err}"),
+    };
+    static ref SSN_FALLBACK_RE: Regex = match Regex::new(r"\b\d{3}-?\d{2}-?\d{4}\b") {
+        Ok(re) => re,
+        Err(err) => panic!("invalid SSN fallback regex: {err}"),
+    };
+    static ref CARD_FALLBACK_RE: Regex = match Regex::new(r"\b(?:\d[ -]*?){13,19}\b") {
+        Ok(re) => re,
+        Err(err) => panic!("invalid card fallback regex: {err}"),
+    };
+}
 
 impl SslMonitor {
     /// Create a new SSL monitor
@@ -463,29 +490,40 @@ impl SslMonitor {
 
     /// Analyze SSL event for security issues
     pub async fn analyze_event(&self, event: &SslEvent) -> SslAnalysisResult {
-        let analysis_bytes = {
+        let (analysis_bytes, combined_bytes) = {
             let connections = self.connections.read().await;
             if let Some(conn) = connections.get(&event.ssl_ptr) {
-                match event.direction {
+                let primary = match event.direction {
                     SslDirection::Write if !conn.write_buffer.is_empty() => {
                         conn.write_buffer.clone()
                     },
                     SslDirection::Read if !conn.read_buffer.is_empty() => conn.read_buffer.clone(),
                     _ => event.data.clone(),
+                };
+                let mut combined = conn.write_buffer.clone();
+                combined.extend_from_slice(&conn.read_buffer);
+                if combined.len() > ANALYSIS_BUFFER_LIMIT * 2 {
+                    let excess = combined.len() - (ANALYSIS_BUFFER_LIMIT * 2);
+                    combined.drain(0..excess);
                 }
+                (primary, combined)
             } else {
-                event.data.clone()
+                (event.data.clone(), event.data.clone())
             }
         };
 
         // SSL payloads can mix text and binary framing (e.g., HTTP/2).
         // Use lossy UTF-8 so detectors can still match ASCII patterns.
         let text = String::from_utf8_lossy(&analysis_bytes).to_string();
+        let combined_text = String::from_utf8_lossy(&combined_bytes).to_string();
 
         let mut result = SslAnalysisResult::default();
 
         // Detect secrets
-        let secrets = self.secrets_detector.scan(&text, "ssl");
+        let mut secrets = self.secrets_detector.scan(&text, "ssl");
+        if !secrets.secrets_found && combined_text != text {
+            secrets = self.secrets_detector.scan(&combined_text, "ssl");
+        }
         if secrets.secrets_found {
             result.secrets_detected = secrets
                 .secrets
@@ -495,13 +533,47 @@ impl SslMonitor {
             result.has_secrets = true;
             result.risk_score = result.risk_score.max(95);
         }
+        if !result.has_secrets {
+            let compact = text.replace('\0', "");
+            let compact_combined = combined_text.replace('\0', "");
+            if AWS_KEY_FALLBACK_RE.is_match(&compact)
+                || AWS_KEY_FALLBACK_RE.is_match(&compact_combined)
+            {
+                result.has_secrets = true;
+                result.secrets_detected = vec!["aws_access_key".to_string()];
+                result.risk_score = result.risk_score.max(95);
+            }
+        }
 
         // Detect PII
-        let pii = self.pii_detector.scan(&text, "ssl");
+        let mut pii = self.pii_detector.scan(&text, "ssl");
+        if !pii.pii_found && combined_text != text {
+            pii = self.pii_detector.scan(&combined_text, "ssl");
+        }
         if pii.pii_found {
             result.pii_detected = pii.pii_types.iter().map(|p| p.pii_type.clone()).collect();
             result.has_pii = true;
             result.risk_score = result.risk_score.max(70);
+        }
+        if !result.has_pii {
+            let compact = text.replace('\0', "");
+            let compact_combined = combined_text.replace('\0', "");
+            let has_ssn =
+                SSN_FALLBACK_RE.is_match(&compact) || SSN_FALLBACK_RE.is_match(&compact_combined);
+            let has_card =
+                CARD_FALLBACK_RE.is_match(&compact) || CARD_FALLBACK_RE.is_match(&compact_combined);
+            if has_ssn || has_card {
+                result.has_pii = true;
+                let mut pii_types = Vec::new();
+                if has_ssn {
+                    pii_types.push("ssn".to_string());
+                }
+                if has_card {
+                    pii_types.push("credit_card".to_string());
+                }
+                result.pii_detected = pii_types;
+                result.risk_score = result.risk_score.max(70);
+            }
         }
 
         // Copilot traffic is often fragmented across request/response frames.
@@ -578,6 +650,15 @@ pub struct SslProcessOutcome {
     pub blocked: bool,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SslAttachStats {
+    pub targets_total: u64,
+    pub targets_with_attached: u64,
+    pub attempts_total: u64,
+    pub attached_total: u64,
+    pub failed_total: u64,
+}
+
 /// eBPF SSL Tracer - attaches uprobes to SSL libraries
 #[cfg(target_os = "linux")]
 pub struct SslTracer {
@@ -604,114 +685,160 @@ impl SslTracer {
     }
 
     /// Start tracing SSL functions
-    pub async fn start(&self, bpf: &mut Bpf) -> Result<usize> {
+    pub async fn start(&self, bpf: &mut Bpf) -> Result<SslAttachStats> {
         if self.libraries.is_empty() {
             warn!("No SSL libraries found - SSL tracing disabled");
-            return Ok(0);
+            return Ok(SslAttachStats::default());
         }
 
         info!("Starting SSL/TLS traffic interception via eBPF uprobes");
 
-        let mut attached = 0usize;
+        let mut stats = SslAttachStats {
+            targets_total: self.libraries.len() as u64,
+            ..SslAttachStats::default()
+        };
         for lib in &self.libraries {
             info!(
                 "Attaching probes to {:?} at {}",
                 lib.library,
                 lib.path.display()
             );
-            attached += self.attach_probes(bpf, lib).await?;
+            let target_stats = self.attach_probes(bpf, lib).await?;
+            stats.attempts_total = stats
+                .attempts_total
+                .saturating_add(target_stats.attempts_total);
+            stats.attached_total = stats
+                .attached_total
+                .saturating_add(target_stats.attached_total);
+            stats.failed_total = stats.failed_total.saturating_add(target_stats.failed_total);
+            if target_stats.attached_total > 0 {
+                stats.targets_with_attached = stats.targets_with_attached.saturating_add(1);
+            }
         }
 
-        Ok(attached)
+        Ok(stats)
     }
 
     /// Attach uprobes to a specific library
-    async fn attach_probes(&self, bpf: &mut Bpf, lib: &LibraryProbe) -> Result<usize> {
-        let mut attached = 0usize;
+    async fn attach_probes(&self, bpf: &mut Bpf, lib: &LibraryProbe) -> Result<SslAttachStats> {
+        let mut stats = SslAttachStats::default();
         let lib_path = &lib.path;
 
         match lib.library {
             SslLibrary::OpenSSL | SslLibrary::BoringSSL | SslLibrary::LibreSSL => {
-                attached += attach_uprobe_program(
-                    bpf,
-                    "uprobe_ssl_write",
-                    Some(lib.write_symbol),
-                    0,
-                    lib_path,
-                )?;
-                attached += attach_uprobe_program(
-                    bpf,
-                    "uprobe_ssl_read_entry",
-                    Some(lib.read_symbol),
-                    0,
-                    lib_path,
-                )?;
-                attached += attach_uprobe_program(
-                    bpf,
-                    "uretprobe_ssl_read",
-                    Some(lib.read_symbol),
-                    0,
-                    lib_path,
-                )?;
+                accumulate_attach_stats(
+                    &mut stats,
+                    attach_uprobe_program(
+                        bpf,
+                        "uprobe_ssl_write",
+                        Some(lib.write_symbol),
+                        0,
+                        lib_path,
+                    )?,
+                );
+                accumulate_attach_stats(
+                    &mut stats,
+                    attach_uprobe_program(
+                        bpf,
+                        "uprobe_ssl_read_entry",
+                        Some(lib.read_symbol),
+                        0,
+                        lib_path,
+                    )?,
+                );
+                accumulate_attach_stats(
+                    &mut stats,
+                    attach_uprobe_program(
+                        bpf,
+                        "uretprobe_ssl_read",
+                        Some(lib.read_symbol),
+                        0,
+                        lib_path,
+                    )?,
+                );
 
                 if let Some(write_ex) = lib.write_ex_symbol {
-                    attached += attach_uprobe_program(
-                        bpf,
-                        "uprobe_ssl_write_ex",
-                        Some(write_ex),
-                        0,
-                        lib_path,
-                    )?;
+                    accumulate_attach_stats(
+                        &mut stats,
+                        attach_uprobe_program(
+                            bpf,
+                            "uprobe_ssl_write_ex",
+                            Some(write_ex),
+                            0,
+                            lib_path,
+                        )?,
+                    );
                 }
                 if let Some(read_ex) = lib.read_ex_symbol {
-                    attached += attach_uprobe_program(
-                        bpf,
-                        "uprobe_ssl_read_ex_entry",
-                        Some(read_ex),
-                        0,
-                        lib_path,
-                    )?;
-                    attached += attach_uprobe_program(
-                        bpf,
-                        "uretprobe_ssl_read_ex",
-                        Some(read_ex),
-                        0,
-                        lib_path,
-                    )?;
+                    accumulate_attach_stats(
+                        &mut stats,
+                        attach_uprobe_program(
+                            bpf,
+                            "uprobe_ssl_read_ex_entry",
+                            Some(read_ex),
+                            0,
+                            lib_path,
+                        )?,
+                    );
+                    accumulate_attach_stats(
+                        &mut stats,
+                        attach_uprobe_program(
+                            bpf,
+                            "uretprobe_ssl_read_ex",
+                            Some(read_ex),
+                            0,
+                            lib_path,
+                        )?,
+                    );
                 }
             },
             SslLibrary::GnuTLS => {
-                attached += attach_uprobe_program(
-                    bpf,
-                    "uprobe_gnutls_send",
-                    Some("gnutls_record_send"),
-                    0,
-                    lib_path,
-                )?;
-                attached += attach_uprobe_program(
-                    bpf,
-                    "uprobe_gnutls_recv_entry",
-                    Some("gnutls_record_recv"),
-                    0,
-                    lib_path,
-                )?;
-                attached += attach_uprobe_program(
-                    bpf,
-                    "uretprobe_gnutls_recv",
-                    Some("gnutls_record_recv"),
-                    0,
-                    lib_path,
-                )?;
+                accumulate_attach_stats(
+                    &mut stats,
+                    attach_uprobe_program(
+                        bpf,
+                        "uprobe_gnutls_send",
+                        Some("gnutls_record_send"),
+                        0,
+                        lib_path,
+                    )?,
+                );
+                accumulate_attach_stats(
+                    &mut stats,
+                    attach_uprobe_program(
+                        bpf,
+                        "uprobe_gnutls_recv_entry",
+                        Some("gnutls_record_recv"),
+                        0,
+                        lib_path,
+                    )?,
+                );
+                accumulate_attach_stats(
+                    &mut stats,
+                    attach_uprobe_program(
+                        bpf,
+                        "uretprobe_gnutls_recv",
+                        Some("gnutls_record_recv"),
+                        0,
+                        lib_path,
+                    )?,
+                );
             },
         }
 
-        Ok(attached)
+        Ok(stats)
     }
 
     /// Get the monitor for analysis
     pub fn monitor(&self) -> Arc<SslMonitor> {
         Arc::clone(&self.monitor)
     }
+}
+
+fn accumulate_attach_stats(total: &mut SslAttachStats, delta: SslAttachStats) {
+    total.attempts_total = total.attempts_total.saturating_add(delta.attempts_total);
+    total.attached_total = total.attached_total.saturating_add(delta.attached_total);
+    total.failed_total = total.failed_total.saturating_add(delta.failed_total);
 }
 
 #[cfg(target_os = "linux")]
@@ -721,18 +848,21 @@ fn attach_uprobe_program(
     symbol: Option<&str>,
     offset: u64,
     target: &std::path::Path,
-) -> Result<usize> {
+) -> Result<SslAttachStats> {
+    let mut stats = SslAttachStats::default();
     let Some(program) = bpf.program_mut(program_name) else {
         debug!("BPF program {} not found; skipping", program_name);
-        return Ok(0);
+        return Ok(stats);
     };
 
+    stats.attempts_total = 1;
     let uprobe: &mut UProbe = program.try_into()?;
     match uprobe.load() {
         Ok(()) | Err(ProgramError::AlreadyLoaded) => {},
         Err(e) => {
             warn!("Failed to load uprobe program {}: {}", program_name, e);
-            return Ok(0);
+            stats.failed_total = 1;
+            return Ok(stats);
         },
     }
 
@@ -744,9 +874,10 @@ fn attach_uprobe_program(
                 target.display(),
                 symbol.unwrap_or("<offset>")
             );
-            Ok(1)
+            stats.attached_total = 1;
+            Ok(stats)
         },
-        Err(ProgramError::AlreadyAttached) => Ok(0),
+        Err(ProgramError::AlreadyAttached) => Ok(stats),
         Err(e) => {
             // Some binaries (notably self-contained runtimes) may fail symbol-name
             // resolution through perf_event APIs even when symbols exist. Try
@@ -763,9 +894,10 @@ fn attach_uprobe_program(
                                     fallback_offset,
                                     sym
                                 );
-                                return Ok(1);
+                                stats.attached_total = 1;
+                                return Ok(stats);
                             },
-                            Err(ProgramError::AlreadyAttached) => return Ok(0),
+                            Err(ProgramError::AlreadyAttached) => return Ok(stats),
                             Err(e2) => {
                                 warn!(
                                     "Fallback attach failed for {} on {} (symbol {} offset 0x{:x}): {}",
@@ -788,7 +920,8 @@ fn attach_uprobe_program(
                 symbol.unwrap_or("<offset>"),
                 e
             );
-            Ok(0)
+            stats.failed_total = 1;
+            Ok(stats)
         },
     }
 }
