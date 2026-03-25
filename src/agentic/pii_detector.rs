@@ -26,7 +26,8 @@ lazy_static! {
         // Phone numbers (various formats)
         PiiPattern {
             pii_type: "phone".to_string(),
-            pattern: Regex::new(r"\b(?:\+1[-.\s]?)?\(?[0-9]{3}\)?[-.\s]?[0-9]{3}[-.\s]?[0-9]{4}\b").unwrap(),
+            // Require explicit separators or parentheses to avoid matching bare 10-digit timestamps.
+            pattern: Regex::new(r"(?x)\b(?:\+1[-.\s]?)?(?:\([0-9]{3}\)\s*[0-9]{3}[-.\s][0-9]{4}|[0-9]{3}[-.\s][0-9]{3}[-.\s][0-9]{4})\b").unwrap(),
             severity: "medium".to_string(),
             redact_format: "[PHONE]".to_string(),
         },
@@ -226,7 +227,11 @@ impl PiiDetector {
                 continue;
             }
 
-            let matches: Vec<_> = pattern.pattern.find_iter(scan_text).collect();
+            let matches: Vec<_> = pattern
+                .pattern
+                .find_iter(scan_text)
+                .filter(|m| !Self::should_ignore_match(pattern, m.as_str()))
+                .collect();
             if !matches.is_empty() {
                 let entry = type_counts.entry(pattern.pii_type.clone()).or_insert((
                     0,
@@ -278,10 +283,27 @@ impl PiiDetector {
             if self.ignore_types.contains(&pattern.pii_type) {
                 continue;
             }
-            redacted = pattern
-                .pattern
-                .replace_all(&redacted, pattern.redact_format.as_str())
-                .to_string();
+            if pattern.pii_type == "phone" {
+                let source = redacted.clone();
+                let mut rebuilt = String::with_capacity(source.len());
+                let mut cursor = 0usize;
+                for matched in pattern.pattern.find_iter(&source) {
+                    rebuilt.push_str(&source[cursor..matched.start()]);
+                    if Self::should_ignore_match(pattern, matched.as_str()) {
+                        rebuilt.push_str(matched.as_str());
+                    } else {
+                        rebuilt.push_str(&pattern.redact_format);
+                    }
+                    cursor = matched.end();
+                }
+                rebuilt.push_str(&source[cursor..]);
+                redacted = rebuilt;
+            } else {
+                redacted = pattern
+                    .pattern
+                    .replace_all(&redacted, pattern.redact_format.as_str())
+                    .to_string();
+            }
         }
 
         redacted
@@ -312,6 +334,9 @@ impl PiiDetector {
                 continue;
             }
             for matched in pattern.pattern.find_iter(scan_text) {
+                if Self::should_ignore_match(pattern, matched.as_str()) {
+                    continue;
+                }
                 if hints.len() >= max_hints {
                     return hints;
                 }
@@ -341,11 +366,33 @@ impl PiiDetector {
     pub fn estimate_record_count(&self, text: &str) -> usize {
         // Count potential records based on PII occurrences
         let email_count = self.patterns[0].pattern.find_iter(text).count();
-        let phone_count = self.patterns[1].pattern.find_iter(text).count();
+        let phone_count = self.patterns[1]
+            .pattern
+            .find_iter(text)
+            .filter(|m| !Self::should_ignore_match(&self.patterns[1], m.as_str()))
+            .count();
         let ssn_count = self.patterns[2].pattern.find_iter(text).count();
 
         // Use the maximum as record estimate
         email_count.max(phone_count).max(ssn_count).max(1)
+    }
+
+    fn should_ignore_match(pattern: &PiiPattern, matched: &str) -> bool {
+        pattern.pii_type == "phone" && Self::is_timestamp_like_phone(matched)
+    }
+
+    fn is_timestamp_like_phone(matched: &str) -> bool {
+        let digits: String = matched.chars().filter(|c| c.is_ascii_digit()).collect();
+        let has_separator = matched
+            .chars()
+            .any(|c| ['-', '.', ' ', '(', ')'].contains(&c));
+        if digits.len() == 10 && !has_separator {
+            if let Ok(value) = digits.parse::<u64>() {
+                // Unix seconds range 2000-01-01 through 2100-01-01.
+                return (946_684_800..=4_102_444_800).contains(&value);
+            }
+        }
+        false
     }
 }
 
@@ -438,5 +485,31 @@ mod tests {
         assert!(hints
             .iter()
             .all(|h| !h.contains("jane.doe@example.com") && !h.contains("+1 212 555 0188")));
+    }
+
+    #[test]
+    fn test_phone_detection_ignores_unix_timestamp_like_values() {
+        let detector = PiiDetector::new();
+        let text = "created_at: 1774414038 updated_at: 1774415038";
+        let result = detector.scan(text, "json_payload");
+        assert!(
+            !result.pii_types.iter().any(|p| p.pii_type == "phone"),
+            "unix timestamp-like values must not be classified as phone numbers"
+        );
+    }
+
+    #[test]
+    fn test_redaction_keeps_timestamp_but_redacts_real_phone() {
+        let detector = PiiDetector::new();
+        let text = "created_at: 1774414038 phone: 555-123-4567";
+        let redacted = detector.redact(text);
+        assert!(
+            redacted.contains("1774414038"),
+            "timestamp-like value should not be redacted as phone"
+        );
+        assert!(
+            redacted.contains("[PHONE]"),
+            "real phone format should still be redacted"
+        );
     }
 }
