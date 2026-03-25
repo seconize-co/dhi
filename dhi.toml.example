@@ -107,6 +107,13 @@ min_severity = "high"
 # Local alert log file (JSONL, append-only)
 alert_log_path = "/var/log/dhi/alerts.log"
 
+# Strict forensic mode (default false): when true, persists raw payload snippets for deep incident forensics.
+# WARNING: highly sensitive. Enable only for short-lived incident response windows.
+forensic_mode = false
+
+# Forensic evidence log file (JSONL, append-only), used only when forensic_mode=true.
+forensic_log_path = "/var/log/dhi/forensics.log"
+
 # Custom webhook URL (receives JSON POST)
 # webhook_url = "https://your-siem.example.com/api/alerts"
 

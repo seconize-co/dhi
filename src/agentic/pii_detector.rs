@@ -294,6 +294,49 @@ impl PiiDetector {
         (redacted, result)
     }
 
+    /// Build safe context hints around detected PII.
+    /// The matched value is replaced with the pattern redact format (e.g., [EMAIL], [PHONE]).
+    pub fn context_hints(&self, text: &str, max_hints: usize) -> Vec<String> {
+        if max_hints == 0 {
+            return Vec::new();
+        }
+        let scan_text = if text.len() > MAX_SCAN_SIZE {
+            &text[..MAX_SCAN_SIZE]
+        } else {
+            text
+        };
+
+        let mut hints = Vec::new();
+        for pattern in &self.patterns {
+            if self.ignore_types.contains(&pattern.pii_type) {
+                continue;
+            }
+            for matched in pattern.pattern.find_iter(scan_text) {
+                if hints.len() >= max_hints {
+                    return hints;
+                }
+                const SIDE_BYTES: usize = 48;
+                let left_start = matched.start().saturating_sub(SIDE_BYTES);
+                let right_end = (matched.end() + SIDE_BYTES).min(scan_text.len());
+                let left = self
+                    .redact(&scan_text[left_start..matched.start()])
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let right = self
+                    .redact(&scan_text[matched.end()..right_end])
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                hints.push(format!(
+                    "{}...{}{}{}...",
+                    pattern.pii_type, left, pattern.redact_format, right
+                ));
+            }
+        }
+        hints
+    }
+
     /// Estimate record count from payload
     pub fn estimate_record_count(&self, text: &str) -> usize {
         // Count potential records based on PII occurrences
@@ -380,5 +423,20 @@ mod tests {
         "#;
         let count = detector.estimate_record_count(text);
         assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn test_context_hints_redact_pii_value() {
+        let detector = PiiDetector::new();
+        let text = "Contact Jane at jane.doe@example.com and +1 212 555 0188 for follow-up";
+        let hints = detector.context_hints(text, 5);
+
+        assert!(!hints.is_empty(), "should emit at least one context hint");
+        assert!(hints
+            .iter()
+            .any(|h| h.contains("[EMAIL]") || h.contains("[PHONE]")));
+        assert!(hints
+            .iter()
+            .all(|h| !h.contains("jane.doe@example.com") && !h.contains("+1 212 555 0188")));
     }
 }

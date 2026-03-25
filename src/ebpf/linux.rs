@@ -99,6 +99,7 @@ pub async fn start_monitor(runtime: &crate::DhiRuntime) -> Result<()> {
     let protection_level = config.protection_level;
     let ssl_only_mode = config.ebpf_ssl_only;
     let block_action = config.ebpf_block_action;
+    let forensic_mode = config.forensic_mode;
     drop(config);
 
     let Some(bpf_program_path) = resolve_bpf_program_path() else {
@@ -116,6 +117,7 @@ pub async fn start_monitor(runtime: &crate::DhiRuntime) -> Result<()> {
         runtime.stats.clone(),
         protection_level,
         block_action,
+        forensic_mode,
         bpf_program_path,
     ));
 
@@ -179,6 +181,7 @@ async fn start_ssl_monitor(
     runtime_stats: std::sync::Arc<tokio::sync::RwLock<crate::RuntimeStats>>,
     protection_level: crate::ProtectionLevel,
     block_action: crate::EbpfBlockAction,
+    forensic_mode: bool,
     bpf_program_path: &'static str,
 ) {
     use super::ssl_hook::{process_ssl_event_with_outcome, RawSslEvent, SslEvent, SslTracer};
@@ -187,7 +190,7 @@ async fn start_ssl_monitor(
     info!("Starting SSL/TLS traffic interception...");
 
     let (tx, mut rx) = mpsc::channel::<SslEvent>(1000);
-    let tracer = SslTracer::new(tx, protection_level, fingerprinter);
+    let tracer = SslTracer::new(tx, protection_level, fingerprinter, forensic_mode);
     let monitor = tracer.monitor();
 
     let mut bpf = match Bpf::load_file(bpf_program_path) {
@@ -273,9 +276,21 @@ async fn start_ssl_monitor(
                                 serde_json::json!(outcome.secret_evidence),
                             );
                         }
+                        if !outcome.secret_context_hints.is_empty() {
+                            alert = alert.with_metadata(
+                                "secret_context_hints",
+                                serde_json::json!(outcome.secret_context_hints),
+                            );
+                        }
                         if !outcome.pii_types.is_empty() {
                             alert = alert
                                 .with_metadata("pii_types", serde_json::json!(outcome.pii_types));
+                        }
+                        if !outcome.pii_context_hints.is_empty() {
+                            alert = alert.with_metadata(
+                                "pii_context_hints",
+                                serde_json::json!(outcome.pii_context_hints),
+                            );
                         }
                         if outcome.injection_detected {
                             alert =
@@ -289,6 +304,12 @@ async fn start_ssl_monitor(
                             alert = alert.with_metadata(
                                 "injection_indicators",
                                 serde_json::json!(outcome.injection_indicators),
+                            );
+                        }
+                        if let Some(raw_payload) = outcome.forensic_raw_payload.as_ref() {
+                            alert = alert.with_metadata(
+                                "forensic_raw_payload",
+                                serde_json::json!(raw_payload),
                             );
                         }
                         if outcome.blocked {

@@ -350,6 +350,8 @@ pub struct SslMonitor {
     fingerprinter: Arc<AgentFingerprinter>,
     /// Protection level
     protection_level: ProtectionLevel,
+    /// Strict forensic mode
+    forensic_mode: bool,
 }
 
 /// SSL connection tracking info
@@ -390,6 +392,7 @@ impl SslMonitor {
             event_tx,
             protection_level,
             Arc::new(AgentFingerprinter::new()),
+            false,
         )
     }
 
@@ -398,6 +401,7 @@ impl SslMonitor {
         event_tx: mpsc::Sender<SslEvent>,
         protection_level: ProtectionLevel,
         fingerprinter: Arc<AgentFingerprinter>,
+        forensic_mode: bool,
     ) -> Self {
         Self {
             connections: Arc::new(RwLock::new(HashMap::new())),
@@ -407,6 +411,7 @@ impl SslMonitor {
             prompt_analyzer: Arc::new(PromptSecurityAnalyzer::new()),
             fingerprinter,
             protection_level,
+            forensic_mode,
         }
     }
 
@@ -536,6 +541,7 @@ impl SslMonitor {
                 .map(|s| format!("{}={}", s.secret_type, s.redacted_preview))
                 .take(5)
                 .collect();
+            result.secret_context_hints = self.secrets_detector.context_hints(&text, 5);
             result.has_secrets = true;
             result.risk_score = result.risk_score.max(95);
         }
@@ -548,6 +554,7 @@ impl SslMonitor {
                 result.has_secrets = true;
                 result.secrets_detected = vec!["aws_access_key".to_string()];
                 result.secret_evidence = vec!["aws_access_key=AKIA...****".to_string()];
+                result.secret_context_hints = vec!["aws_access_key: ...[SECRET]...".to_string()];
                 result.risk_score = result.risk_score.max(95);
             }
         }
@@ -559,6 +566,7 @@ impl SslMonitor {
         }
         if pii.pii_found {
             result.pii_detected = pii.pii_types.iter().map(|p| p.pii_type.clone()).collect();
+            result.pii_context_hints = self.pii_detector.context_hints(&text, 5);
             result.has_pii = true;
             result.risk_score = result.risk_score.max(70);
         }
@@ -579,6 +587,7 @@ impl SslMonitor {
                     pii_types.push("credit_card".to_string());
                 }
                 result.pii_detected = pii_types;
+                result.pii_context_hints = self.pii_detector.context_hints(&compact, 5);
                 result.risk_score = result.risk_score.max(70);
             }
         }
@@ -660,8 +669,10 @@ pub struct SslAnalysisResult {
     pub has_secrets: bool,
     pub secrets_detected: Vec<String>,
     pub secret_evidence: Vec<String>,
+    pub secret_context_hints: Vec<String>,
     pub has_pii: bool,
     pub pii_detected: Vec<String>,
+    pub pii_context_hints: Vec<String>,
     pub injection_detected: bool,
     pub injection_indicators: Vec<String>,
     pub jailbreak_detected: bool,
@@ -678,10 +689,13 @@ pub struct SslProcessOutcome {
     pub session_name: Option<String>,
     pub secret_types: Vec<String>,
     pub secret_evidence: Vec<String>,
+    pub secret_context_hints: Vec<String>,
     pub pii_types: Vec<String>,
+    pub pii_context_hints: Vec<String>,
     pub injection_detected: bool,
     pub jailbreak_detected: bool,
     pub injection_indicators: Vec<String>,
+    pub forensic_raw_payload: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -707,12 +721,14 @@ impl SslTracer {
         event_tx: mpsc::Sender<SslEvent>,
         protection_level: ProtectionLevel,
         fingerprinter: Arc<AgentFingerprinter>,
+        forensic_mode: bool,
     ) -> Self {
         let libraries = find_ssl_libraries();
         let monitor = Arc::new(SslMonitor::new_with_fingerprinter(
             event_tx,
             protection_level,
             fingerprinter,
+            forensic_mode,
         ));
 
         Self { libraries, monitor }
@@ -1240,10 +1256,17 @@ pub async fn process_ssl_event_with_outcome(
                         session_name,
                         secret_types: analysis.secrets_detected.clone(),
                         secret_evidence: analysis.secret_evidence.clone(),
+                        secret_context_hints: analysis.secret_context_hints.clone(),
                         pii_types: analysis.pii_detected.clone(),
+                        pii_context_hints: analysis.pii_context_hints.clone(),
                         injection_detected: analysis.injection_detected,
                         jailbreak_detected: analysis.jailbreak_detected,
                         injection_indicators: analysis.injection_indicators.clone(),
+                        forensic_raw_payload: if monitor.forensic_mode {
+                            Some(text.chars().take(2048).collect())
+                        } else {
+                            None
+                        },
                     });
                 }
             },
@@ -1259,10 +1282,17 @@ pub async fn process_ssl_event_with_outcome(
         session_name,
         secret_types: analysis.secrets_detected,
         secret_evidence: analysis.secret_evidence,
+        secret_context_hints: analysis.secret_context_hints,
         pii_types: analysis.pii_detected,
+        pii_context_hints: analysis.pii_context_hints,
         injection_detected: analysis.injection_detected,
         jailbreak_detected: analysis.jailbreak_detected,
         injection_indicators: analysis.injection_indicators,
+        forensic_raw_payload: if monitor.forensic_mode {
+            Some(text.chars().take(2048).collect())
+        } else {
+            None
+        },
     })
 }
 
@@ -1587,6 +1617,7 @@ mod tests {
             tx,
             ProtectionLevel::Alert,
             Arc::new(AgentFingerprinter::new()),
+            false,
         );
 
         // Test with text containing a secret
@@ -1729,6 +1760,7 @@ mod tests {
             tx,
             ProtectionLevel::Alert,
             Arc::new(AgentFingerprinter::new()),
+            false,
         );
 
         let raw1 = RawSslEvent {
@@ -1775,6 +1807,7 @@ mod tests {
             tx,
             ProtectionLevel::Alert,
             Arc::new(AgentFingerprinter::new()),
+            false,
         );
 
         let event = SslEvent {
@@ -1821,6 +1854,7 @@ X-Session-Name: team-session-1
             tx,
             ProtectionLevel::Alert,
             Arc::new(AgentFingerprinter::new()),
+            false,
         );
 
         let raw_secret = "api_key=abcdefghijklmnopqrstuvwxyz1234567890";
@@ -1859,6 +1893,7 @@ X-Session-Name: team-session-1
             tx,
             ProtectionLevel::Alert,
             Arc::new(AgentFingerprinter::new()),
+            false,
         );
 
         let event = SslEvent {
@@ -1876,10 +1911,107 @@ X-Session-Name: team-session-1
         let outcome = process_ssl_event_with_outcome(&event, &monitor)
             .await
             .expect("outcome should succeed");
-        assert!(outcome.injection_detected, "outbound injection should be detected");
+        assert!(
+            outcome.injection_detected,
+            "outbound injection should be detected"
+        );
         assert!(
             !outcome.injection_indicators.is_empty(),
             "injection indicators should be captured for tuning"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_outcome_includes_context_hints_without_raw_values() {
+        let (tx, _rx) = mpsc::channel(100);
+        let monitor = SslMonitor::new_with_fingerprinter(
+            tx,
+            ProtectionLevel::Alert,
+            Arc::new(AgentFingerprinter::new()),
+            false,
+        );
+
+        let payload = br#"POST /v1/chat/completions HTTP/1.1
+Host: api.openai.com
+
+{"messages":[{"role":"user","content":"email jane.doe@example.com and api_key=abcdefghijklmnopqrstuvwxyz1234567890"}]}"#
+            .to_vec();
+        let event = SslEvent {
+            pid: 10001,
+            tid: 10001,
+            uid: 1000,
+            comm: "copilot".to_string(),
+            direction: SslDirection::Write,
+            total_len: payload.len(),
+            data: payload,
+            timestamp_ns: 0,
+            ssl_ptr: 0x10001,
+        };
+
+        let outcome = process_ssl_event_with_outcome(&event, &monitor)
+            .await
+            .expect("outcome should succeed");
+
+        assert!(
+            !outcome.secret_context_hints.is_empty(),
+            "secret context hints should be present"
+        );
+        assert!(
+            outcome
+                .secret_context_hints
+                .iter()
+                .all(|h| h.contains("[SECRET]")
+                    && !h.contains("abcdefghijklmnopqrstuvwxyz1234567890")),
+            "secret context hints must redact raw values"
+        );
+
+        assert!(
+            !outcome.pii_context_hints.is_empty(),
+            "pii context hints should be present"
+        );
+        assert!(
+            outcome
+                .pii_context_hints
+                .iter()
+                .all(|h| !h.contains("jane.doe@example.com")),
+            "pii context hints must redact raw values"
+        );
+        assert!(
+            outcome.forensic_raw_payload.is_none(),
+            "forensic payload must not be present when forensic mode is disabled"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_forensic_mode_includes_raw_payload_snippet() {
+        let (tx, _rx) = mpsc::channel(100);
+        let monitor = SslMonitor::new_with_fingerprinter(
+            tx,
+            ProtectionLevel::Alert,
+            Arc::new(AgentFingerprinter::new()),
+            true,
+        );
+
+        let payload = "api_key=abcdefghijklmnopqrstuvwxyz1234567890";
+        let event = SslEvent {
+            pid: 10002,
+            tid: 10002,
+            uid: 1000,
+            comm: "copilot".to_string(),
+            direction: SslDirection::Write,
+            total_len: payload.len(),
+            data: payload.as_bytes().to_vec(),
+            timestamp_ns: 0,
+            ssl_ptr: 0x10002,
+        };
+
+        let outcome = process_ssl_event_with_outcome(&event, &monitor)
+            .await
+            .expect("outcome should succeed");
+        assert_eq!(
+            outcome.forensic_raw_payload.as_deref(),
+            Some(payload),
+            "forensic mode should persist raw payload snippet for incident response"
         );
     }
 }

@@ -165,6 +165,10 @@ pub struct AlertConfig {
     pub webhook_urls: Vec<String>,
     /// Local append-only alert log file (JSONL)
     pub alert_log_path: Option<String>,
+    /// Enable strict forensic raw-evidence persistence (highly sensitive).
+    pub forensic_mode: bool,
+    /// Optional forensic evidence log path (JSONL)
+    pub forensic_log_path: Option<String>,
     /// Minimum severity to alert on
     pub min_severity: AlertSeverity,
     /// Enable/disable alerting
@@ -184,6 +188,8 @@ impl Default for AlertConfig {
             smtp_server: None,
             webhook_urls: Vec::new(),
             alert_log_path: Some("/var/log/dhi/alerts.log".to_string()),
+            forensic_mode: false,
+            forensic_log_path: Some("/var/log/dhi/forensics.log".to_string()),
             min_severity: AlertSeverity::Warning,
             enabled: true,
             rate_limit_per_minute: 30,
@@ -370,6 +376,36 @@ impl Alerter {
             .open(file_path)?;
         let line = serde_json::to_string(alert)?;
         writeln!(file, "{}", line)?;
+
+        if self.config.forensic_mode {
+            if let Some(raw_payload) = alert
+                .metadata
+                .get("forensic_raw_payload")
+                .and_then(|v| v.as_str())
+            {
+                let forensic_path = self
+                    .config
+                    .forensic_log_path
+                    .as_deref()
+                    .unwrap_or("/var/log/dhi/forensics.log");
+                let forensic_file_path = Path::new(forensic_path);
+                if let Some(parent) = forensic_file_path.parent() {
+                    create_dir_all(parent)?;
+                }
+                let mut f = OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(forensic_file_path)?;
+                let forensic_entry = serde_json::json!({
+                    "timestamp": alert.timestamp,
+                    "event_type": alert.event_type,
+                    "agent_id": alert.agent_id,
+                    "metadata": alert.metadata,
+                    "raw_payload": raw_payload
+                });
+                writeln!(f, "{}", serde_json::to_string(&forensic_entry)?)?;
+            }
+        }
         Ok(())
     }
 
@@ -985,5 +1021,44 @@ mod tests {
         assert_eq!(payload["metadata"]["correlation_id"], "corr-webhook-2");
         assert_eq!(payload["metadata"]["session_id"], "process-session:77");
         assert_eq!(payload["metadata"]["destination"], "api.anthropic.com");
+    }
+
+    #[tokio::test]
+    async fn test_send_writes_forensic_log_when_enabled() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after unix epoch")
+            .as_nanos();
+        let alert_log_path = format!(
+            "/tmp/dhi-alerting-test-{}-{}-alerts.jsonl",
+            std::process::id(),
+            nanos
+        );
+        let forensic_log_path = format!(
+            "/tmp/dhi-alerting-test-{}-{}-forensics.jsonl",
+            std::process::id(),
+            nanos
+        );
+        let alerter = Alerter::new(AlertConfig {
+            alert_log_path: Some(alert_log_path.clone()),
+            forensic_mode: true,
+            forensic_log_path: Some(forensic_log_path.clone()),
+            ..Default::default()
+        });
+
+        let alert = Alert::new(AlertSeverity::Critical, "Forensic", "Raw payload available")
+            .with_event_type("ssl_risk_detected")
+            .with_metadata(
+                "forensic_raw_payload",
+                serde_json::json!("secret=top-secret-value"),
+            );
+        alerter.send(&alert).await.expect("send should succeed");
+
+        let forensic_content =
+            fs::read_to_string(&forensic_log_path).expect("forensic log file should exist");
+        assert!(forensic_content.contains("\"raw_payload\":\"secret=top-secret-value\""));
+
+        let _ = fs::remove_file(&alert_log_path);
+        let _ = fs::remove_file(&forensic_log_path);
     }
 }

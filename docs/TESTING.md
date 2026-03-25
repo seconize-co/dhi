@@ -529,7 +529,14 @@ Pass criteria:
 - Secret diagnostics in alert metadata are safe for tuning:
   - `secret_types` and `secret_evidence_redacted` are present
   - raw secret values are **not** persisted in alert metadata/log payloads.
+- Context-hint diagnostics are present in default mode and remain redacted:
+  - `secret_context_hints` include nearby conversational context with `[SECRET]` placeholders.
+  - `pii_context_hints` include nearby conversational context with redacted placeholders (for example `[EMAIL]`, `[PHONE]`).
+  - raw secret/PII values are **not** present inside these hints.
 - Injection diagnostics in SSL alerts include `injection_indicators` for outbound detections and should not trigger on inbound assistant-policy text alone.
+- Forensic mode behavior (strict opt-in):
+  - when `[alerting].forensic_mode = false` (default), `forensic_raw_payload` is not emitted.
+  - when `[alerting].forensic_mode = true`, raw payload snippets are persisted only to `forensic_log_path` for incident response.
 
 ---
 

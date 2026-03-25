@@ -80,6 +80,12 @@ pub struct DhiConfig {
 
     /// Optional alert log file path (JSONL)
     pub alert_log_path: Option<String>,
+
+    /// Enable strict forensic capture for deeper incident analysis.
+    pub forensic_mode: bool,
+
+    /// Optional forensic evidence log path (JSONL). Used only when forensic_mode=true.
+    pub forensic_log_path: Option<String>,
 }
 
 impl Default for DhiConfig {
@@ -101,6 +107,8 @@ impl Default for DhiConfig {
             ebpf_block_action: EbpfBlockAction::Kill,
             enable_agentic: true,
             alert_log_path: Some("/var/log/dhi/alerts.log".to_string()),
+            forensic_mode: false,
+            forensic_log_path: Some("/var/log/dhi/forensics.log".to_string()),
         }
     }
 }
@@ -173,6 +181,8 @@ impl DhiRuntime {
         let max_budget_usd = config.max_budget_usd;
         let alert_config = agentic::AlertConfig {
             alert_log_path: config.alert_log_path.clone(),
+            forensic_mode: config.forensic_mode,
+            forensic_log_path: config.forensic_log_path.clone(),
             ..agentic::AlertConfig::default()
         };
         let agentic_runtime =

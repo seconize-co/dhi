@@ -287,6 +287,61 @@ impl SecretsDetector {
 
         (sanitized, result)
     }
+
+    /// Build safe context hints around detected secrets.
+    /// The secret value itself is replaced with `[SECRET]`.
+    pub fn context_hints(&self, text: &str, max_hints: usize) -> Vec<String> {
+        if max_hints == 0 {
+            return Vec::new();
+        }
+        let scan_text = if text.len() > MAX_SCAN_SIZE {
+            &text[..MAX_SCAN_SIZE]
+        } else {
+            text
+        };
+
+        let mut hints = Vec::new();
+        for pattern in SECRET_PATTERNS.iter() {
+            for matched in pattern.pattern.find_iter(scan_text) {
+                if hints.len() >= max_hints {
+                    return hints;
+                }
+                let matched_str = matched.as_str();
+                if self.allowlist.iter().any(|a| a.is_match(matched_str)) {
+                    continue;
+                }
+                hints.push(Self::build_context_hint(
+                    scan_text,
+                    matched.start(),
+                    matched.end(),
+                    &format!("{}: ", pattern.name),
+                    "[SECRET]",
+                ));
+            }
+        }
+        hints
+    }
+
+    fn build_context_hint(
+        text: &str,
+        start: usize,
+        end: usize,
+        prefix: &str,
+        replacement: &str,
+    ) -> String {
+        const SIDE_BYTES: usize = 48;
+        let left_start = start.saturating_sub(SIDE_BYTES);
+        let right_end = (end + SIDE_BYTES).min(text.len());
+        let left = text[left_start..start]
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        let right = text[end..right_end]
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        format!("{prefix}...{left}{replacement}{right}...")
+    }
 }
 
 impl Default for SecretsDetector {
@@ -354,5 +409,19 @@ mod tests {
             .secrets
             .iter()
             .any(|s| s.secret_type == "Stripe Test Key"));
+    }
+
+    #[test]
+    fn test_context_hints_redact_secret_value() {
+        let detector = SecretsDetector::new();
+        let text =
+            "user said: rotate token api_key=abcdefghijklmnopqrstuvwxyz1234567890 before release";
+        let hints = detector.context_hints(text, 3);
+
+        assert!(!hints.is_empty(), "should emit at least one context hint");
+        assert!(hints.iter().all(|h| h.contains("[SECRET]")));
+        assert!(hints
+            .iter()
+            .all(|h| !h.contains("abcdefghijklmnopqrstuvwxyz1234567890")));
     }
 }

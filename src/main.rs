@@ -22,6 +22,8 @@ use tracing_subscriber::FmtSubscriber;
 struct TomlAlertingSection {
     slack_webhook: Option<String>,
     alert_log_path: Option<String>,
+    forensic_mode: Option<bool>,
+    forensic_log_path: Option<String>,
 }
 
 #[derive(serde::Deserialize, Default)]
@@ -315,6 +317,16 @@ fn parse_config_compat(content: &str) -> (DhiConfig, Option<TomlConfigWrapper>) 
         }
         if let Some(alert_log_path) = w.alerting.as_ref().and_then(|a| a.alert_log_path.clone()) {
             config.alert_log_path = Some(alert_log_path);
+        }
+        if let Some(forensic_mode) = w.alerting.as_ref().and_then(|a| a.forensic_mode) {
+            config.forensic_mode = forensic_mode;
+        }
+        if let Some(forensic_log_path) = w
+            .alerting
+            .as_ref()
+            .and_then(|a| a.forensic_log_path.clone())
+        {
+            config.forensic_log_path = Some(forensic_log_path);
         }
     }
 
