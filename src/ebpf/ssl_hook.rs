@@ -8,10 +8,12 @@
 use anyhow::Result;
 use aya::programs::{ProgramError, UProbe};
 use aya::Bpf;
+use flate2::read::{GzDecoder, ZlibDecoder};
 use lazy_static::lazy_static;
 use object::{Object, ObjectSection, ObjectSymbol};
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
+use std::io::Read;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
@@ -368,7 +370,9 @@ pub struct SslConnectionInfo {
     pub read_buffer: Vec<u8>,
 }
 
-const ANALYSIS_BUFFER_LIMIT: usize = 4096;
+const ANALYSIS_BUFFER_LIMIT: usize = 65536;
+const MAX_ANALYSIS_CORPUS_LEN: usize = 262144;
+const MAX_COMPRESSION_DECODE_ATTEMPTS: usize = 8;
 
 lazy_static! {
     static ref AWS_KEY_FALLBACK_RE: Regex = match Regex::new(r"AKIA[0-9A-Z]{16}") {
@@ -517,18 +521,19 @@ impl SslMonitor {
             }
         };
 
-        // SSL payloads can mix text and binary framing (e.g., HTTP/2).
-        // Use lossy UTF-8 so detectors can still match ASCII patterns.
-        let text = String::from_utf8_lossy(&analysis_bytes).to_string();
-        let combined_text = String::from_utf8_lossy(&combined_bytes).to_string();
+        // SSL payloads can mix text and binary framing (e.g., HTTP/2 + compressed bodies).
+        // Build a bounded corpus with decoded text candidates so detectors can match
+        // user-provided markers even when requests are compressed before SSL_write.
+        let text_candidates = decode_text_candidates(&analysis_bytes, &combined_bytes);
+        let mut combined_text = text_candidates.join("\n");
+        if combined_text.len() > MAX_ANALYSIS_CORPUS_LEN {
+            combined_text.truncate(MAX_ANALYSIS_CORPUS_LEN);
+        }
 
         let mut result = SslAnalysisResult::default();
 
         // Detect secrets
-        let mut secrets = self.secrets_detector.scan(&text, "ssl");
-        if !secrets.secrets_found && combined_text != text {
-            secrets = self.secrets_detector.scan(&combined_text, "ssl");
-        }
+        let secrets = self.secrets_detector.scan(&combined_text, "ssl");
         if secrets.secrets_found {
             result.secrets_detected = secrets
                 .secrets
@@ -541,16 +546,13 @@ impl SslMonitor {
                 .map(|s| format!("{}={}", s.secret_type, s.redacted_preview))
                 .take(5)
                 .collect();
-            result.secret_context_hints = self.secrets_detector.context_hints(&text, 5);
+            result.secret_context_hints = self.secrets_detector.context_hints(&combined_text, 5);
             result.has_secrets = true;
             result.risk_score = result.risk_score.max(95);
         }
         if !result.has_secrets {
-            let compact = text.replace('\0', "");
-            let compact_combined = combined_text.replace('\0', "");
-            if AWS_KEY_FALLBACK_RE.is_match(&compact)
-                || AWS_KEY_FALLBACK_RE.is_match(&compact_combined)
-            {
+            let compact = combined_text.replace('\0', "");
+            if AWS_KEY_FALLBACK_RE.is_match(&compact) {
                 result.has_secrets = true;
                 result.secrets_detected = vec!["aws_access_key".to_string()];
                 result.secret_evidence = vec!["aws_access_key=AKIA...****".to_string()];
@@ -560,23 +562,17 @@ impl SslMonitor {
         }
 
         // Detect PII
-        let mut pii = self.pii_detector.scan(&text, "ssl");
-        if !pii.pii_found && combined_text != text {
-            pii = self.pii_detector.scan(&combined_text, "ssl");
-        }
+        let pii = self.pii_detector.scan(&combined_text, "ssl");
         if pii.pii_found {
             result.pii_detected = pii.pii_types.iter().map(|p| p.pii_type.clone()).collect();
-            result.pii_context_hints = self.pii_detector.context_hints(&text, 5);
+            result.pii_context_hints = self.pii_detector.context_hints(&combined_text, 5);
             result.has_pii = true;
             result.risk_score = result.risk_score.max(70);
         }
         if !result.has_pii {
-            let compact = text.replace('\0', "");
-            let compact_combined = combined_text.replace('\0', "");
-            let has_ssn =
-                SSN_FALLBACK_RE.is_match(&compact) || SSN_FALLBACK_RE.is_match(&compact_combined);
-            let has_card =
-                CARD_FALLBACK_RE.is_match(&compact) || CARD_FALLBACK_RE.is_match(&compact_combined);
+            let compact = combined_text.replace('\0', "");
+            let has_ssn = SSN_FALLBACK_RE.is_match(&compact);
+            let has_card = CARD_FALLBACK_RE.is_match(&compact);
             if has_ssn || has_card {
                 result.has_pii = true;
                 let mut pii_types = Vec::new();
@@ -595,7 +591,7 @@ impl SslMonitor {
         // Reduce false positives by only treating outbound payloads as injection attempts.
         // Inbound model responses commonly include policy/instruction text and can be noisy.
         if matches!(event.direction, SslDirection::Write) {
-            let prompt_result = self.prompt_analyzer.analyze(&text);
+            let prompt_result = self.prompt_analyzer.analyze(&combined_text);
             if prompt_result.injection_detected {
                 result.injection_detected = true;
                 result.risk_score = result.risk_score.max(90);
@@ -621,7 +617,9 @@ impl SslMonitor {
         }
 
         // Check for LLM API patterns
-        if text.contains("\"model\"") && (text.contains("gpt") || text.contains("claude")) {
+        if combined_text.contains("\"model\"")
+            && (combined_text.contains("gpt") || combined_text.contains("claude"))
+        {
             result.is_llm_traffic = true;
         }
 
@@ -646,6 +644,31 @@ impl SslMonitor {
         String::from_utf8_lossy(&bytes).to_string()
     }
 
+    pub async fn connection_text_variants_for_event(&self, event: &SslEvent) -> Vec<String> {
+        let (analysis_bytes, combined_bytes) = {
+            let connections = self.connections.read().await;
+            if let Some(conn) = connections.get(&event.ssl_ptr) {
+                let primary = match event.direction {
+                    SslDirection::Write if !conn.write_buffer.is_empty() => {
+                        conn.write_buffer.clone()
+                    },
+                    SslDirection::Read if !conn.read_buffer.is_empty() => conn.read_buffer.clone(),
+                    _ => event.data.clone(),
+                };
+                let mut combined = conn.write_buffer.clone();
+                combined.extend_from_slice(&conn.read_buffer);
+                if combined.len() > ANALYSIS_BUFFER_LIMIT * 2 {
+                    let excess = combined.len() - (ANALYSIS_BUFFER_LIMIT * 2);
+                    combined.drain(0..excess);
+                }
+                (primary, combined)
+            } else {
+                (event.data.clone(), event.data.clone())
+            }
+        };
+        decode_text_candidates(&analysis_bytes, &combined_bytes)
+    }
+
     /// Get connection statistics
     pub async fn get_connection_stats(&self) -> Vec<SslConnectionInfo> {
         self.connections.read().await.values().cloned().collect()
@@ -661,6 +684,90 @@ impl SslMonitor {
         let mut connections = self.connections.write().await;
         connections.retain(|_, conn| now - conn.first_seen < max_age_ns);
     }
+}
+
+fn decode_text_candidates(primary: &[u8], combined: &[u8]) -> Vec<String> {
+    let mut candidates = Vec::new();
+    let mut seen = HashSet::new();
+    let mut push_candidate = |s: String| {
+        if s.is_empty() {
+            return;
+        }
+        if seen.insert(s.clone()) {
+            candidates.push(s);
+        }
+    };
+
+    push_candidate(String::from_utf8_lossy(primary).to_string());
+    if combined != primary {
+        push_candidate(String::from_utf8_lossy(combined).to_string());
+    }
+
+    for decoded in decode_compressed_candidates(primary) {
+        push_candidate(decoded);
+    }
+    if combined != primary {
+        for decoded in decode_compressed_candidates(combined) {
+            push_candidate(decoded);
+        }
+    }
+
+    candidates
+}
+
+fn decode_compressed_candidates(bytes: &[u8]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut attempts = 0usize;
+
+    if let Some(decoded) = try_gzip_decode(bytes) {
+        out.push(decoded);
+        attempts += 1;
+    }
+    if attempts < MAX_COMPRESSION_DECODE_ATTEMPTS {
+        if let Some(decoded) = try_zlib_decode(bytes) {
+            out.push(decoded);
+            attempts += 1;
+        }
+    }
+
+    for i in 0..bytes.len().saturating_sub(2) {
+        if attempts >= MAX_COMPRESSION_DECODE_ATTEMPTS {
+            break;
+        }
+        if bytes[i] == 0x1f && bytes[i + 1] == 0x8b {
+            if let Some(decoded) = try_gzip_decode(&bytes[i..]) {
+                out.push(decoded);
+                attempts += 1;
+            }
+        } else if bytes[i] == 0x78 && matches!(bytes[i + 1], 0x01 | 0x5e | 0x9c | 0xda) {
+            if let Some(decoded) = try_zlib_decode(&bytes[i..]) {
+                out.push(decoded);
+                attempts += 1;
+            }
+        }
+    }
+
+    out
+}
+
+fn try_gzip_decode(bytes: &[u8]) -> Option<String> {
+    let mut decoder = GzDecoder::new(bytes);
+    let mut out = Vec::new();
+    decoder.read_to_end(&mut out).ok()?;
+    if out.is_empty() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out).to_string())
+}
+
+fn try_zlib_decode(bytes: &[u8]) -> Option<String> {
+    let mut decoder = ZlibDecoder::new(bytes);
+    let mut out = Vec::new();
+    decoder.read_to_end(&mut out).ok()?;
+    if out.is_empty() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out).to_string())
 }
 
 /// Result of SSL traffic analysis
@@ -1020,7 +1127,8 @@ pub async fn process_ssl_event_with_outcome(
     let analysis = monitor.analyze_event(event).await;
     let request_info = build_request_info_from_ssl_event(event);
     let mut fingerprint = monitor.fingerprinter.analyze_request(&request_info);
-    let text = monitor.connection_text_for_event(event).await;
+    let text_variants = monitor.connection_text_variants_for_event(event).await;
+    let text = text_variants.join("\n");
     let comm_lower = event.comm.to_ascii_lowercase();
     let is_copilot_event = comm_lower.contains("copilot") || comm_lower.contains("mainthread");
 

@@ -21,7 +21,7 @@
 #define MAX_DATA_SIZE 16384
 // Fixed-size chunk to satisfy strict verifier bounds on helper length args,
 // while still carrying enough payload for secret/pii/prompt-injection detection.
-#define CAPTURE_CHUNK_SIZE 512
+#define CAPTURE_CHUNK_SIZE 2048
 
 // Event direction
 #define SSL_WRITE 0
@@ -92,7 +92,7 @@ static __always_inline void fill_event_common(struct ssl_event *event, void *ssl
 
 // Submit event to ring buffer
 static __always_inline int submit_ssl_event(struct ssl_event *scratch, void *buf, __u32 len) {
-    if (len == 0 || len > MAX_DATA_SIZE) {
+    if (len == 0) {
         return 0;
     }
     
@@ -109,15 +109,8 @@ static __always_inline int submit_ssl_event(struct ssl_event *scratch, void *buf
     __u32 to_read = len < CAPTURE_CHUNK_SIZE ? len : CAPTURE_CHUNK_SIZE;
     event->data_len = to_read;
 
-    // For large outbound writes, capture from the end of the buffer where prompt/content
-    // payload is commonly located (headers and framing are typically at the front).
-    void *read_ptr = buf;
-    if (len > CAPTURE_CHUNK_SIZE && scratch->direction == SSL_WRITE) {
-        read_ptr = (void *)((char *)buf + (len - CAPTURE_CHUNK_SIZE));
-    }
-
     // Read data from userspace (bounded read)
-    if (bpf_probe_read_user(event->data, to_read, read_ptr) < 0) {
+    if (bpf_probe_read_user(event->data, to_read, buf) < 0) {
         bpf_ringbuf_discard(event, 0);
         return 0;
     }
@@ -139,7 +132,7 @@ int BPF_UPROBE(uprobe_ssl_write, void *ssl, void *buf, int num) {
     }
     
     fill_event_common(scratch, ssl, SSL_WRITE);
-    if (num <= 0 || num > MAX_DATA_SIZE) {
+    if (num <= 0) {
         return 0;
     }
     return submit_ssl_event(scratch, buf, (__u32)num);
@@ -153,7 +146,7 @@ int BPF_UPROBE(uprobe_ssl_write_ex, void *ssl, void *buf, size_t num) {
         return 0;
     }
     
-    if (num == 0 || num > MAX_DATA_SIZE) {
+    if (num == 0) {
         return 0;
     }
     fill_event_common(scratch, ssl, SSL_WRITE);

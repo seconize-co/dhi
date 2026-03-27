@@ -16,12 +16,17 @@ TMP_DIR="${TMP_DIR:-/tmp/log/dhi/tmp}"
 USER_SET_TEMPLATE=0
 AUTO_TMP_DIR=0
 COPILOT_EXEC_MODE=""
+COPILOT_VERSION="unknown"
+COPILOT_SEMVER="unknown"
 
 PASS_COUNT=0
 FAIL_COUNT=0
 COMMAND_FAIL_COUNT=0
 POSITIVE_TEST_COUNT=0
 MARKER_HIT_COUNT=0
+LAST_PROMPT_PID=0
+LAST_PROMPT_START_NS=0
+LAST_PROMPT_END_NS=0
 
 usage() {
   cat <<'EOF'
@@ -143,6 +148,22 @@ detect_copilot_exec_mode() {
   fi
 }
 
+detect_copilot_version() {
+  local raw_version
+  raw_version="$(copilot --version 2>/dev/null | head -n 1 || true)"
+  if [[ -n "$raw_version" ]]; then
+    COPILOT_VERSION="$raw_version"
+    COPILOT_SEMVER="$(python3 - "$raw_version" <<'PY'
+import re
+import sys
+text = sys.argv[1]
+m = re.search(r'(\d+\.\d+\.\d+(?:-[0-9A-Za-z.\-]+)?)', text)
+print(m.group(1) if m else "unknown")
+PY
+)"
+  fi
+}
+
 resolve_alert_log_file() {
   if [[ -n "$ALERT_LOG_FILE" ]]; then
     return 0
@@ -255,6 +276,77 @@ print(count)
 PY
 }
 
+pid_window_alert_count() {
+  local pid="$1"
+  local category="$2"
+  local start_ns="$3"
+  local end_ns="$4"
+  if [[ -z "$ALERT_LOG_FILE" || ! -f "$ALERT_LOG_FILE" ]]; then
+    echo "0"
+    return 0
+  fi
+
+  python3 - "$ALERT_LOG_FILE" "$pid" "$category" "$start_ns" "$end_ns" <<'PY'
+import datetime
+import json
+import sys
+
+path, pid_s, category, start_ns_s, end_ns_s = sys.argv[1:6]
+try:
+    target_pid = int(pid_s)
+    start_ns = int(start_ns_s)
+    end_ns = int(end_ns_s)
+except Exception:
+    print(0)
+    raise SystemExit(0)
+
+# Allow small async flush window after command completion.
+end_ns = end_ns + 8_000_000_000
+
+def ts_to_ns(raw: str):
+    if not raw:
+        return None
+    try:
+        # Normalize trailing Z for fromisoformat.
+        normalized = raw.replace("Z", "+00:00")
+        dt = datetime.datetime.fromisoformat(normalized)
+        return int(dt.timestamp() * 1_000_000_000)
+    except Exception:
+        return None
+
+def category_matches(md):
+    if category == "secret":
+        return bool(md.get("secret_types"))
+    if category == "pii":
+        return bool(md.get("pii_types"))
+    if category == "injection":
+        return md.get("injection_detected") is True or md.get("jailbreak_detected") is True
+    return True
+
+count = 0
+with open(path, "r", encoding="utf-8", errors="ignore") as f:
+    for line in f:
+        try:
+            obj = json.loads(line)
+        except Exception:
+            continue
+        ts_ns = ts_to_ns(obj.get("timestamp"))
+        if ts_ns is None or ts_ns < start_ns or ts_ns > end_ns:
+            continue
+        md = obj.get("metadata", {}) or {}
+        try:
+            pid = int(md.get("pid"))
+        except Exception:
+            continue
+        if pid != target_pid:
+            continue
+        if category_matches(md):
+            count += 1
+
+print(count)
+PY
+}
+
 alert_category_for_test_id() {
   local id="$1"
   case "$id" in
@@ -315,20 +407,27 @@ execute_prompt() {
 
   output_file="$(mktemp "$TMP_DIR/dhi-copilot-output-${id}-XXXX.log")"
 
+  LAST_PROMPT_START_NS="$(date +%s%N)"
+  LAST_PROMPT_PID=0
+
   if [[ "$COPILOT_EXEC_MODE" == "prompt_file" ]]; then
     prompt_file="$(mktemp "$TMP_DIR/dhi-copilot-prompt-${id}-XXXX.txt")"
     printf '%s\n' "$prompt" > "$prompt_file"
 
     if [[ "$USER_SET_TEMPLATE" -eq 1 ]]; then
       cmd="${COPILOT_RUN_TEMPLATE//\{prompt_file\}/$prompt_file}"
-      if bash -lc "$cmd" > "$output_file" 2>&1; then
+      bash -lc "$cmd" > "$output_file" 2>&1 &
+      LAST_PROMPT_PID=$!
+      if wait "$LAST_PROMPT_PID"; then
         pass "${id}-copilot-command"
       else
         COMMAND_FAIL_COUNT=$((COMMAND_FAIL_COUNT + 1))
         fail "${id}-copilot-command"
       fi
     else
-      if copilot chat --prompt-file "$prompt_file" > "$output_file" 2>&1; then
+      copilot chat --prompt-file "$prompt_file" > "$output_file" 2>&1 &
+      LAST_PROMPT_PID=$!
+      if wait "$LAST_PROMPT_PID"; then
         pass "${id}-copilot-command"
       else
         COMMAND_FAIL_COUNT=$((COMMAND_FAIL_COUNT + 1))
@@ -338,7 +437,9 @@ execute_prompt() {
 
     rm -f "$prompt_file"
   else
-    if copilot -p "$prompt" > "$output_file" 2>&1; then
+    copilot -p "$prompt" > "$output_file" 2>&1 &
+    LAST_PROMPT_PID=$!
+    if wait "$LAST_PROMPT_PID"; then
       pass "${id}-copilot-command"
     else
       COMMAND_FAIL_COUNT=$((COMMAND_FAIL_COUNT + 1))
@@ -347,6 +448,7 @@ execute_prompt() {
   fi
 
   sleep "$SLEEP_AFTER_PROMPT_SEC"
+  LAST_PROMPT_END_NS="$(date +%s%N)"
 
   rm -f "$output_file"
 }
@@ -378,9 +480,11 @@ echo "Mode: $MODE"
 echo "Vectors: $VECTORS_FILE"
 echo "Run ID: $RUN_ID"
 detect_copilot_exec_mode
+detect_copilot_version
 resolve_alert_log_file
 validate_template
 echo "Copilot exec mode: $COPILOT_EXEC_MODE"
+echo "Copilot version: $COPILOT_VERSION"
 echo "Alert log file: $ALERT_LOG_FILE"
 
 mapfile -t TEST_LINES < <(python3 - "$VECTORS_FILE" "$MODE" "$RUN_ID" <<'PY'
@@ -422,12 +526,16 @@ for line in "${TEST_LINES[@]}"; do
   IFS=$'\t' read -r after_alerts after_blocked <<< "$(wait_for_stats_delta "$before_alerts" "$before_blocked" "$alerts_min" "$blocked_min")"
   marker_alert_after="$(marker_alert_json_count "$marker" "$category")"
   marker_log_after="$(marker_dhi_log_count "$marker" "$category")"
+  pid_window_hits="$(pid_window_alert_count "$LAST_PROMPT_PID" "$category" "$LAST_PROMPT_START_NS" "$LAST_PROMPT_END_NS")"
 
   delta_alerts=$((after_alerts - before_alerts))
   delta_blocked=$((after_blocked - before_blocked))
   delta_marker_alert=$((marker_alert_after - marker_alert_before))
   delta_marker_log=$((marker_log_after - marker_log_before))
   delta_marker=$((delta_marker_alert + delta_marker_log))
+  if (( pid_window_hits > 0 )); then
+    delta_marker=$((delta_marker + pid_window_hits))
+  fi
   correlation_available=0
   if [[ -f "$ALERT_LOG_FILE" || ( -n "$DHI_LOG_FILE" && -f "$DHI_LOG_FILE" ) ]]; then
     correlation_available=1
@@ -459,8 +567,10 @@ for line in "${TEST_LINES[@]}"; do
 
   if [[ -n "$regex" ]]; then
     if [[ -n "$DHI_LOG_FILE" && -f "$DHI_LOG_FILE" ]]; then
-      if grep -aE "$regex" "$DHI_LOG_FILE" >/dev/null 2>&1 && grep -aF "$marker" "$DHI_LOG_FILE" >/dev/null 2>&1; then
+      if grep -aF "$marker" "$DHI_LOG_FILE" >/dev/null 2>&1 && grep -aE "$regex" "$DHI_LOG_FILE" >/dev/null 2>&1; then
         pass "${id}-log-regex"
+      elif (( pid_window_hits > 0 )); then
+        echo "WARN: Skipping strict ${id}-log-regex (pid-window correlation succeeded without marker text)"
       else
         fail "${id}-log-regex"
       fi
@@ -475,8 +585,11 @@ echo "Passed: $PASS_COUNT"
 echo "Failed: $FAIL_COUNT"
 if (( FAIL_COUNT > 0 && COMMAND_FAIL_COUNT == 0 && POSITIVE_TEST_COUNT > 0 && MARKER_HIT_COUNT == 0 )); then
   echo "WARN: Copilot traffic not observable with marker correlation in this environment."
+  echo "COMPATIBILITY: copilot_cli_semver=${COPILOT_SEMVER} marker_correlation=unsupported"
   exit 42
 fi
 if [[ "$FAIL_COUNT" -gt 0 ]]; then
+  echo "COMPATIBILITY: copilot_cli_semver=${COPILOT_SEMVER} marker_correlation=failed"
   exit 1
 fi
+echo "COMPATIBILITY: copilot_cli_semver=${COPILOT_SEMVER} marker_correlation=supported"

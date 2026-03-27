@@ -535,6 +535,7 @@ dependencies = [
  "chrono",
  "clap",
  "config",
+ "flate2",
  "hex",
  "lazy_static",
  "object 0.36.7",

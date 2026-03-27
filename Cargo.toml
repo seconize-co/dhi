@@ -52,6 +52,7 @@ prometheus = "0.14"
 # Configuration
 config = "0.14"
 toml = "0.8"
+flate2 = "1.0"
 
 [build-dependencies]
 aya-build = "0.1"
