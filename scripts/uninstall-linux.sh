@@ -126,6 +126,9 @@ if command -v systemctl >/dev/null 2>&1; then
   sudo_cmd "systemctl stop dhi-health-check.timer 2>/dev/null || true"
   sudo_cmd "systemctl disable dhi-health-check.timer 2>/dev/null || true"
   sudo_cmd "systemctl stop dhi-health-check.service 2>/dev/null || true"
+  sudo_cmd "systemctl stop dhi-report.timer 2>/dev/null || true"
+  sudo_cmd "systemctl disable dhi-report.timer 2>/dev/null || true"
+  sudo_cmd "systemctl stop dhi-report.service 2>/dev/null || true"
 fi
 
 echo "Stopping remaining Dhi processes (if any)..."
@@ -214,6 +217,7 @@ fi
 
 echo "Removing binaries and install artifacts..."
 sudo_cmd "rm -f /usr/local/bin/dhi /usr/local/bin/dhi-health-check"
+sudo_cmd "rm -f /usr/local/bin/dhi-generate-report"
 sudo_cmd "rm -rf /usr/share/dhi"
 
 if [[ "$KEEP_LOGS" -eq 0 ]]; then
@@ -247,6 +251,8 @@ echo "Removing managed systemd unit files..."
 sudo_cmd "rm -f /etc/systemd/system/dhi.service"
 sudo_cmd "rm -f /etc/systemd/system/dhi-health-check.service"
 sudo_cmd "rm -f /etc/systemd/system/dhi-health-check.timer"
+sudo_cmd "rm -f /etc/systemd/system/dhi-report.service"
+sudo_cmd "rm -f /etc/systemd/system/dhi-report.timer"
 
 if [[ "$PURGE_ALL" -eq 1 ]]; then
   echo "Purging optional installer extras..."

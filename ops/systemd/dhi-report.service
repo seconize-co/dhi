@@ -1,0 +1,13 @@
+[Unit]
+Description=Generate daily Dhi security report
+After=network-online.target dhi.service
+Wants=network-online.target dhi.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/dhi-generate-report --config /etc/dhi/dhi.toml
+UMask=0027
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ReadWritePaths=/var/log/dhi

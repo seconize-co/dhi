@@ -265,6 +265,49 @@ install_health_systemd_units() {
   return 1
 }
 
+install_report_generator_script() {
+  local local_script="scripts/dhi-generate-report.sh"
+  local remote_script="https://raw.githubusercontent.com/${REPO}/${RELEASE_VERSION}/scripts/dhi-generate-report.sh"
+  local tmp_script="$TMPDIR/dhi-generate-report.sh"
+
+  if [[ -f "$local_script" ]]; then
+    sudo install -m 755 "$local_script" /usr/local/bin/dhi-generate-report
+    return 0
+  fi
+
+  if curl -fsSL "$remote_script" -o "$tmp_script"; then
+    sudo install -m 755 "$tmp_script" /usr/local/bin/dhi-generate-report
+    return 0
+  fi
+
+  echo "WARNING: Could not obtain report generator script (local or remote)."
+  return 1
+}
+
+install_report_systemd_units() {
+  local local_service="ops/systemd/dhi-report.service"
+  local local_timer="ops/systemd/dhi-report.timer"
+  local remote_service="https://raw.githubusercontent.com/${REPO}/${RELEASE_VERSION}/ops/systemd/dhi-report.service"
+  local remote_timer="https://raw.githubusercontent.com/${REPO}/${RELEASE_VERSION}/ops/systemd/dhi-report.timer"
+  local tmp_service="$TMPDIR/dhi-report.service"
+  local tmp_timer="$TMPDIR/dhi-report.timer"
+
+  if [[ -f "$local_service" && -f "$local_timer" ]]; then
+    sudo install -m 644 "$local_service" /etc/systemd/system/dhi-report.service
+    sudo install -m 644 "$local_timer" /etc/systemd/system/dhi-report.timer
+    return 0
+  fi
+
+  if curl -fsSL "$remote_service" -o "$tmp_service" && curl -fsSL "$remote_timer" -o "$tmp_timer"; then
+    sudo install -m 644 "$tmp_service" /etc/systemd/system/dhi-report.service
+    sudo install -m 644 "$tmp_timer" /etc/systemd/system/dhi-report.timer
+    return 0
+  fi
+
+  echo "WARNING: Could not obtain report systemd units (local or remote)."
+  return 1
+}
+
 resolve_bpftool_bin() {
   local bpftool_bin=""
   bpftool_bin="$(find /usr/lib/linux-tools -type f -name bpftool 2>/dev/null | head -n 1 || true)"
@@ -517,6 +560,12 @@ run_post_install_verification() {
       verify_warn "Health-check script missing: /usr/local/bin/dhi-health-check"
     fi
 
+    if [[ -x /usr/local/bin/dhi-generate-report ]]; then
+      verify_ok "Report generator script installed: /usr/local/bin/dhi-generate-report"
+    else
+      verify_warn "Report generator script missing: /usr/local/bin/dhi-generate-report"
+    fi
+
     if [[ -f /etc/systemd/system/dhi-health-check.service ]]; then
       verify_ok "Health-check unit installed: /etc/systemd/system/dhi-health-check.service"
     else
@@ -529,10 +578,28 @@ run_post_install_verification() {
       verify_warn "Health-check timer missing: /etc/systemd/system/dhi-health-check.timer"
     fi
 
+    if [[ -f /etc/systemd/system/dhi-report.service ]]; then
+      verify_ok "Report unit installed: /etc/systemd/system/dhi-report.service"
+    else
+      verify_warn "Report unit missing: /etc/systemd/system/dhi-report.service"
+    fi
+
+    if [[ -f /etc/systemd/system/dhi-report.timer ]]; then
+      verify_ok "Report timer installed: /etc/systemd/system/dhi-report.timer"
+    else
+      verify_warn "Report timer missing: /etc/systemd/system/dhi-report.timer"
+    fi
+
     if systemctl is-enabled dhi-health-check.timer >/dev/null 2>&1; then
       verify_ok "Health-check timer enabled: dhi-health-check.timer"
     else
       verify_warn "Health-check timer not enabled: dhi-health-check.timer"
+    fi
+
+    if systemctl is-enabled dhi-report.timer >/dev/null 2>&1; then
+      verify_ok "Report timer enabled: dhi-report.timer"
+    else
+      verify_warn "Report timer not enabled: dhi-report.timer"
     fi
   else
     if [[ "$OS_ID" == "alpine" ]]; then
@@ -753,6 +820,14 @@ elif install_systemd_service; then
   else
     echo "WARNING: Health-check automation artifacts were not fully installed."
   fi
+
+  if install_report_generator_script && install_report_systemd_units; then
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now dhi-report.timer
+    echo "Daily report timer installed and enabled (dhi-report.timer)."
+  else
+    echo "WARNING: Daily report automation artifacts were not fully installed."
+  fi
 else
   echo "WARNING: Could not install systemd service."
   echo "         You can still run Dhi manually: sudo dhi --config /etc/dhi/dhi.toml --level alert"
@@ -768,7 +843,9 @@ echo "  - ${LOG_ROOT}/reports"
 if command -v systemctl >/dev/null 2>&1; then
   echo "  - systemd service (dhi.service)"
   echo "  - health-check script (/usr/local/bin/dhi-health-check)"
+  echo "  - report generator script (/usr/local/bin/dhi-generate-report)"
   echo "  - health-check timer (dhi-health-check.timer)"
+  echo "  - daily report timer (dhi-report.timer)"
 fi
 echo
 echo "Default runtime behavior: logs -> stdout/journald, reports -> ${LOG_ROOT}/reports"
@@ -783,6 +860,9 @@ echo "  sudo journalctl -u dhi -f"
 echo "To inspect health automation:"
 echo "  sudo systemctl status dhi-health-check.timer"
 echo "  sudo journalctl -u dhi-health-check.service -f"
+echo "To inspect report automation:"
+echo "  sudo systemctl status dhi-report.timer"
+echo "  sudo journalctl -u dhi-report.service -f"
 echo "To run verification later without reinstalling:"
 echo "  sudo ./scripts/install-linux-release.sh --verify-only"
 if [[ -z "$SLACK_WEBHOOK" ]]; then

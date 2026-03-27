@@ -178,6 +178,7 @@ sudo journalctl -u dhi -n 50
 | `/var/log/dhi/dhi.log` | Main application log |
 | `/var/log/dhi/alerts.log` | Alert history (Slack webhook) |
 | `/var/log/dhi/reports/daily-*.json` | Daily security reports |
+| `/var/log/dhi/reports/daily-*.html` | Branded HTML daily reports |
 
 ### Viewing Logs
 
@@ -204,6 +205,26 @@ cat /var/log/dhi/reports/daily-$(date +%Y-%m-%d).json | jq .
 # Summary of today's alerts
 cat /var/log/dhi/reports/daily-$(date +%Y-%m-%d).json | jq '.summary'
 ```
+
+### Automatic Daily Report Generation
+
+The installer now provisions and enables a dedicated daily report timer:
+
+```bash
+sudo systemctl status dhi-report.timer
+sudo systemctl list-timers --all | grep dhi-report
+sudo journalctl -u dhi-report.service -n 50 --no-pager
+```
+
+Manual run (on-demand):
+
+```bash
+sudo systemctl start dhi-report.service
+```
+
+Artifacts are written to `[reporting].output_dir` (default `/var/log/dhi/reports`):
+- `daily-YYYY-MM-DD.json`
+- `daily-YYYY-MM-DD.html`
 
 ---
 

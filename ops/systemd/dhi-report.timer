@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Dhi daily report generation
+
+[Timer]
+OnCalendar=*-*-* 00:10:00
+AccuracySec=1min
+Persistent=true
+Unit=dhi-report.service
+
+[Install]
+WantedBy=timers.target

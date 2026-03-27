@@ -230,7 +230,7 @@ impl PiiDetector {
             let matches: Vec<_> = pattern
                 .pattern
                 .find_iter(scan_text)
-                .filter(|m| !Self::should_ignore_match(pattern, m.as_str()))
+                .filter(|m| !Self::should_ignore_match(pattern, scan_text, m.start(), m.end()))
                 .collect();
             if !matches.is_empty() {
                 let entry = type_counts.entry(pattern.pii_type.clone()).or_insert((
@@ -289,7 +289,7 @@ impl PiiDetector {
                 let mut cursor = 0usize;
                 for matched in pattern.pattern.find_iter(&source) {
                     rebuilt.push_str(&source[cursor..matched.start()]);
-                    if Self::should_ignore_match(pattern, matched.as_str()) {
+                    if Self::should_ignore_match(pattern, &source, matched.start(), matched.end()) {
                         rebuilt.push_str(matched.as_str());
                     } else {
                         rebuilt.push_str(&pattern.redact_format);
@@ -334,7 +334,7 @@ impl PiiDetector {
                 continue;
             }
             for matched in pattern.pattern.find_iter(scan_text) {
-                if Self::should_ignore_match(pattern, matched.as_str()) {
+                if Self::should_ignore_match(pattern, scan_text, matched.start(), matched.end()) {
                     continue;
                 }
                 if hints.len() >= max_hints {
@@ -369,7 +369,7 @@ impl PiiDetector {
         let phone_count = self.patterns[1]
             .pattern
             .find_iter(text)
-            .filter(|m| !Self::should_ignore_match(&self.patterns[1], m.as_str()))
+            .filter(|m| !Self::should_ignore_match(&self.patterns[1], text, m.start(), m.end()))
             .count();
         let ssn_count = self.patterns[2].pattern.find_iter(text).count();
 
@@ -377,8 +377,13 @@ impl PiiDetector {
         email_count.max(phone_count).max(ssn_count).max(1)
     }
 
-    fn should_ignore_match(pattern: &PiiPattern, matched: &str) -> bool {
-        pattern.pii_type == "phone" && Self::is_timestamp_like_phone(matched)
+    fn should_ignore_match(pattern: &PiiPattern, text: &str, start: usize, end: usize) -> bool {
+        let matched = &text[start..end];
+        match pattern.pii_type.as_str() {
+            "phone" => Self::is_timestamp_like_phone(matched),
+            "zip_code" => Self::is_non_postal_zip_context(text, start, end),
+            _ => false,
+        }
     }
 
     fn is_timestamp_like_phone(matched: &str) -> bool {
@@ -393,6 +398,102 @@ impl PiiDetector {
             }
         }
         false
+    }
+
+    fn is_non_postal_zip_context(text: &str, start: usize, end: usize) -> bool {
+        let matched = &text[start..end];
+        let left_start = start.saturating_sub(36);
+        let right_end = (end + 20).min(text.len());
+        let left = &text[left_start..start];
+        let right = &text[end..right_end];
+        let context = format!("{}{}", left, right).to_ascii_lowercase();
+
+        if matched.len() == 10 && matched.chars().nth(5) == Some('-') {
+            let tail = &matched[6..];
+            if tail.chars().all(|c| c.is_ascii_digit()) {
+                return false;
+            }
+        }
+
+        let positive_keywords = [
+            "zip", "zip_code", "zipcode", "postal", "postcode", "address", "addr", "city", "state",
+        ];
+        if positive_keywords.iter().any(|k| context.contains(k)) {
+            return false;
+        }
+
+        if start >= 3 {
+            let state_prefix_start = start.saturating_sub(5);
+            let prefix = &text[state_prefix_start..start];
+            if Self::has_state_prefix(prefix) {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    fn has_state_prefix(prefix: &str) -> bool {
+        let trimmed = prefix.trim_end_matches(|c: char| c.is_ascii_whitespace() || c == ',');
+        if trimmed.len() < 2 {
+            return false;
+        }
+        let state = &trimmed[trimmed.len() - 2..];
+        let is_upper = state.chars().all(|c| c.is_ascii_uppercase());
+        is_upper
+            && matches!(
+                state,
+                "AL" | "AK"
+                    | "AZ"
+                    | "AR"
+                    | "CA"
+                    | "CO"
+                    | "CT"
+                    | "DE"
+                    | "FL"
+                    | "GA"
+                    | "HI"
+                    | "ID"
+                    | "IL"
+                    | "IN"
+                    | "IA"
+                    | "KS"
+                    | "KY"
+                    | "LA"
+                    | "ME"
+                    | "MD"
+                    | "MA"
+                    | "MI"
+                    | "MN"
+                    | "MS"
+                    | "MO"
+                    | "MT"
+                    | "NE"
+                    | "NV"
+                    | "NH"
+                    | "NJ"
+                    | "NM"
+                    | "NY"
+                    | "NC"
+                    | "ND"
+                    | "OH"
+                    | "OK"
+                    | "OR"
+                    | "PA"
+                    | "RI"
+                    | "SC"
+                    | "SD"
+                    | "TN"
+                    | "TX"
+                    | "UT"
+                    | "VT"
+                    | "VA"
+                    | "WA"
+                    | "WV"
+                    | "WI"
+                    | "WY"
+                    | "DC"
+            )
     }
 }
 
@@ -510,6 +611,40 @@ mod tests {
         assert!(
             redacted.contains("[PHONE]"),
             "real phone format should still be redacted"
+        );
+    }
+
+    #[test]
+    fn test_zip_detection_requires_postal_context() {
+        let detector = PiiDetector::new();
+        let with_zip_keyword = "shipping zip: 94105";
+        let with_state_prefix = "San Francisco, CA 94105";
+        let result_keyword = detector.scan(with_zip_keyword, "address_payload");
+        let result_state = detector.scan(with_state_prefix, "address_payload");
+        assert!(
+            result_keyword
+                .pii_types
+                .iter()
+                .any(|p| p.pii_type == "zip_code"),
+            "zip should be detected when explicit postal context exists"
+        );
+        assert!(
+            result_state
+                .pii_types
+                .iter()
+                .any(|p| p.pii_type == "zip_code"),
+            "zip should be detected with state-prefix style context"
+        );
+    }
+
+    #[test]
+    fn test_zip_detection_ignores_non_postal_numeric_ids() {
+        let detector = PiiDetector::new();
+        let text = "x-request-id: 12345-abcde and max_prompt_tokens: 20000";
+        let result = detector.scan(text, "runtime_payload");
+        assert!(
+            !result.pii_types.iter().any(|p| p.pii_type == "zip_code"),
+            "request-id and token-count numeric fields must not be classified as zip codes"
         );
     }
 }
