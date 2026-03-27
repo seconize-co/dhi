@@ -53,6 +53,8 @@ prometheus = "0.14"
 config = "0.14"
 toml = "0.8"
 flate2 = "1.0"
+brotli = "3.5"
+zstd = "0.13"
 
 [build-dependencies]
 aya-build = "0.1"

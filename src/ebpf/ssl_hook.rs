@@ -8,6 +8,7 @@
 use anyhow::Result;
 use aya::programs::{ProgramError, UProbe};
 use aya::Bpf;
+use brotli::Decompressor as BrotliDecompressor;
 use flate2::read::{GzDecoder, ZlibDecoder};
 use lazy_static::lazy_static;
 use object::{Object, ObjectSection, ObjectSymbol};
@@ -18,6 +19,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, warn};
+use zstd::stream::read::Decoder as ZstdDecoder;
 
 use crate::agentic::{
     AgentFingerprinter, PiiDetector, PromptSecurityAnalyzer, RequestInfo, SecretsDetector,
@@ -373,6 +375,13 @@ pub struct SslConnectionInfo {
 const ANALYSIS_BUFFER_LIMIT: usize = 65536;
 const MAX_ANALYSIS_CORPUS_LEN: usize = 262144;
 const MAX_COMPRESSION_DECODE_ATTEMPTS: usize = 8;
+const MAX_FRAME_EXTRACT_BYTES: usize = 32768;
+const MAX_FRAME_SEGMENTS: usize = 12;
+const FORENSIC_MAX_HEX_BYTES: usize = 128;
+const HTTP2_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+const MAX_HTTP2_STREAM_CANDIDATES: usize = 24;
+const MAX_PRINTABLE_FRAGMENTS: usize = 64;
+const MIN_PRINTABLE_FRAGMENT_LEN: usize = 8;
 
 lazy_static! {
     static ref AWS_KEY_FALLBACK_RE: Regex = match Regex::new(r"AKIA[0-9A-Z]{16}") {
@@ -520,6 +529,17 @@ impl SslMonitor {
                 (event.data.clone(), event.data.clone())
             }
         };
+
+        if event.comm.to_ascii_lowercase().contains("copilot")
+            || event.comm.to_ascii_lowercase().contains("mainthread")
+        {
+            log_copilot_forensic_payload_samples(
+                event.pid,
+                event.direction,
+                &analysis_bytes,
+                &combined_bytes,
+            );
+        }
 
         // SSL payloads can mix text and binary framing (e.g., HTTP/2 + compressed bodies).
         // Build a bounded corpus with decoded text candidates so detectors can match
@@ -686,6 +706,60 @@ impl SslMonitor {
     }
 }
 
+fn hex_prefix(bytes: &[u8], max: usize) -> String {
+    bytes
+        .iter()
+        .take(max)
+        .map(|b| format!("{:02x}", b))
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+fn copilot_forensic_enabled() -> bool {
+    std::env::var("DHI_COPILOT_FORENSIC_DUMP")
+        .ok()
+        .map(|v| {
+            let n = v.trim().to_ascii_lowercase();
+            n == "1" || n == "true" || n == "yes" || n == "on"
+        })
+        .unwrap_or(false)
+}
+
+fn log_copilot_forensic_payload_samples(
+    pid: u32,
+    direction: SslDirection,
+    primary: &[u8],
+    combined: &[u8],
+) {
+    if !copilot_forensic_enabled() {
+        return;
+    }
+    let dir = match direction {
+        SslDirection::Write => "WRITE",
+        SslDirection::Read => "READ",
+    };
+    info!(
+        "[COPILOT FORENSIC] pid={} dir={} primary_len={} primary_hex={} combined_len={} combined_hex={}",
+        pid,
+        dir,
+        primary.len(),
+        hex_prefix(primary, FORENSIC_MAX_HEX_BYTES),
+        combined.len(),
+        hex_prefix(combined, FORENSIC_MAX_HEX_BYTES)
+    );
+
+    for (idx, frame) in extract_frame_candidates(primary).iter().take(4).enumerate() {
+        info!(
+            "[COPILOT FORENSIC FRAME] pid={} dir={} idx={} len={} hex={}",
+            pid,
+            dir,
+            idx,
+            frame.len(),
+            hex_prefix(frame, FORENSIC_MAX_HEX_BYTES)
+        );
+    }
+}
+
 fn decode_text_candidates(primary: &[u8], combined: &[u8]) -> Vec<String> {
     let mut candidates = Vec::new();
     let mut seen = HashSet::new();
@@ -702,6 +776,14 @@ fn decode_text_candidates(primary: &[u8], combined: &[u8]) -> Vec<String> {
     if combined != primary {
         push_candidate(String::from_utf8_lossy(combined).to_string());
     }
+    for fragment in extract_printable_fragments(primary) {
+        push_candidate(fragment);
+    }
+    if combined != primary {
+        for fragment in extract_printable_fragments(combined) {
+            push_candidate(fragment);
+        }
+    }
 
     for decoded in decode_compressed_candidates(primary) {
         push_candidate(decoded);
@@ -709,6 +791,64 @@ fn decode_text_candidates(primary: &[u8], combined: &[u8]) -> Vec<String> {
     if combined != primary {
         for decoded in decode_compressed_candidates(combined) {
             push_candidate(decoded);
+        }
+    }
+    for frame in extract_frame_candidates(primary) {
+        push_candidate(String::from_utf8_lossy(&frame).to_string());
+        for fragment in extract_printable_fragments(&frame) {
+            push_candidate(fragment);
+        }
+        for decoded in decode_compressed_candidates(&frame) {
+            push_candidate(decoded);
+        }
+    }
+    if combined != primary {
+        for frame in extract_frame_candidates(combined) {
+            push_candidate(String::from_utf8_lossy(&frame).to_string());
+            for fragment in extract_printable_fragments(&frame) {
+                push_candidate(fragment);
+            }
+            for decoded in decode_compressed_candidates(&frame) {
+                push_candidate(decoded);
+            }
+        }
+    }
+    for payload in extract_http2_payload_candidates(primary) {
+        push_candidate(String::from_utf8_lossy(&payload).to_string());
+        for fragment in extract_printable_fragments(&payload) {
+            push_candidate(fragment);
+        }
+        for decoded in decode_compressed_candidates(&payload) {
+            push_candidate(decoded);
+        }
+        for grpc in extract_grpc_message_candidates(&payload) {
+            push_candidate(String::from_utf8_lossy(&grpc).to_string());
+            for fragment in extract_printable_fragments(&grpc) {
+                push_candidate(fragment);
+            }
+            for decoded in decode_compressed_candidates(&grpc) {
+                push_candidate(decoded);
+            }
+        }
+    }
+    if combined != primary {
+        for payload in extract_http2_payload_candidates(combined) {
+            push_candidate(String::from_utf8_lossy(&payload).to_string());
+            for fragment in extract_printable_fragments(&payload) {
+                push_candidate(fragment);
+            }
+            for decoded in decode_compressed_candidates(&payload) {
+                push_candidate(decoded);
+            }
+            for grpc in extract_grpc_message_candidates(&payload) {
+                push_candidate(String::from_utf8_lossy(&grpc).to_string());
+                for fragment in extract_printable_fragments(&grpc) {
+                    push_candidate(fragment);
+                }
+                for decoded in decode_compressed_candidates(&grpc) {
+                    push_candidate(decoded);
+                }
+            }
         }
     }
 
@@ -729,6 +869,18 @@ fn decode_compressed_candidates(bytes: &[u8]) -> Vec<String> {
             attempts += 1;
         }
     }
+    if attempts < MAX_COMPRESSION_DECODE_ATTEMPTS {
+        if let Some(decoded) = try_brotli_decode(bytes) {
+            out.push(decoded);
+            attempts += 1;
+        }
+    }
+    if attempts < MAX_COMPRESSION_DECODE_ATTEMPTS {
+        if let Some(decoded) = try_zstd_decode(bytes) {
+            out.push(decoded);
+            attempts += 1;
+        }
+    }
 
     for i in 0..bytes.len().saturating_sub(2) {
         if attempts >= MAX_COMPRESSION_DECODE_ATTEMPTS {
@@ -741,6 +893,16 @@ fn decode_compressed_candidates(bytes: &[u8]) -> Vec<String> {
             }
         } else if bytes[i] == 0x78 && matches!(bytes[i + 1], 0x01 | 0x5e | 0x9c | 0xda) {
             if let Some(decoded) = try_zlib_decode(&bytes[i..]) {
+                out.push(decoded);
+                attempts += 1;
+            }
+        } else if looks_like_brotli_prefix(&bytes[i..]) {
+            if let Some(decoded) = try_brotli_decode(&bytes[i..]) {
+                out.push(decoded);
+                attempts += 1;
+            }
+        } else if looks_like_zstd_prefix(&bytes[i..]) {
+            if let Some(decoded) = try_zstd_decode(&bytes[i..]) {
                 out.push(decoded);
                 attempts += 1;
             }
@@ -768,6 +930,185 @@ fn try_zlib_decode(bytes: &[u8]) -> Option<String> {
         return None;
     }
     Some(String::from_utf8_lossy(&out).to_string())
+}
+
+fn try_brotli_decode(bytes: &[u8]) -> Option<String> {
+    let mut decoder = BrotliDecompressor::new(bytes, 4096);
+    let mut out = Vec::new();
+    decoder.read_to_end(&mut out).ok()?;
+    if out.is_empty() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out).to_string())
+}
+
+fn try_zstd_decode(bytes: &[u8]) -> Option<String> {
+    let mut decoder = ZstdDecoder::new(bytes).ok()?;
+    let mut out = Vec::new();
+    decoder.read_to_end(&mut out).ok()?;
+    if out.is_empty() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out).to_string())
+}
+
+fn looks_like_zstd_prefix(bytes: &[u8]) -> bool {
+    bytes.len() >= 4 && bytes[0] == 0x28 && bytes[1] == 0xb5 && bytes[2] == 0x2f && bytes[3] == 0xfd
+}
+
+fn looks_like_brotli_prefix(bytes: &[u8]) -> bool {
+    if bytes.len() < 2 {
+        return false;
+    }
+    // Heuristic for brotli stream starts with common window/metablock headers.
+    matches!(bytes[0], 0x8b | 0x1b | 0x0b | 0x0d) || (bytes[0] & 0x03) == 0x01
+}
+
+fn extract_frame_candidates(bytes: &[u8]) -> Vec<Vec<u8>> {
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i + 5 <= bytes.len() && out.len() < MAX_FRAME_SEGMENTS {
+        let len =
+            ((bytes[i] as usize) << 16) | ((bytes[i + 1] as usize) << 8) | (bytes[i + 2] as usize);
+        let frame_type = bytes[i + 3];
+        // HTTP/2 DATA(0) and HEADERS(1) are most useful for payload extraction.
+        if (frame_type == 0 || frame_type == 1)
+            && len > 0
+            && len <= MAX_FRAME_EXTRACT_BYTES
+            && i + 9 + len <= bytes.len()
+        {
+            let payload_start = i + 9;
+            let payload_end = payload_start + len;
+            out.push(bytes[payload_start..payload_end].to_vec());
+            i = payload_end;
+            continue;
+        }
+        i += 1;
+    }
+    out
+}
+
+fn extract_http2_payload_candidates(bytes: &[u8]) -> Vec<Vec<u8>> {
+    let mut out = Vec::new();
+    let mut streams: HashMap<u32, Vec<u8>> = HashMap::new();
+
+    let mut i = if bytes.starts_with(HTTP2_PREFACE) {
+        HTTP2_PREFACE.len()
+    } else {
+        0
+    };
+
+    while i + 9 <= bytes.len() && out.len() < MAX_HTTP2_STREAM_CANDIDATES {
+        let len =
+            ((bytes[i] as usize) << 16) | ((bytes[i + 1] as usize) << 8) | (bytes[i + 2] as usize);
+        if len > MAX_FRAME_EXTRACT_BYTES || i + 9 + len > bytes.len() {
+            i += 1;
+            continue;
+        }
+
+        let frame_type = bytes[i + 3];
+        let flags = bytes[i + 4];
+        let stream_id =
+            u32::from_be_bytes([bytes[i + 5], bytes[i + 6], bytes[i + 7], bytes[i + 8]])
+                & 0x7fff_ffff;
+        let payload_start = i + 9;
+        let payload_end = payload_start + len;
+        let payload = &bytes[payload_start..payload_end];
+
+        // DATA frames hold request/response bodies; reconstruct per stream to undo segmentation.
+        if frame_type == 0 && stream_id != 0 {
+            let mut data_start = 0usize;
+            let mut data_end = payload.len();
+            if (flags & 0x08) != 0 && !payload.is_empty() {
+                // PADDED frame: first byte is pad length.
+                let pad_len = payload[0] as usize;
+                data_start = 1;
+                if pad_len < payload.len() {
+                    data_end = payload.len().saturating_sub(pad_len);
+                }
+            }
+            if data_start < data_end {
+                let data = &payload[data_start..data_end];
+                streams
+                    .entry(stream_id)
+                    .or_default()
+                    .extend_from_slice(data);
+                if data.len() >= 8 {
+                    out.push(data.to_vec());
+                }
+            }
+        }
+
+        // HEADERS and CONTINUATION can contain useful plain metadata in header blocks.
+        if (frame_type == 1 || frame_type == 9) && !payload.is_empty() {
+            out.push(payload.to_vec());
+        }
+
+        i = payload_end;
+    }
+
+    for data in streams.values() {
+        if !data.is_empty() {
+            out.push(data.clone());
+        }
+    }
+    if out.len() > MAX_HTTP2_STREAM_CANDIDATES {
+        out.truncate(MAX_HTTP2_STREAM_CANDIDATES);
+    }
+    out
+}
+
+fn extract_grpc_message_candidates(bytes: &[u8]) -> Vec<Vec<u8>> {
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i + 5 <= bytes.len() && out.len() < MAX_FRAME_SEGMENTS {
+        let compressed = bytes[i];
+        if compressed > 1 {
+            i += 1;
+            continue;
+        }
+        let msg_len =
+            u32::from_be_bytes([bytes[i + 1], bytes[i + 2], bytes[i + 3], bytes[i + 4]]) as usize;
+        if msg_len == 0 || msg_len > MAX_FRAME_EXTRACT_BYTES || i + 5 + msg_len > bytes.len() {
+            i += 1;
+            continue;
+        }
+        out.push(bytes[i + 5..i + 5 + msg_len].to_vec());
+        i += 5 + msg_len;
+    }
+    out
+}
+
+fn extract_printable_fragments(bytes: &[u8]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut start: Option<usize> = None;
+    for (i, b) in bytes.iter().enumerate() {
+        let printable = matches!(*b, b' '..=b'~' | b'\n' | b'\r' | b'\t');
+        if printable {
+            if start.is_none() {
+                start = Some(i);
+            }
+            continue;
+        }
+
+        if let Some(s) = start.take() {
+            if i.saturating_sub(s) >= MIN_PRINTABLE_FRAGMENT_LEN {
+                out.push(String::from_utf8_lossy(&bytes[s..i]).to_string());
+                if out.len() >= MAX_PRINTABLE_FRAGMENTS {
+                    return out;
+                }
+            }
+        }
+    }
+    if let Some(s) = start {
+        if bytes.len().saturating_sub(s) >= MIN_PRINTABLE_FRAGMENT_LEN {
+            out.push(String::from_utf8_lossy(&bytes[s..]).to_string());
+        }
+    }
+    if out.len() > MAX_PRINTABLE_FRAGMENTS {
+        out.truncate(MAX_PRINTABLE_FRAGMENTS);
+    }
+    out
 }
 
 /// Result of SSL traffic analysis
@@ -1859,6 +2200,62 @@ mod tests {
         let (tokens, tool_calls) = extract_runtime_usage(&sse);
         assert!(tokens > 0);
         assert_eq!(tool_calls, 0);
+    }
+
+    #[test]
+    fn test_extract_http2_payload_candidates_reassembles_data_stream() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(HTTP2_PREFACE);
+        // stream=1, DATA frame "RUN-DHI-"
+        bytes.extend_from_slice(&[
+            0x00, 0x00, 0x08, // len
+            0x00, // DATA
+            0x00, // flags
+            0x00, 0x00, 0x00, 0x01, // stream id
+        ]);
+        bytes.extend_from_slice(b"RUN-DHI-");
+        // stream=1, DATA frame "12345"
+        bytes.extend_from_slice(&[
+            0x00, 0x00, 0x05, // len
+            0x00, // DATA
+            0x01, // END_STREAM
+            0x00, 0x00, 0x00, 0x01, // stream id
+        ]);
+        bytes.extend_from_slice(b"12345");
+
+        let payloads = extract_http2_payload_candidates(&bytes);
+        assert!(
+            payloads
+                .iter()
+                .any(|p| String::from_utf8_lossy(p).contains("RUN-DHI-12345")),
+            "should reconstruct per-stream DATA bytes"
+        );
+    }
+
+    #[test]
+    fn test_extract_grpc_message_candidates_parses_length_prefix() {
+        let mut bytes = Vec::new();
+        // grpc msg 1: uncompressed "RUN-DHI-777"
+        let msg = b"RUN-DHI-777";
+        bytes.push(0u8);
+        bytes.extend_from_slice(&(msg.len() as u32).to_be_bytes());
+        bytes.extend_from_slice(msg);
+
+        let msgs = extract_grpc_message_candidates(&bytes);
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0], msg);
+    }
+
+    #[test]
+    fn test_extract_printable_fragments_recovers_embedded_marker() {
+        let payload = b"\x00\x10RUN-1774606853-copilot-secret-detection\x00\x01jsonrpc\x002.0";
+        let fragments = extract_printable_fragments(payload);
+        assert!(
+            fragments
+                .iter()
+                .any(|f| f.contains("RUN-1774606853-copilot-secret-detection")),
+            "printable fragment extraction should surface run markers"
+        );
     }
 
     #[tokio::test]
